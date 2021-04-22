@@ -1,0 +1,7 @@
+<IfModule dir_module>
+    DirectoryIndex index.php
+</IfModule>
+
+RewriteEngine on
+RewriteRule ^project/([-a-zA-Z0-9_]+) project.php?name=$1 [L]
+RewriteRule ^projects projects.php [L]
