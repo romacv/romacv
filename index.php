@@ -9,14 +9,18 @@
             <img src="../img/avatar.jpg" class="img-fluid" alt="Roman Resenchuk">
           </div>
           <div class="col-xl-8 col-md-7">
-            <p>Software development engineer, programmer, manager. <br>Currently I’m engaged in developing software for mobile (iOS app).  I’m able to coordinate work of team to develop high-quality projects, consult the client and colleagues or take the project into independent work.</p>
-            <p>My hobby is information technologies, computers, cars, travel, new cognition.</p>
+            <p>Software development engineer, programmer, manager. <br>Currently I’m engaged in developing software for mobile devices (mostly iOS apps).
+I’m able to coordinate work of team to develop high-quality projects, consult the client and colleagues or take the project into independent work.</p>
+            <p>My hobby is information technologies, computers, cars, motorcycles, travels, exploration of new knowledges, enjoying life.</p>
             <p>Working with me, you get:</p>
             <ul>
               <li>— a responsible attitude to the task at hand;</li>
-              <li>— understanding and courtesy;</li>
-              <li>— efficiency in work and sticking to agreements.</li>
+              <li>— complete understanding and politeness in communication;</li>
+              <li>— efficiency in work and compliance with agreements;</li>
             </ul>
+            <div class="links">
+            <a href="../RESUME_RESENCHUK.pdf" target="_blank" class="viewall">My Resume</a>
+            </div>
             <!--<div class="links">-->
             <!--  <p>Internet:</p>-->
             <!--  <a target="_blank" href="https://linkedin.com/in/romanres" rel="noopener">LinkedIn.com (prof)</a>-->
@@ -30,7 +34,7 @@
         <h2>Top projects</h2>
         <div class="row">
           <div class="col-sm-6">
-            <a href="../projects" style="background-image:url('../img/works/readyforsky.jpg')" data-name="READY FOR SKY"></a>
+            <a href="../projects" style="background-image:url('../img/works/mathbrain.jpg')" data-name="Math Brain"></a>
           </div>
           <div class="col-sm-6">
             <a href="../projects" style="background-image:url('../img/works/autorent.jpg')" data-name="AUTO.RENT"></a>
@@ -48,6 +52,10 @@
             <p><a href="mailto:R@RESROM.COM" target="_blank" rel="noopener">
               <img src="../img/envelope.svg" alt="R@RESROM.COM">
               R@RESROM.COM
+            </a></p>
+            <p><a href="https://t.me/romacv" target="_blank" rel="noopener">
+              <img src="../img/telegram.svg" alt="Telegram romacv">
+              @romacv
             </a></p>
             <p><a href="https://facebook.com/romanresenchuk" target="_blank" rel="noopener">
               <img src="../img/if_facebook_386622.svg" alt="facebook romanresenchuk">

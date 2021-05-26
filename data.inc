@@ -1,7 +1,27 @@
 <?php
 
 $data = [
-    '2019 - ' . date("Y") => [
+    '2020 - ' . date("Y") => [
+        'mathbrain' => [
+            'title' => 'Math Brain - Arithmetic Learning Games Quiz',
+            'desc' => 'My own project. App to help you upgrade your math skills. Develop concentration, reaction, and speed of your brain by performing daily exercises. Achieve arithmetic abilities in basic operations - multiplication, division, subtraction, and addition.',
+            'link' => 'https://apps.apple.com/app/apple-store/id1506953829?pt=121456226&ct=website_right&mt=8&platform=iphone',
+            'img' => 'mathbrain'
+        ],
+        'twin' => [
+            'title' => 'Twin - Pair Match Symbol Cards',
+            'desc' => 'Twin - is a fun symbol matching game where you need to be more attentive and faster than your rivals.',
+            'link' => 'https://apps.apple.com/us/app/twin-spot-it-match-challenge/id1520230707',
+            'img' => 'twin'
+        ],
+        'wordix' => [
+            'title' => 'Wordix – Memorize word Game',
+            'desc' => 'My own project. Wordix - a unique app with which you will increase the concentration, reaction, and speed of your brain! You can develop memory, attention, and logical thinking. With every-day constant basic memorization exercises, you will also develop visual memory.',
+            'link' => 'https://apps.apple.com/app/apple-store/id1536743626?&ct=landing&mt=8',
+            'img' => 'wordix'
+        ],
+    ],
+    '2019' => [
         'katalyst' => [
             'title' => 'Katalyst',
             'desc' => 'Katalyst POS & Cloud Operating System',
@@ -11,7 +31,7 @@ $data = [
         'tarot' => [
             'title' => 'Tarot',
             'desc' => 'Tarot card reading & meanings - complete development from scratch to the AppStore, application with a complicated user interface design and goodly animations.',
-            'link' => 'https://apple.co/2NrAFwY',
+            'link' => 'https://apps.apple.com/us/app/tarot-card-reading-meanings/id388124231#?platform=iphone',
             'img' => 'tarot'
         ],
     ],
@@ -25,13 +45,13 @@ $data = [
         'tipntrip' => [
                 'title' => 'tip n trip',
                 'desc' => 'tip n trip - service for travelers notes',
-                'link' => 'https://apple.co/2NrAFwY',
+                'link' => '',
                 'img' => 'tipntrip'
             ],
         'solo' => [
             'title' => 'SOLO',
             'desc' => 'SOLO - international calling application',
-            'link' => 'http://apple.co/2jAPPBT',
+            'link' => '',
             'img' => 'solo'
         ],
     ],
