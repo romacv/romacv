@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, maximum-scale=1.0, user-scalable=0, user-scalable=no">
     <meta name="keywords" content="Software developer iOS, Software, programming, iOS Software development, Mobile applications development, freelancer, engineer, iOS, Apple">
     <meta name="theme-color" content="#7ec9ab">
     <link rel="stylesheet" href="../css/style.css">
