@@ -2,6 +2,16 @@
 
 $data = [
     '2020 - ' . date("Y") => [
+        'tapcentive' => [
+            'title' => 'Tapcentive - Tablet Smart Chip Gaming',
+            'desc' => 'I participated in the development of a project for iPad Tablet as a key iOS developer. Worked in a large team of engineers, graphic designers and marketers. In the process of work, I accumulate a lot of work experience with NFC technologies, Smart Chip Cards and interaction with hardware.
+
+            Smart Chip Gaming is a unique, patented approach to GLI-11 gaming devices that combines the power and security of a Smart card with an off-the-shelf mobile tablet and any HTML5 game content. The result is a secure, reliable, low-cost portable gaming solution that offers gaming operators and vendors a whole new way of expanding gaming operations. 
+
+            This application is distributed to customers through a private AppStore (Apple Business Manager).',
+            'link' => '',
+            'img' => 'tapcentive'
+        ],
         'mathbrain' => [
             'title' => 'Math Brain - Arithmetic Learning Games Quiz',
             'desc' => 'My own project. App to help you upgrade your math skills. Develop concentration, reaction, and speed of your brain by performing daily exercises. Achieve arithmetic abilities in basic operations - multiplication, division, subtraction, and addition.',
@@ -11,7 +21,7 @@ $data = [
         'twin' => [
             'title' => 'Twin - Pair Match Symbol Cards',
             'desc' => 'Twin - is a fun symbol matching game where you need to be more attentive and faster than your rivals.',
-            'link' => 'https://apps.apple.com/us/app/twin-spot-it-match-challenge/id1520230707',
+            'link' => '',
             'img' => 'twin'
         ],
         'wordix' => [
