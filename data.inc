@@ -4,9 +4,10 @@ $data = [
     '2020 - ' . date("Y") => [
         'tapcentive' => [
             'title' => 'Tapcentive - Tablet Smart Chip Gaming',
-            'desc' => 'I participated in the development of a project for iPad Tablet as a key iOS developer. Worked in a large team of engineers, graphic designers and marketers. In the process of work, I accumulate a lot of work experience with NFC technologies, Smart Chip Cards and interaction with hardware.
-
+            'desc' => 'I participated in the development of a project for iPad Tablet as a key iOS developer. Worked in a large team of engineers, graphic designers and marketers. In the process of work, accumulated a lot of work experience with NFC technologies, Smart Chip Cards and interaction with hardware.
+<p>
             Smart Chip Gaming is a unique, patented approach to GLI-11 gaming devices that combines the power and security of a Smart card with an off-the-shelf mobile tablet and any HTML5 game content. The result is a secure, reliable, low-cost portable gaming solution that offers gaming operators and vendors a whole new way of expanding gaming operations. 
+</p>
 
             This application is distributed to customers through a private AppStore (Apple Business Manager).',
             'link' => '',
