@@ -3,8 +3,8 @@
 $data = [
     '2020 - ' . date("Y") => [
         'mynovels' => [
-            'title' => 'Tapcentive - Tablet Smart Chip Gaming',
-            'desc' => 'MyNovel is the best place to read stories for everyone. I developed this iOS app from start, doing everything in the best practices of Clean Swift technology. Next, i had leadership over a small team of developers.',
+            'title' => 'MyNovel: Novels & Stories',
+            'desc' => 'MyNovel is the best place to read stories for everyone. I developed this iOS app from start, doing everything in the best practices of Clean Swift technology. I head a leadership for a small team. The project was successfully launched and the development was carried out qualitatively.',
             'link' => 'https://apps.apple.com/us/app/id1572410762',
             'img' => 'mynovels'
         ],
