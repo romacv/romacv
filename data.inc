@@ -2,6 +2,12 @@
 
 $data = [
     '2020 - ' . date("Y") => [
+        'mynovels' => [
+            'title' => 'Tapcentive - Tablet Smart Chip Gaming',
+            'desc' => 'MyNovel is the best place to read stories for everyone. I developed this iOS app from start, doing everything in the best practices of Clean Swift technology. Next, i had leadership over a small team of developers.',
+            'link' => 'https://apps.apple.com/us/app/id1572410762',
+            'img' => 'mynovels'
+        ],
         'tapcentive' => [
             'title' => 'Tapcentive - Tablet Smart Chip Gaming',
             'desc' => 'I participated in the development of a project for iPad Tablet as a key iOS developer. Worked in a large team of engineers, graphic designers and marketers. In the process of work, accumulated a lot of work experience with NFC technologies, Smart Chip Cards and interaction with hardware.

@@ -19,7 +19,7 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
               <li>— efficiency in work and compliance with agreements;</li>
             </ul>
             <div class="links">
-            <a href="../RESUME_RESENCHUK.pdf" target="_blank" class="viewall">My Resume</a>
+            <a href="../Resume_RomanR.pdf" target="_blank" class="viewall">My Resume</a>
             </div>
             <!--<div class="links">-->
             <!--  <p>Internet:</p>-->
@@ -34,13 +34,13 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
         <h2>Top projects</h2>
         <div class="row">
           <div class="col-sm-6">
-            <a href="../projects" style="background-image:url('../img/works/mathbrain.jpg')" data-name="Math Brain"></a>
+            <a href="../projects.php" style="background-image:url('../img/works/mathbrain.jpg')" data-name="Math Brain"></a>
           </div>
           <div class="col-sm-6">
-            <a href="../projects" style="background-image:url('../img/works/autorent.jpg')" data-name="AUTO.RENT"></a>
+            <a href="../projects.php" style="background-image:url('../img/works/autorent.jpg')" data-name="AUTO.RENT"></a>
           </div>
         </div>
-        <a href="../projects" class="viewall">All projects</a>
+        <a href="../projects.php" class="viewall">All projects</a>
       </section>
       <a name="contactme"></a>
       <hr>
@@ -48,7 +48,7 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
         <h2>Contact me</h2>
         <div class="row justify-content-center">
           <div class="col-xl-5 col-lg-6 col-md-7 col-sm-8">
-            <p>I am always opened for a communication and constructive dialogue.</p>
+            <p>I am always opened for a communication.</p>
             <p><a href="mailto:R@RESROM.COM" target="_blank" rel="noopener">
               <img src="../img/envelope.svg" alt="R@RESROM.COM">
               R@RESROM.COM
@@ -65,9 +65,9 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
               <img src="../img/if_linkedin_386655.svg" alt="linkedin romanres">
               LinkedIn
             </a></p>
-            <p><a href="../RESUME_RESENCHUK.pdf" target="_blank" rel="noopener">
+            <p><a href="../Resume_RomanR.pdf" target="_blank" rel="noopener">
               <img src="../img/resume.svg" alt="linkedin romanres">
-              Resume
+              My Resume
             </a></p>
           </div>
         </div>

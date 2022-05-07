@@ -14,7 +14,7 @@
                             foreach ($iData as $name => $iiData):
                         ?>
                         <div class="col-md-4 col-sm-6 col-12">
-                            <a href="../project/<?=$name?>" style="background-image:url('../img/works/<?=$iiData['img']?>.jpg')" data-name="<?=$iiData['title']?>"></a>
+                            <a href="../project.php?name=<?=$name?>" style="background-image:url('../img/works/<?=$iiData['img']?>.jpg')" data-name="<?=$iiData['title']?>"></a>
                         </div>
                         <?php endforeach; ?>
                     </div>

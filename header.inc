@@ -19,7 +19,7 @@
         </div>
         <div class="menu">
             <ul>
-                <li><a href="../projects" >All works</a></li>
+                <li><a href="../projects.php" >All works</a></li>
                 <li><a href="../#aboutme" class="scrollto">About me</a></li>
                 <li><a href="../#contactme" class="scrollto">Contact me</a></li>
             </ul>

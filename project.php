@@ -1,7 +1,7 @@
 <?php
 
 if (empty($_GET['name']) || !isset($_GET['name'])) {
-    header( 'Location: /projects', true, 303 );
+    header( 'Location: /projects.php', true, 303 );
 } else {
     include 'header.inc';
     include 'data.inc';
