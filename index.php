@@ -9,7 +9,7 @@
             <img src="../img/avatar.jpg" class="img-fluid" alt="Roman Resenchuk">
           </div>
           <div class="col-xl-8 col-md-7">
-            <p>Software development engineer, programmer, manager. <br>Currently I’m engaged in developing software for mobile devices (mostly iOS apps).
+            <p>iOS Software development engineer, IT entrepreneur, manager.<br>Currently I’m engaged in developing software for mobile devices (mostly iOS apps).
 I’m able to coordinate work of team to develop high-quality projects, consult the client and colleagues or take the project into independent work.</p>
             <p>My hobby is information technologies, computers, cars, motorcycles, travels, exploration of new knowledges, enjoying life.</p>
             <p>Working with me, you get:</p>
@@ -19,7 +19,7 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
               <li>— efficiency in work and compliance with agreements;</li>
             </ul>
             <div class="links">
-            <a href="../Resume_RomanR.pdf" target="_blank" class="viewall">My Resume</a>
+            <a href="../#contactme" target="_blank" class="viewall">Contact Me</a>
             </div>
             <!--<div class="links">-->
             <!--  <p>Internet:</p>-->
