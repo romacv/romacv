@@ -9,15 +9,16 @@
             <img src="../img/avatar.jpg" class="img-fluid" alt="Roman Resenchuk">
           </div>
           <div class="col-xl-8 col-md-7">
-            <p>iOS Software development engineer, IT entrepreneur, manager.<br>Currently I’m engaged in developing software for mobile devices (mostly iOS apps).
-I’m able to coordinate work of team to develop high-quality projects, consult the client and colleagues or take the project into independent work.</p>
-            <p>My hobby is information technologies, computers, cars, motorcycles, travels, exploration of new knowledges, enjoying life.</p>
+            <p>Software development engineer, programmer, manager.<br>
+            Currently I’m engaged in developing software for iOS applications.
+            I can coordinate teamwork to develop high-quality projects, advise the client and the team, or take the project as an independent work.</p>
             <p>Working with me, you get:</p>
             <ul>
               <li>— a responsible attitude to the task at hand;</li>
               <li>— complete understanding and politeness in communication;</li>
               <li>— efficiency in work and compliance with agreements;</li>
             </ul>
+            <p>My hobbies are computers, information technologies, cars, motorcycles, traveling and exploration.</p>
             <div class="links">
             <a href="../#contactme" target="_blank" class="viewall">Contact Me</a>
             </div>
@@ -65,7 +66,7 @@ I’m able to coordinate work of team to develop high-quality projects, consult 
               <img src="../img/if_linkedin_386655.svg" alt="linkedin romanres">
               LinkedIn
             </a></p>
-            <p><a href="../Resume_RomanR.pdf" target="_blank" rel="noopener">
+            <p><a href="../iOS-Resume-Roman-Resenchuk.pdf" target="_blank" rel="noopener">
               <img src="../img/resume.svg" alt="linkedin romanres">
               My Resume
             </a></p>
