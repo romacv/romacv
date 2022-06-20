@@ -9,16 +9,15 @@
             <img src="../img/avatar.jpg" class="img-fluid" alt="Roman Resenchuk">
           </div>
           <div class="col-xl-8 col-md-7">
-            <p>Software development engineer, programmer, manager.<br>
-            Currently I’m engaged in developing software for iOS applications.
-            I can coordinate teamwork to develop high-quality projects, advise the client and the team, or take the project as an independent work.</p>
+            <p>Software engineer, IT entrepreneur, manager.<br>
+Currently I’m engaged in developing software for iOS applications.
+I can coordinate teamwork to develop high-quality projects, advise the client and the team, or take the project as an independent work, using best practices in code writing.</p>
             <p>Working with me, you get:</p>
             <ul>
-              <li>— a responsible attitude to the task at hand;</li>
-              <li>— complete understanding and politeness in communication;</li>
-              <li>— efficiency in work and compliance with agreements;</li>
+              <li>- responsible attitude;</li>
+              <li>- understanding and politeness in communication; </li>
+              <li>- efficiency and compliance;</li>
             </ul>
-            <p>My hobbies are computers, information technologies, cars, motorcycles, traveling and exploration.</p>
             <div class="links">
             <a href="../#contactme" target="_blank" class="viewall">Contact Me</a>
             </div>
