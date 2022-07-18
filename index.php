@@ -18,6 +18,7 @@ I can coordinate teamwork to develop high-quality projects, advise the client an
               <li>- understanding and politeness in communication; </li>
               <li>- efficiency and compliance;</li>
             </ul>
+<p>My hobbies: IT, computers, cars, motorcycles, finances, cryptocurrency, travel and exploration.</p>
             <div class="links">
             <a href="../#contactme" target="_blank" class="viewall">Contact Me</a>
             </div>
