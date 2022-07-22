@@ -10,7 +10,7 @@
           </div>
           <div class="col-xl-8 col-md-7">
             <p>Software engineer, IT entrepreneur, manager.<br>
-Currently I’m engaged in developing software for iOS applications.
+            Since 2011 to the present, I have been developing iOS applications.
 I can coordinate teamwork to develop high-quality projects, advise the client and the team, or take the project as an independent work, using best practices in code writing.</p>
             <p>Working with me, you get:</p>
             <ul>
@@ -20,7 +20,7 @@ I can coordinate teamwork to develop high-quality projects, advise the client an
             </ul>
 <p>My hobbies: IT, computers, cars, motorcycles, finances, cryptocurrency, travel and exploration.</p>
             <div class="links">
-            <a href="../#contactme" target="_blank" class="viewall">Contact Me</a>
+            <a href="../#contactme" class="viewall">Contact Me</a>
             </div>
             <!--<div class="links">-->
             <!--  <p>Internet:</p>-->
@@ -50,26 +50,22 @@ I can coordinate teamwork to develop high-quality projects, advise the client an
         <div class="row justify-content-center">
           <div class="col-xl-5 col-lg-6 col-md-7 col-sm-8">
             <p>I am always opened for a communication.</p>
-            <p><a href="mailto:R@RESROM.COM" target="_blank" rel="noopener">
+            <a href="mailto:R@RESROM.COM" target="_blank" rel="noopener">
               <img src="../img/envelope.svg" alt="R@RESROM.COM">
               R@RESROM.COM
-            </a></p>
-            <p><a href="https://t.me/romacv" target="_blank" rel="noopener">
+            </a> | <a href="https://t.me/romacv" target="_blank" rel="noopener">
               <img src="../img/telegram.svg" alt="Telegram romacv">
               @romacv
-            </a></p>
-            <p><a href="https://facebook.com/romanresenchuk" target="_blank" rel="noopener">
+            </a> | <a href="https://facebook.com/romanresenchuk" target="_blank" rel="noopener">
               <img src="../img/if_facebook_386622.svg" alt="facebook romanresenchuk">
               Facebook
-            </a></p>
-            <p><a href="https://linkedin.com/in/romanres" target="_blank" rel="noopener">
+            </a> | <a href="https://linkedin.com/in/romanres" target="_blank" rel="noopener">
               <img src="../img/if_linkedin_386655.svg" alt="linkedin romanres">
               LinkedIn
-            </a></p>
-            <p><a href="../iOS-Resume-Roman-Resenchuk.pdf" target="_blank" rel="noopener">
+            </a> | <a href="../iOS-Resume-Roman-Resenchuk.pdf" target="_blank" rel="noopener">
               <img src="../img/resume.svg" alt="linkedin romanres">
               My Resume
-            </a></p>
+            </a>
           </div>
         </div>
       </section>
