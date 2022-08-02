@@ -4,4 +4,5 @@ Working with me, you’ll get:
 - responsible attitude;
 - understanding and politeness in communication; 
 - efficiency and compliance;
+
 My hobbies: IT, computers, cars, motorcycles, finances, cryptocurrency, travel and exploration.
