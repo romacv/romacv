@@ -53,17 +53,17 @@ I can coordinate teamwork to develop high-quality projects, advise the client an
             <a href="mailto:R@RESROM.COM" target="_blank" rel="noopener">
               <img src="../img/envelope.svg" alt="R@RESROM.COM">
               R@RESROM.COM
-            </a> | <a href="https://t.me/romacv" target="_blank" rel="noopener">
-              <img src="../img/telegram.svg" alt="Telegram romacv">
+            </a> <br> <a href="https://t.me/romacv" target="_blank" rel="noopener">
+              <img src="../img/telegram.svg" alt="Telegram">
               @romacv
-            </a> | <a href="https://facebook.com/romanresenchuk" target="_blank" rel="noopener">
-              <img src="../img/if_facebook_386622.svg" alt="facebook romanresenchuk">
+            </a> <br> <a href="https://facebook.com/romacv777" target="_blank" rel="noopener">
+              <img src="../img/if_facebook_386622.svg" alt="facebook">
               Facebook
-            </a> | <a href="https://linkedin.com/in/romanres" target="_blank" rel="noopener">
-              <img src="../img/if_linkedin_386655.svg" alt="linkedin romanres">
+            </a> <br> <a href="https://linkedin.com/in/romanres" target="_blank" rel="noopener">
+              <img src="../img/if_linkedin_386655.svg" alt="linkedin">
               LinkedIn
-            </a> | <a href="../iOS-Resume-Roman-Resenchuk.pdf" target="_blank" rel="noopener">
-              <img src="../img/resume.svg" alt="linkedin romanres">
+            </a> <br><br> <a href="../iOS-Resume-Roman-Resenchuk.pdf" target="_blank" rel="noopener">
+              <img src="../img/resume.svg" alt="resume">
               My Resume
             </a>
           </div>
