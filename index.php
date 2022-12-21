@@ -9,7 +9,7 @@
             <img src="../img/avatar.jpg" class="img-fluid" alt="Roman Resenchuk">
           </div>
           <div class="col-xl-8 col-md-7">
-            <p>Software engineer, IT entrepreneur, manager.<br>
+            <p>Software engineer, IT entrepreneur.<br>
             Since 2011 to the present, I have been developing iOS applications.
 I can coordinate teamwork to develop high-quality projects, advise the client and the team, or take the project as an independent work, using best practices in code writing.</p>
             <p>Working with me, you get:</p>
