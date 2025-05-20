@@ -1,0 +1,188 @@
+{
+    "2020 - 2024": {
+        "mynovels": {
+            "title": "MyNovel: Novels & Stories",
+            "desc": "Led the development of MyNovel, a premium iOS reading platform built with Clean Swift architecture. As the technical lead, I orchestrated a talented team to deliver a polished, high-performance application that provides an exceptional reading experience. The app successfully launched with robust features and scalable architecture.",
+            "link": "https://apps.apple.com/us/app/id1572410762",
+            "img": "mynovels"
+        },
+        "tapcentive": {
+            "title": "Tapcentive - Tablet Smart Chip Gaming",
+            "desc": "Spearheaded iOS development for an innovative iPad-based gaming platform, collaborating with a multidisciplinary team of engineers, designers, and marketers. Pioneered integration of NFC technology and Smart Chip Cards, creating a secure and portable gaming solution that revolutionized traditional gaming operations. The application is distributed through Apple Business Manager, showcasing enterprise-level security and reliability.",
+            "link": "",
+            "img": "tapcentive"
+        },
+        "mathbrain": {
+            "title": "Math Brain - Arithmetic Learning Games Quiz",
+            "desc": "Designed and developed an engaging educational app that transforms math learning into an exciting challenge. Through carefully crafted daily exercises, users enhance their arithmetic skills, mental agility, and cognitive speed. The app features a comprehensive system for mastering fundamental operations while making learning enjoyable and rewarding.",
+            "link": "",
+            "img": "mathbrain"
+        },
+        "twin": {
+            "title": "Twin - Pair Match Symbol Cards",
+            "desc": "Created an innovative memory-matching game that challenges players' focus and reaction time. Twin combines elegant design with addictive gameplay mechanics, offering a perfect balance of entertainment and cognitive exercise. The game features smooth animations and intuitive controls for an engaging user experience.",
+            "link": "",
+            "img": "twin"
+        },
+        "wordix": {
+            "title": "Wordix – Memorize word Game",
+            "desc": "Developed a sophisticated memory training application that combines neuroscience principles with engaging gameplay. Wordix offers a unique approach to cognitive development, featuring daily exercises that enhance memory retention, attention span, and logical reasoning. The app's innovative design makes memory training both effective and enjoyable.",
+            "link": "",
+            "img": "wordix"
+        }
+    },
+    "2019": {
+        "katalyst": {
+            "title": "Katalyst",
+            "desc": "Engineered a comprehensive POS & Cloud Operating System that revolutionized business operations. The platform combines powerful point-of-sale functionality with cloud-based management tools, delivering a seamless experience for businesses of all sizes.",
+            "link": "https://apple.co/3aq0uJa",
+            "img": "katalyst"
+        },
+        "tarot": {
+            "title": "Tarot",
+            "desc": "Crafted a sophisticated tarot reading application featuring an elegant user interface and fluid animations. The app provides comprehensive card interpretations, interactive readings, and a rich collection of tarot wisdom, all presented through an intuitive and visually stunning design.",
+            "link": "https://apps.apple.com/us/app/tarot-card-reading-meanings/id388124231#?platform=iphone",
+            "img": "tarot"
+        }
+    },
+    "2017 - 2018": {
+        "autorent": {
+            "title": "AUTO.rent",
+            "desc": "Developed a peer-to-peer car rental platform that connects vehicle owners with renters. The app features secure payment processing, real-time availability tracking, and a comprehensive review system, making car sharing accessible and trustworthy.",
+            "link": "",
+            "img": "autorent"
+        },
+        "tipntrip": {
+            "title": "tip n trip",
+            "desc": "Created a comprehensive travel companion app that helps users document and share their journey experiences. The platform combines social features with practical travel tools, enabling users to create, organize, and share their travel memories effectively.",
+            "link": "",
+            "img": "tipntrip"
+        },
+        "solo": {
+            "title": "SOLO",
+            "desc": "Engineered a sophisticated international calling application that provides high-quality voice communication across borders. The app features competitive rates, crystal-clear audio quality, and a user-friendly interface for seamless international communication.",
+            "link": "",
+            "img": "solo"
+        }
+    },
+    "2016": {
+        "forwardhorse": {
+            "title": "FORWARDHORSE",
+            "desc": "Developed an innovative betting game that visualizes real-time exchange rates as racing horses. The app combines financial data with engaging gameplay, offering users an entertaining way to track and predict market movements.",
+            "link": "",
+            "img": "forwardhorse"
+        },
+        "gasstationmap": {
+            "title": "GAS STATIONS MAP",
+            "desc": "Created a comprehensive navigation app that helps users locate nearby gas stations, compare fuel prices, and access user reviews. The app features real-time updates, detailed station information, and an intuitive mapping interface.",
+            "link": "",
+            "img": "gasstationmap"
+        },
+        "promed": {
+            "title": "PROMED",
+            "desc": "Engineered a healthcare platform connecting patients with medical professionals. The app facilitates remote consultations, appointment scheduling, and provides access to a network of verified healthcare providers.",
+            "link": "",
+            "img": "promed"
+        },
+        "starway": {
+            "title": "STARWAY",
+            "desc": "Developed a sophisticated horoscope application offering personalized astrological readings and predictions. The app features detailed birth chart analysis, daily horoscopes, and compatibility matching for an engaging user experience.",
+            "link": "",
+            "img": "starway"
+        },
+        "needaderm": {
+            "title": "NEED A DERM",
+            "desc": "Created a telemedicine platform specializing in dermatological consultations. The app enables secure image sharing, virtual appointments, and expert medical advice, making dermatological care more accessible.",
+            "link": "",
+            "img": "needaderm"
+        }
+    },
+    "2015": {
+        "readyforsky": {
+            "title": "READY FOR SKY",
+            "desc": "Led the development of a comprehensive smart home management system for Ready For Sky (R4S). As the lead developer, I orchestrated team efforts, implemented new modules, and enhanced system architecture. The project utilized Agile/Scrum methodologies and GitFlow, with extensive documentation. Developed under OOO \"Tekhnopoisk\"/ OOO \"Erlab\" (REDMOND, Ready For Sky), the system offers advanced home automation capabilities.",
+            "link": "https://itunes.apple.com/ru/app/ready-for-sky-otkroj-novuu/id927991375?mt=8",
+            "img": "readyforsky",
+            "img2": "readyforsky2"
+        },
+        "zonesdating": {
+            "title": "ZONES",
+            "desc": "Developed an innovative dating platform that combines social networking with interactive gaming elements. The app features engaging user interactions, sophisticated matching algorithms, and a vibrant community experience.",
+            "link": "",
+            "img": "zonesdating"
+        },
+        "wantticket": {
+            "title": "WANT TICKET",
+            "desc": "Engineered a peer-to-peer ticket marketplace that facilitates secure and convenient ticket resale. The platform features real-time availability, secure transactions, and a user-friendly interface for seamless ticket exchange.",
+            "link": "",
+            "img": "wantticket"
+        },
+        "socketsmap": {
+            "title": "SOCKETS MAP",
+            "desc": "Created a community-driven platform that helps users locate and share information about public charging stations. The app features real-time availability updates, user reviews, and detailed location information.",
+            "link": "",
+            "img": "socketsmap"
+        },
+        "weightanalyze": {
+            "title": "WEIGHT ANALYZE",
+            "desc": "Developed a comprehensive health tracking application that helps users monitor and analyze their weight management journey. The app features detailed analytics, progress tracking, and personalized insights for better health outcomes.",
+            "link": "",
+            "img": "weightanalyze"
+        }
+    },
+    "2014": {
+        "ninetydays": {
+            "title": "NINETY DAYS",
+            "desc": "Engineered a habit-forming application that helps users achieve their goals through a structured 90-day program. The app features progress tracking, milestone celebrations, and personalized motivation tools.",
+            "link": "",
+            "img": "ninetydays"
+        },
+        "vmeste": {
+            "title": "VMESTE",
+            "desc": "Developed an innovative dating application that revolutionizes the matching process. The app features intelligent matching algorithms, mutual interest indicators, and a sophisticated chat system. Created for LTD. \"Internet Agency LEGION\" (ralegion.ru), the platform offers a unique approach to connecting compatible individuals.",
+            "link": "",
+            "img": "vmeste",
+            "img2": "vmeste2"
+        },
+        "progressio": {
+            "title": "PROGRESSIO",
+            "desc": "Created a sophisticated goal-tracking application that helps users monitor and achieve their objectives. The platform features detailed progress analytics, customizable tracking metrics, and intuitive visualization tools for better goal management.",
+            "link": "",
+            "img": "progressio"
+        }
+    },
+    "2013": {
+        "bileter": {
+            "title": "BILETER",
+            "desc": "Developed a comprehensive ticketing platform for cultural events, featuring interactive seat selection, secure payment processing, and detailed venue information. Created for LLC Internet agency LEGION (ralegion.ru), the app provides a seamless experience for purchasing theater, concert, and circus tickets.",
+            "link": "",
+            "img": "bileter"
+        },
+        "cinemates": {
+            "title": "CINEMATES",
+            "desc": "Engineered a social movie-going platform that connects film enthusiasts. The app features movie recommendations, social scheduling, and community engagement tools. Developed for the Vkino/Cinemates service (vkino.ru, cinemates.com) under LLC Internet agency LEGION (ralegion.ru).",
+            "link": "",
+            "img": "cinemates",
+            "img2": "cinemates2"
+        },
+        "algeron": {
+            "title": "ALGERON",
+            "desc": "Developed a comprehensive patient management system that helps users track their health journey. The app features detailed health logging, medication reminders, and progress tracking. Created for LLC Internet agency LEGION (ralegion.ru).",
+            "link": "",
+            "img": "algeron",
+            "img2": "algeron2"
+        },
+        "fingerfeel": {
+            "title": "FINGER FEEL",
+            "desc": "Created an innovative mood detection application using front-facing camera technology to simulate fingerprint analysis. The app offered a unique approach to emotional state assessment, though it was ultimately rejected by Apple for potential user confusion.",
+            "link": "",
+            "img": "fingerfeel"
+        },
+        "kookishcoffee": {
+            "title": "KOOKISH COFFEE",
+            "desc": "Developed an informative application for Kookish Coffee, featuring menu information, location details, and special offers. The app provides coffee enthusiasts with a comprehensive guide to the coffee house experience.",
+            "link": "",
+            "img": "kookishcoffee"
+        }
+    }
+} 

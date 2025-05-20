@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1, shrink-to-fit=no, maximum-scale=1.0, user-scalable=0, user-scalable=no">
+    <meta name="keywords"
+        content="Software developer iOS, Software, programming, iOS Software development, Mobile applications development, freelancer, engineer, iOS, Apple">
+    <meta name="theme-color" content="#7ec9ab">
+    <link rel="stylesheet" href="css/style.css">
+    <title>Project | Roman Resenchuk</title>
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <a href="/">
+                    <h1>Roman Resenchuk<small>Software Development Engineer</small></h1>
+                </a>
+            </div>
+            <div class="menu">
+                <ul>
+                    <li><a href="/projects">All works</a></li>
+                    <li><a href="/#about">About me</a></li>
+                    <li><a href="/#contact">Contact me</a></li>
+                </ul>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <section class="project" id="project-details">
+                <!-- Project details will be loaded here -->
+            </section>
+            <hr>
+        </div>
+    </main>
+
+    <footer>Roman Resenchuk<br>© <span id="current-year"></span></footer>
+
+    <script>
+        document.getElementById('current-year').textContent = new Date().getFullYear();
+
+        // Get project name from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const projectName = urlParams.get('name');
+
+        if (!projectName) {
+            window.location.href = 'projects.html';
+        }
+
+        // Load and display project details
+        async function loadProjectDetails() {
+            try {
+                const response = await fetch('data.json');
+                const data = await response.json();
+
+                // Find project in all years
+                let project = null;
+                for (const year in data) {
+                    if (data[year][projectName]) {
+                        project = data[year][projectName];
+                        break;
+                    }
+                }
+
+                if (!project) {
+                    window.location.href = 'projects.html';
+                    return;
+                }
+
+                const container = document.getElementById('project-details');
+
+                // Create project image
+                const img = document.createElement('img');
+                img.className = 'img-fluid';
+                img.src = `img/works/${project.img}.jpg`;
+                img.alt = project.title;
+                container.appendChild(img);
+
+                // Create project title
+                const title = document.createElement('h2');
+                title.textContent = project.title;
+                container.appendChild(title);
+
+                // Create project description
+                const desc = document.createElement('p');
+                desc.innerHTML = project.desc.replace(/\n/g, '<br>');
+                container.appendChild(desc);
+
+                // Create App Store link if available
+                if (project.link) {
+                    const link = document.createElement('a');
+                    link.href = project.link;
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    const linkImg = document.createElement('img');
+                    linkImg.src = 'img/applestore.png';
+                    link.appendChild(linkImg);
+                    container.appendChild(link);
+                }
+
+                // Create additional image if available
+                if (project.img2) {
+                    const img2 = document.createElement('img');
+                    img2.className = 'img-fluid ext-img';
+                    img2.src = `img/works/${project.img2}.jpg`;
+                    img2.alt = project.title;
+                    container.appendChild(img2);
+                }
+
+            } catch (error) {
+                console.error('Error loading project details:', error);
+                window.location.href = 'projects.html';
+            }
+        }
+
+        loadProjectDetails();
+    </script>
+</body>
+
+</html>
