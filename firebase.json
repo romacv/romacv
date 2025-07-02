@@ -4,36 +4,20 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**",
-      ".git/**",
-      ".github/**",
-      ".vscode/**",
-      "!Firebase/**"
+      "**/node_modules/**"
     ],
     "rewrites": [
       {
-        "source": "/projects",
-        "destination": "/projects.html"
+        "source": "/project.html",
+        "destination": "/project.html"
       },
       {
-        "source": "/project/:name",
-        "destination": "/project.html?name=:name"
+        "source": "/projects.html",
+        "destination": "/projects.html"
       },
       {
         "source": "**",
         "destination": "/index.html"
-      }
-    ],
-    "redirects": [
-      {
-        "source": "/projects.html",
-        "destination": "/projects",
-        "type": 301
-      },
-      {
-        "source": "/project.html",
-        "destination": "/",
-        "type": 301
       }
     ]
   }

@@ -1,5 +1,27 @@
 {
-    "2020 - 2024": {
+    "2025 - Present" : {
+        "mathpanda": {
+            "title": "Math Panda - Learning Games for Kids",
+            "desc": "Math Panda is an iOS app that makes mental math fun for kids and adults. It features visual hints, a friendly AI-powered panda tutor, and safe interactive quizzes. Practice and learn anytime with fun AI chat and smart math tasks.",
+            "link": "",
+            "img": "mathpanda"
+        }
+    },
+    "2024" : {
+        "xchess": {
+            "title": "X-Chess & X-Checkers",
+            "desc": "Spearheaded full-cycle development of a unified gaming platform featuring both chess and checkers. Designed and implemented a robust client-server architecture supporting online gameplay, AI bots (including Stockfish integration), and social features. Developed complex matchmaking systems, rating mechanisms, and advanced gameplay customization. Established comprehensive CI/CD pipelines and analytics infrastructure with automated event tracking and crash reporting.",
+            "link": "",
+            "img": "x-chess"
+        },
+        "ondoc": {
+            "title": "ONDOC",
+            "desc": "Led iOS development of a comprehensive medical super-app featuring electronic medical records and telemedicine functionalities. As the lead iOS developer, I managed a team implementing new features using Objective-C, Swift, UIKit, and SwiftUI. Successfully launched and maintained over 30 white-label applications for various medical institutions. Implemented robust CI/CD pipelines using Fastlane, TeamCity, and Xcode Cloud, while optimizing app performance and resolving critical architectural issues.",
+            "link": "https://apps.apple.com/us/app/ondoc/id945720044",
+            "img": "ondoc"
+        }
+    },
+    "2020 - 2023": {
         "mynovels": {
             "title": "MyNovel: Novels & Stories",
             "desc": "Led the development of MyNovel, a premium iOS reading platform built with Clean Swift architecture. As the technical lead, I orchestrated a talented team to deliver a polished, high-performance application that provides an exceptional reading experience. The app successfully launched with robust features and scalable architecture.",

@@ -38,9 +38,9 @@ function renderProjects(data) {
             projectCol.className = 'col-md-4 col-sm-6 col-12';
 
             const projectLink = document.createElement('a');
-            projectLink.href = `/project/${key}`;
+            projectLink.href = `project.html?name=${key}`;
             projectLink.style.backgroundImage = `url('img/works/${project.img}.jpg')`;
-            projectLink.setAttribute('data-name', key);
+            projectLink.setAttribute('data-name', project.title);
 
             projectCol.appendChild(projectLink);
             projectsRow.appendChild(projectCol);
@@ -51,11 +51,20 @@ function renderProjects(data) {
     });
 }
 
+// Check for hash in URL and redirect if needed
+function checkHashAndRedirect() {
+    const hash = window.location.hash.substring(1);
+    if (hash) {
+        window.location.href = `project.html?name=${hash}`;
+    }
+}
+
 // Initialize the page
 async function init() {
     const data = await loadData();
     if (data) {
         renderProjects(data);
+        checkHashAndRedirect();
     }
 }
 
