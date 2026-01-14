@@ -36,7 +36,7 @@ hr {
   border:0;
   height: 1px;
   width: 290px;
-  margin: 75px auto;
+  margin: 35px auto;
   background-color: #e8e8e8;
 }
 
@@ -128,7 +128,7 @@ main {
       text-transform: uppercase;
     }
     &.topprojects {
-      padding-top: 75px;
+      padding-top: 35px;
       text-align: center;
       .row {
         a {
@@ -226,6 +226,48 @@ main {
         }
       }
     }
+    &.skills {
+      text-align: center;
+      .skills-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.5em;
+        @media (min-width: 576px) {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        @media (min-width: 992px) {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+      .skill-category {
+        h3 {
+          font-size: 1em;
+          font-weight: 600;
+          margin-bottom: 0.75em;
+          color: $submain;
+          text-transform: uppercase;
+        }
+      }
+      .skill-tags {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.5em;
+        span {
+          display: inline-block;
+          padding: 0.4em 0.8em;
+          background-color: $gray;
+          border: 1px solid #e8e8e8;
+          border-radius: 1em;
+          font-size: 0.85em;
+          @include shift();
+          &:hover {
+            border-color: $main;
+            color: $main;
+          }
+        }
+      }
+    }
     &.contactme {
       text-align: center;
       a {
@@ -239,7 +281,7 @@ main {
       }
     }
     &.projects {
-      padding-top: 75px;
+      padding-top: 35px;
       .year-block {
         margin-bottom: 1em;
         h3 {
@@ -295,7 +337,7 @@ main {
       }
     }
     &.project {
-      padding-top: 75px;
+      padding-top: 35px;
       text-align: center;
       h2 {
         margin: 2em 0 1.25em;
@@ -321,4 +363,14 @@ footer {
   text-transform: uppercase;
   color: $submain;
   padding-bottom: 50px;
+}
+
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  @include shift(all, 0.6s, ease-out);
+  &.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
