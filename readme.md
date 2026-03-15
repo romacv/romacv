@@ -4,4 +4,4 @@ Working with me, you’ll get:
 - understanding and politeness in communication;
 - efficiency and compliance;
 
-My hobbies: IT, computers, cars, motorcycles, finances, cryptocurrency, travel and exploration.
+My hobbies: IT, computers, travel and exploration, finances.
