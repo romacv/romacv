@@ -14,7 +14,7 @@
 │    - polite, clear communication                                             │
 │    - efficiency and compliance                                               │
 │                                                                              │
-│  Hobbies: IT, computers, travel & exploration, finances                      │
+│  Hobbies: IT, AI, computers, travel & exploration, finances                  │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
