@@ -1,7 +1,20 @@
-Proficiency iOS developer with huge experience since 2011. Proven ability to develop mobile applications with a focus on building high-performance, scalable, and secure solutions. In my work i use the best practice in code writing and architectural patterns with ability to lead and mentor a team of developer, supporting smooth communication with client.
-Working with me, you’ll get:
-- responsible attitude;
-- understanding and politeness in communication;
-- efficiency and compliance;
-
-My hobbies: IT, computers, travel and exploration, finances.
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│  Senior iOS/macOS Developer (since 2011)                                     │
+│                                                                              │
+│  Focus: high-performance, scalable, secure mobile apps                       │
+│  Very picky about great UI/UX and architectures                              │
+│  Strengths: best practices, clean architecture, mentoring, communication     │
+│  Since AI appeared, daily use of coding assistants and copilots to boost     │
+│  speed and quality                                                           │
+│                                                                              │
+│  Working with me, you’ll get:                                                │
+│    - responsible attitude                                                    │
+│    - polite, clear communication                                             │
+│    - efficiency and compliance                                               │
+│                                                                              │
+│  Hobbies: IT, computers, travel & exploration, finances                      │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
