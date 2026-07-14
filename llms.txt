@@ -1,0 +1,21 @@
+# Roman Resenchuk
+
+Roman Resenchuk is an experienced Apple platform developer with over a decade of experience building native applications for iOS, macOS, watchOS, tvOS, and visionOS.
+
+## Expertise
+- Native Apple app development
+- Swift, SwiftUI, UIKit, AppKit
+- Modern Apple frameworks and architecture
+- App Store delivery and product development lifecycle
+
+## Services
+- iOS and macOS application development
+- Apple platform consulting
+- UI implementation and product engineering
+- Full-cycle app development from concept to release
+
+## Contact
+- Website: https://www.resrom.com/
+- Email: R@RESROM.COM
+- Telegram: https://t.me/romacv
+- LinkedIn: https://linkedin.com/in/romanres
