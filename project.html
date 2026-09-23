@@ -128,14 +128,16 @@
                 desc.innerHTML = project.desc.replace(/\n/g, '<br>');
                 container.appendChild(desc);
 
-                // Create App Store link if available
+                // Create App Store or GitHub link if available
                 if (project.link) {
                     const link = document.createElement('a');
                     link.href = project.link;
                     link.target = '_blank';
                     link.rel = 'noopener';
                     const linkImg = document.createElement('img');
-                    linkImg.src = 'img/applestore.png';
+                    const isGitHub = project.link.includes('github.com');
+                    linkImg.src = isGitHub ? 'img/github.svg' : 'img/applestore.png';
+                    linkImg.alt = isGitHub ? 'View source on GitHub' : 'Available on the App Store';
                     link.appendChild(linkImg);
                     container.appendChild(link);
                 }
