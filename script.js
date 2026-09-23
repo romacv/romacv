@@ -39,7 +39,7 @@ function renderProjects(data) {
 
             const projectLink = document.createElement('a');
             projectLink.href = `project.html?name=${key}`;
-            projectLink.style.backgroundImage = `url('img/works/${project.img}.jpg')`;
+            projectLink.style.backgroundImage = `url('img/works/${project.img}.jpg?v=20260923b')`;
             projectLink.setAttribute('data-name', project.title);
 
             projectCol.appendChild(projectLink);
