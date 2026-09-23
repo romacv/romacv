@@ -35,6 +35,24 @@
             "desc": "Math Panda is an iOS app that makes mental math fun for kids and adults. It features visual hints, a friendly AI-powered panda tutor, and safe interactive quizzes. Practice and learn anytime with fun AI chat and smart math tasks.",
             "link": "https://apps.apple.com/app/id6746938495",
             "img": "mathpanda"
+        },
+        "claudestatusline": {
+            "title": "Claude Code Plan Usage Statusline",
+            "desc": "A status line for Claude Code that reads the real server-side rate-limit data straight from the CLI's own stdin, not a local token estimate, and shows model, context, 5-hour and weekly plan headroom, git state, active goals and loops. Ships with a Stop hook that keeps the fallback cache fresh with zero extra permission prompts. Written in Ruby, 8+ stars on GitHub.",
+            "link": "https://github.com/romacv/claude-plan-usage-statusline",
+            "img": "claudestatusline"
+        },
+        "usageguard": {
+            "title": "Claude Usage Guard",
+            "desc": "A plan-usage guardrail for Claude Code that stands a long-running session down before it hits its rate limit, checkpoints the task and goal, and wakes itself with a one-shot cron the moment the window resets. Built entirely from Claude Code's own primitives — a Stop hook, a skill and a cron — fail-open by design so a missing cache never blocks work.",
+            "link": "https://github.com/romacv/claude-usage-guard",
+            "img": "usageguard"
+        },
+        "marcus": {
+            "title": "Marcus — Second Brain",
+            "desc": "A remote MCP memory server that lets Claude, ChatGPT and Perplexity save, search and recall notes that live only in the user's own private GitHub repository — never on Marcus's servers. Published open source specifically so anyone can verify that claim by reading the code; built as a Cloudflare Worker with a full OAuth and vault-provisioning flow.",
+            "link": "https://github.com/romacv/marcus-source-code",
+            "img": "marcus"
         }
     },
     "2024" : {
