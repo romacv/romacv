@@ -1,7 +1,7 @@
 // Load the JSON data
 async function loadData() {
     try {
-        const response = await fetch('data.json');
+        const response = await fetch('data.json', { cache: 'no-cache' });
         const data = await response.json();
         return data;
     } catch (error) {
