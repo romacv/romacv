@@ -1,9 +1,39 @@
 {
     "2025 - Present" : {
+        "cloudshots": {
+            "title": "CloudShots: Screenshot History",
+            "desc": "CloudShots turns every screenshot on iPhone, iPad and Mac into a searchable history. On-device text recognition finds any screenshot by the words inside it, iCloud keeps the library in sync across devices with no account and no server, and a Mac menu bar panel captures and shares in one click. Built with SwiftUI, CloudKit, Vision and Apple Intelligence, localized into 13 languages.",
+            "link": "https://apps.apple.com/app/id6776119510",
+            "img": "cloudshots"
+        },
+        "nostress": {
+            "title": "NoStress: Stress Tracker",
+            "desc": "NoStress reads heart rate variability from Apple Watch and Fitbit to show your stress level in real time, on the wrist and on the phone. It sends gentle check-in notifications when your body needs a pause, and turns HRV, resting heart rate, sleep and activity into a daily overview and monthly trends. Built with SwiftUI, HealthKit, WatchKit and WidgetKit.",
+            "link": "https://apps.apple.com/app/id6756629270",
+            "img": "nostress"
+        },
+        "pixero": {
+            "title": "Image Editor: Pixero",
+            "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
+            "link": "https://apps.apple.com/app/id6770034829",
+            "img": "pixero"
+        },
+        "currency": {
+            "title": "Currency Converter: Best",
+            "desc": "A fast currency converter with live and offline exchange rates for 150+ currencies, a home screen widget, conversion history and a built-in calculator. Rates come from free public sources and are cached for travel without internet. Built with SwiftUI and WidgetKit.",
+            "link": "https://apps.apple.com/app/id6755351989",
+            "img": "currency"
+        },
+        "usagebattery": {
+            "title": "Usage Battery for Claude Code",
+            "desc": "A macOS menu bar app that shows Claude Code subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claude Code already stores in the Keychain and talks only to Anthropic, so no data is collected. Built with SwiftUI for macOS.",
+            "link": "https://apps.apple.com/app/id6757597561",
+            "img": "usagebattery"
+        },
         "mathpanda": {
             "title": "Math Panda - Learning Games for Kids",
             "desc": "Math Panda is an iOS app that makes mental math fun for kids and adults. It features visual hints, a friendly AI-powered panda tutor, and safe interactive quizzes. Practice and learn anytime with fun AI chat and smart math tasks.",
-            "link": "",
+            "link": "https://apps.apple.com/app/id6746938495",
             "img": "mathpanda"
         }
     },
