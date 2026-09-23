@@ -6,12 +6,6 @@
             "link": "https://apps.apple.com/app/id6776119510",
             "img": "cloudshots"
         },
-        "pixero": {
-            "title": "Image Editor: Pixero",
-            "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
-            "link": "https://apps.apple.com/app/id6770034829",
-            "img": "pixero"
-        },
         "marcus": {
             "title": "Marcus — Second Brain",
             "desc": "A remote MCP memory server that lets Claude, ChatGPT and Perplexity save, search and recall notes that live only in the user's own private GitHub repository — never on Marcus's servers. Published open source specifically so anyone can verify that claim by reading the code; built as a Cloudflare Worker with a full OAuth and vault-provisioning flow.",
@@ -49,6 +43,12 @@
             "desc": "A macOS menu bar app that shows Claude Code subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claude Code already stores in the Keychain and talks only to Anthropic, so no data is collected. Built with SwiftUI for macOS.",
             "link": "https://apps.apple.com/app/id6757597561",
             "img": "usagebattery"
+        },
+        "pixero": {
+            "title": "Image Editor: Pixero",
+            "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
+            "link": "https://apps.apple.com/app/id6770034829",
+            "img": "pixero"
         },
         "mathpanda": {
             "title": "Math Panda - Learning Games for Kids",
