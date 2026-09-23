@@ -139,16 +139,6 @@
                     link.appendChild(linkImg);
                     container.appendChild(link);
                 }
-
-                // Create additional image if available
-                if (project.img2) {
-                    const img2 = document.createElement('img');
-                    img2.className = 'img-fluid ext-img';
-                    img2.src = `img/works/${project.img2}.jpg`;
-                    img2.alt = project.title;
-                    container.appendChild(img2);
-                }
-
             } catch (error) {
                 console.error('Error loading project details:', error);
                 window.location.href = 'projects.html';

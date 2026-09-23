@@ -154,8 +154,7 @@
             "title": "READY FOR SKY",
             "desc": "Led the development of a comprehensive smart home management system for Ready For Sky (R4S). As the lead developer, I orchestrated team efforts, implemented new modules, and enhanced system architecture. The project utilized Agile/Scrum methodologies and GitFlow, with extensive documentation. Developed under OOO \"Tekhnopoisk\"/ OOO \"Erlab\" (REDMOND, Ready For Sky), the system offers advanced home automation capabilities.",
             "link": "https://itunes.apple.com/ru/app/ready-for-sky-otkroj-novuu/id927991375?mt=8",
-            "img": "readyforsky",
-            "img2": "readyforsky2"
+            "img": "readyforsky"
         },
         "zonesdating": {
             "title": "ZONES",
@@ -193,8 +192,7 @@
             "title": "VMESTE",
             "desc": "Developed an innovative dating application that revolutionizes the matching process. The app features intelligent matching algorithms, mutual interest indicators, and a sophisticated chat system. Created for LTD. \"Internet Agency LEGION\" (ralegion.ru), the platform offers a unique approach to connecting compatible individuals.",
             "link": "",
-            "img": "vmeste",
-            "img2": "vmeste2"
+            "img": "vmeste"
         },
         "progressio": {
             "title": "PROGRESSIO",
@@ -214,15 +212,13 @@
             "title": "CINEMATES",
             "desc": "Engineered a social movie-going platform that connects film enthusiasts. The app features movie recommendations, social scheduling, and community engagement tools. Developed for the Vkino/Cinemates service (vkino.ru, cinemates.com) under LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
-            "img": "cinemates",
-            "img2": "cinemates2"
+            "img": "cinemates"
         },
         "algeron": {
             "title": "ALGERON",
             "desc": "Developed a comprehensive patient management system that helps users track their health journey. The app features detailed health logging, medication reminders, and progress tracking. Created for LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
-            "img": "algeron",
-            "img2": "algeron2"
+            "img": "algeron"
         },
         "fingerfeel": {
             "title": "FINGER FEEL",
