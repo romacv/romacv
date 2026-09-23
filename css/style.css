@@ -2582,6 +2582,13 @@ main section.ai-summary .skill-tags {
 }
 main section.ai-summary .skill-tags span {
   background-color: #fff;
+  font-size: 0.8rem;
+  color: #868e96;
+}
+main section.ai-summary .skill-tags span + span::before {
+  content: "\00B7";
+  color: #adb5bd;
+  margin: 0 0.55em;
 }
 main section.aboutme ul {
   margin-top: -1em;
@@ -2777,4 +2784,31 @@ footer {
 .fade-in.visible {
   opacity: 1;
   transform: translateY(0);
+}
+main section.ai-summary .build-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.25rem;
+  max-width: 820px;
+  margin: 0 auto 1.5rem;
+}
+main section.ai-summary .build-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 1em;
+  padding: 1.25rem 1rem 1rem;
+  background-color: #fff;
+}
+main section.ai-summary .build-card img {
+  width: 120px;
+  height: 90px;
+}
+main section.ai-summary .build-card h3 {
+  font-size: 1.05rem;
+  margin: 0.75rem 0 0.35rem;
+}
+main section.ai-summary .build-card p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0;
+  color: #6c757d;
 }
