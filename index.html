@@ -89,6 +89,7 @@
     }
     </script>
     <script type="module" src="firebase-analytics.js"></script>
+    <script src="carousel.js" defer></script>
 </head>
 
 <body>
@@ -124,7 +125,7 @@
                             part of teams, including technical leadership and mentoring. I work with a modern native
                             stack: Swift (SwiftUI, UIKit, AppKit, Combine, Concurrency), having started with Objective‑C.</p>
                         <p>As soon as AI coding agents appeared, I went all in on agentic development. I build my own
-                            harnesses around Claude Code, Codex and Gemini: rules, skills, subagents, MCP servers and
+                            harnesses around coding agents: rules, skills, subagents, MCP servers and
                             automations that plan, write, review and ship code, so one engineer delivers like a team.</p>
                         <p>Attended Apple WWDC in 2018 and 2019, and regularly join local meetups. In my spare time, I
                             ship my own apps - full cycle from idea to release, including design, development, UI/UX,
@@ -147,7 +148,7 @@
                 <p>I design and build native apps for every Apple platform and AI agents that do real work. Swift and
                     SwiftUI on the device, agents and automations around it, and complete product delivery from
                     concept to App Store release.</p>
-                <div class="build-cards">
+                <div class="build-cards" aria-roledescription="carousel">
                     <div class="build-card">
                         <img src="img/build-mac.png" width="120" height="90" alt="">
                         <h3>Mac apps</h3>
@@ -164,26 +165,24 @@
                         <p>Agents and automations that write code, review and ship.</p>
                     </div>
                 </div>
-                <div class="skill-tags">
-                    <span>Swift</span>
-                    <span>SwiftUI</span>
-                    <span>UIKit</span>
-                    <span>AppKit</span>
-                    <span>iOS</span>
-                    <span>macOS</span>
-                    <span>visionOS</span>
-                    <span>watchOS</span>
-                    <span>tvOS</span>
-                </div>
-                <div class="skill-tags">
-                    <span>AI agents</span>
-                    <span>Claude Code</span>
-                    <span>Codex</span>
-                    <span>Gemini CLI</span>
-                    <span>Antigravity</span>
-                    <span>Cursor</span>
-                    <span>GitHub Copilot</span>
-                    <span>MCP</span>
+                <div class="build-cards-controls">
+                    <button type="button" class="build-cards-arrow build-cards-prev" aria-label="Previous">
+                        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+                            <path d="M15 4l-8 8 8 8" fill="none" stroke="currentColor" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                    <div class="build-cards-dots" role="tablist" aria-label="What I build slides">
+                        <button type="button" class="active" aria-label="Show Mac apps" aria-current="true"></button>
+                        <button type="button" aria-label="Show Mobile apps"></button>
+                        <button type="button" aria-label="Show AI agents"></button>
+                    </div>
+                    <button type="button" class="build-cards-arrow build-cards-next" aria-label="Next">
+                        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+                            <path d="M9 4l8 8-8 8" fill="none" stroke="currentColor" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
                 </div>
             </section>
             <hr>
@@ -257,6 +256,25 @@
                             <span>Instruments</span>
                             <span>TestFlight</span>
                             <span>App Store Connect</span>
+                        </div>
+                    </div>
+                    <div class="skill-category">
+                        <h3>AI tools</h3>
+                        <div class="skill-tags">
+                            <span>AI agents</span>
+                            <span>Claude Code</span>
+                            <span>Codex</span>
+                            <span>Gemini CLI</span>
+                            <span>Antigravity</span>
+                            <span>Cursor</span>
+                            <span>GitHub Copilot</span>
+                            <span>MCP</span>
+                            <span>Local LLMs</span>
+                            <span>Ollama</span>
+                            <span>LM Studio</span>
+                            <span>MLX</span>
+                            <span>llama.cpp</span>
+                            <span>Qwen</span>
                         </div>
                     </div>
                 </div>
