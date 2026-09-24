@@ -2502,6 +2502,8 @@ main section.topprojects .row a {
   background-position: 50%;
   position: relative;
   margin-bottom: 15px;
+  border-radius: 1em;
+  overflow: hidden;
 }
 @media (min-width: 576px) {
   main section.topprojects .row a {
