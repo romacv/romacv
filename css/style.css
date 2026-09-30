@@ -2438,6 +2438,7 @@ header .logo a h1 small {
   display: block;
   font-size: 0.5em;
   color: #888888;
+  text-transform: none;
 }
 header .logo a:hover h1 small {
   color: #888888;
@@ -2647,17 +2648,17 @@ main section.skills {
 }
 main section.skills .skills-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.5em;
 }
 @media (min-width: 576px) {
   main section.skills .skills-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (min-width: 992px) {
   main section.skills .skills-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 main section.skills .skill-category h3 {
@@ -2891,10 +2892,6 @@ main section.ai-summary .build-card p {
   line-height: 1.3;
   margin: 0;
   color: #6c757d;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 main section.ai-summary .build-cards-controls {
   display: flex;
