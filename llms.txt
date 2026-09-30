@@ -1,21 +1,22 @@
 # Roman Resenchuk
 
-Roman Resenchuk is an experienced Apple platform developer with over a decade of experience building native applications for iOS, macOS, watchOS, tvOS, and visionOS.
-
-## Expertise
-- Native Apple app development
-- Swift, SwiftUI, UIKit, AppKit
-- Modern Apple frameworks and architecture
-- App Store delivery and product development lifecycle
+> iOS and macOS developer since 2011 and agentic AI developer. Builds native Swift and SwiftUI apps with on-device AI, and custom AI agent harnesses, autonomous agents, multi-agent orchestration and MCP tool integrations. Open for freelance and contract projects, full-time senior roles and technical partnerships.
 
 ## Services
-- iOS and macOS application development
-- Apple platform consulting
-- UI implementation and product engineering
-- Full-cycle app development from concept to release
+- iOS and macOS app development: iPhone, iPad, Apple Watch and Mac apps in Swift, SwiftUI, UIKit and AppKit, from concept to App Store release
+- On-device AI in Apple apps: Apple Foundation Models, Vision, Apple Intelligence
+- Agentic AI development: custom agent harnesses (rules, skills, subagents, hooks), autonomous long-running agents, multi-agent orchestration
+- Tool and MCP integrations: remote MCP servers, OAuth, Cloudflare Workers
+
+## Work
+- [CloudShots: Screenshot History](https://www.resrom.com/project.html?name=cloudshots): iPhone, iPad and Mac screenshot search with on-device text recognition and Apple Intelligence
+- [Marcus: Second Brain](https://github.com/romacv/marcus-source-code): open-source remote MCP memory server for Claude, ChatGPT and Perplexity
+- [Claude Usage Guard](https://github.com/romacv/claude-usage-guard): stands a long-running Claude Code session down before its rate limit and resumes it automatically
+- [Claude Code Plan Usage Statusline](https://github.com/romacv/claude-plan-usage-statusline): status line showing real plan headroom, goals and loops
+- [All projects](https://www.resrom.com/projects.html)
 
 ## Contact
-- Website: https://www.resrom.com/
+- Website: https://www.resrom.com/#contact
 - Email: R@RESROM.COM
 - Telegram: https://t.me/romacv
 - LinkedIn: https://linkedin.com/in/romanres
