@@ -2608,6 +2608,10 @@ main section.ai-summary .skill-tags span + span::before {
   color: #adb5bd;
   margin: 0 0.55em;
 }
+main section.aboutme p,
+main section.aboutme li {
+  font-size: 17px;
+}
 main section.aboutme ul {
   margin-top: -1em;
   margin-bottom: 1em;
@@ -2744,6 +2748,21 @@ main section.contactme img {
   vertical-align: text-bottom;
   margin-right: 2px;
 }
+main section.contactme .contact-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5em 1.5em;
+}
+main section.contactme .contact-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+main section.contactme .contact-links img {
+  margin-right: 0;
+}
 main section.projects {
   padding-top: 35px;
 }
@@ -2763,7 +2782,7 @@ main section.projects .year-block a {
 }
 @media (min-width: 576px) {
   main section.projects .year-block a {
-    margin-bottom: 30px;
+    margin-bottom: 16px;
     border-width: 8px;
   }
 }
@@ -2772,11 +2791,15 @@ main section.projects .year-block a {
     display: block;
     column-count: 2;
     column-gap: 0;
+    margin-left: -8px;
+    margin-right: -8px;
   }
   main section.projects .year-block .row > div {
     display: inline-block;
     width: 100%;
     max-width: 100%;
+    padding-left: 8px;
+    padding-right: 8px;
     break-inside: avoid;
   }
 }

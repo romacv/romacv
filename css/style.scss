@@ -200,6 +200,10 @@ main {
       }
     }
     &.aboutme {
+      p,
+      li {
+        font-size: 17px;
+      }
       ul {
         margin-top: -1em;
         margin-bottom: 1em;
@@ -284,6 +288,21 @@ main {
         vertical-align: text-bottom;
         margin-right: 2px;
       }
+      .contact-links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.5em 1.5em;
+        a {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
+        }
+        img {
+          margin-right: 0;
+        }
+      }
     }
     &.projects {
       padding-top: 35px;
@@ -297,10 +316,14 @@ main {
             display: block;
             column-count: 2;
             column-gap: 0;
+            margin-left: -8px;
+            margin-right: -8px;
             > div {
               display: inline-block;
               width: 100%;
               max-width: 100%;
+              padding-left: 8px;
+              padding-right: 8px;
               break-inside: avoid;
             }
           }
@@ -314,7 +337,7 @@ main {
           position: relative;
           margin-bottom: 15px;
           @media (min-width: 576px) {
-            margin-bottom: 30px;
+            margin-bottom: 16px;
           }
           &:hover {
             &:after {

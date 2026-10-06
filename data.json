@@ -16,7 +16,8 @@
             "title": "Claude Code Plan Usage Statusline",
             "desc": "A status line for Claude Code that reads the real server-side rate-limit data straight from the CLI's own stdin, not a local token estimate, and shows model, context, 5-hour and weekly plan headroom, git state, active goals and loops. Ships with a Stop hook that keeps the fallback cache fresh with zero extra permission prompts. Written in Ruby, 8+ stars on GitHub.",
             "link": "https://github.com/romacv/claude-plan-usage-statusline",
-            "img": "claudestatusline"
+            "img": "claudestatusline",
+            "cover": "claudestatusline.svg"
         },
         "nostress": {
             "title": "NoStress: Stress Tracker",
