@@ -1,10 +1,10 @@
 # Roman Resenchuk
 
-> iOS and macOS developer since 2011 and agentic AI developer. Builds native Swift and SwiftUI apps with on-device AI, and custom AI agent harnesses, autonomous agents, multi-agent orchestration and MCP tool integrations. Open for freelance and contract projects, full-time senior roles and technical partnerships.
+> iOS and macOS developer since 2011 and agentic AI developer. Builds native Swift and SwiftUI apps, and custom AI agent harnesses, autonomous agents, multi-agent orchestration and MCP tool integrations. Open for freelance and contract projects, full-time senior roles and technical partnerships.
 
 ## Services
 - iOS and macOS app development: iPhone, iPad, Apple Watch and Mac apps in Swift, SwiftUI, UIKit and AppKit, from concept to App Store release
-- On-device AI in Apple apps: Apple Foundation Models, Vision, Apple Intelligence
+- AI features in Apple apps: Apple Foundation Models, Vision, Apple Intelligence
 - Agentic AI development: custom agent harnesses (rules, skills, subagents, hooks), autonomous long-running agents, multi-agent orchestration
 - Tool and MCP integrations: remote MCP servers, OAuth, Cloudflare Workers
 
