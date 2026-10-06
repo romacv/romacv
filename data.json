@@ -37,7 +37,8 @@
             "title": "Claude Usage Guard",
             "desc": "A plan-usage guardrail for Claude Code that stands a long-running session down before it hits its rate limit, checkpoints the task and goal, and wakes itself with a one-shot cron the moment the window resets. Built entirely from Claude Code's own primitives — a Stop hook, a skill and a cron — fail-open by design so a missing cache never blocks work.",
             "link": "https://github.com/romacv/claude-usage-guard",
-            "img": "usageguard"
+            "img": "usageguard",
+            "cover": "usageguard.svg"
         },
         "usagebattery": {
             "title": "Usage Battery for Claude Code",

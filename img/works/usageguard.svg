@@ -1,0 +1,22 @@
+<svg width="1200" height="460" viewBox="0 0 1200 460" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="460" rx="12" fill="#1e1e1e"/>
+  <path d="M12 0H1188A12 12 0 0 1 1200 12V40H0V12A12 12 0 0 1 12 0Z" fill="#2d2d2d"/>
+  <circle cx="24" cy="20" r="7" fill="#ff5f57"/>
+  <circle cx="46" cy="20" r="7" fill="#febc2e"/>
+  <circle cx="68" cy="20" r="7" fill="#28c840"/>
+  <text x="600" y="25" text-anchor="middle" font-family="-apple-system,'SF Pro Text','Helvetica Neue',sans-serif" font-size="14" fill="#9a9a9a">claude — 120×32</text>
+  <g font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc">
+    <text x="20" y="84"><tspan fill="#777777">&gt; </tspan>finish the release notes and ship 2.4</text>
+    <text x="20" y="122"><tspan fill="#d77757">● </tspan>Updated CHANGELOG.md and bumped the version to 2.4</text>
+    <text x="20" y="156" fill="#d7af00">usage-guard: 5h headroom 12% &lt;= 13% limit -- paused, resume 21:13.</text>
+    <text x="20" y="192"><tspan fill="#5f8700">● </tspan>PushNotification(usage-guard: 5h 12% &lt;= 13% — standing down, resume 21:13)</text>
+    <text x="20" y="220"><tspan fill="#5f8700">● </tspan>CronCreate(14 21 6 10 *, one-shot)</text>
+    <text x="20" y="248"><tspan fill="#d77757">● </tspan>Paused, resume 21:13.</text>
+    <line x1="20" y1="276" x2="1180" y2="276" stroke="#444444" stroke-width="1"/>
+    <text x="20" y="308" fill="#777777">21:14  cron fired · usage-guard RESUME</text>
+    <text x="20" y="342"><tspan fill="#5f8700">● </tspan>PushNotification(usage-guard: limits reset — resuming.)</text>
+    <text x="20" y="370"><tspan fill="#d77757">● </tspan>Back on it: tagging 2.4 and pushing the release.</text>
+    <line x1="20" y1="398" x2="1180" y2="398" stroke="#444444" stroke-width="1"/>
+    <text x="20" y="430"><tspan fill="#8700af">◆Opus 5·1M</tspan><tspan fill="#555555"> | </tspan><tspan fill="#d78700">▤Ctx:31%</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮5h:100%</tspan><tspan fill="#af8700"> ⧖4h59m</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮1w:58%</tspan></text>
+  </g>
+</svg>
