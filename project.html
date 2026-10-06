@@ -68,7 +68,6 @@
     <script>
         document.getElementById('current-year').textContent = new Date().getFullYear();
 
-        // Get project name from URL
         const urlParams = new URLSearchParams(window.location.search);
         const projectName = urlParams.get('name');
 
@@ -76,13 +75,11 @@
             window.location.href = 'projects';
         }
 
-        // Load and display project details
         async function loadProjectDetails() {
             try {
                 const response = await fetch('data.json', { cache: 'no-cache' });
                 const data = await response.json();
 
-                // Find project in all years
                 let project = null;
                 for (const year in data) {
                     if (data[year][projectName]) {
@@ -96,7 +93,6 @@
                     return;
                 }
 
-                // Update meta tags dynamically
                 document.title = `${project.title} | Roman Resenchuk`;
                 document.querySelector('meta[name="description"]').setAttribute('content', project.desc);
                 document.querySelector('meta[property="og:url"]').setAttribute('content', `https://www.resrom.com/project?name=${projectName}`);
@@ -111,24 +107,20 @@
 
                 const container = document.getElementById('project-details');
 
-                // Create project image
                 const img = document.createElement('img');
                 img.className = 'img-fluid';
                 img.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261006b`;
                 img.alt = project.title;
                 container.appendChild(img);
 
-                // Create project title
                 const title = document.createElement('h2');
                 title.textContent = project.title;
                 container.appendChild(title);
 
-                // Create project description
                 const desc = document.createElement('p');
                 desc.innerHTML = project.desc.replace(/\n/g, '<br>');
                 container.appendChild(desc);
 
-                // Create App Store or GitHub link if available
                 if (project.link) {
                     const link = document.createElement('a');
                     link.href = project.link;

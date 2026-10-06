@@ -63,7 +63,6 @@ function checkHashAndRedirect() {
     }
 }
 
-// Initialize the page
 async function init() {
     const data = await loadData();
     if (data) {
