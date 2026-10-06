@@ -2512,16 +2512,13 @@ main section.aboutme .photo img {
 main section.topprojects .row a img,
 main section.projects .year-block a img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: auto;
   border-radius: 0.6em;
 }
 main section.topprojects .row a {
-  height: 200px;
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
   position: relative;
@@ -2529,14 +2526,8 @@ main section.topprojects .row a {
 }
 @media (min-width: 576px) {
   main section.topprojects .row a {
-    height: 250px;
     margin-bottom: 0;
     border-width: 8px;
-  }
-}
-@media (min-width: 992px) {
-  main section.topprojects .row a {
-    height: 300px;
   }
 }
 main section.topprojects .row a:hover:after {
@@ -2763,11 +2754,8 @@ main section.projects .year-block h3 {
   font-weight: 600;
 }
 main section.projects .year-block a {
-  height: 200px;
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
   position: relative;
@@ -2775,14 +2763,26 @@ main section.projects .year-block a {
 }
 @media (min-width: 576px) {
   main section.projects .year-block a {
-    height: 150px;
     margin-bottom: 30px;
     border-width: 8px;
   }
 }
-@media (min-width: 992px) {
-  main section.projects .year-block a {
-    height: 200px;
+@media (min-width: 576px) {
+  main section.projects .year-block .row {
+    display: block;
+    column-count: 2;
+    column-gap: 0;
+  }
+  main section.projects .year-block .row > div {
+    display: inline-block;
+    width: 100%;
+    max-width: 100%;
+    break-inside: avoid;
+  }
+}
+@media (min-width: 768px) {
+  main section.projects .year-block .row {
+    column-count: 3;
   }
 }
 main section.projects .year-block a:hover:after {

@@ -136,19 +136,12 @@ main {
       text-align: center;
       .row {
         a {
-          height: 200px;
           width: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          display: block;
           position: relative;
           margin-bottom: 15px;
           @media (min-width: 576px) {
-            height: 250px;
             margin-bottom: 0;
-          }
-          @media (min-width: 992px) {
-            height: 300px;
           }
           &:hover {
             &:after {
@@ -157,8 +150,8 @@ main {
           }
           img {
             display: block;
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: auto;
             border-radius: 0.6em;
           }
           &:after {
@@ -299,20 +292,29 @@ main {
         h3 {
           font-weight: 600;
         }
+        .row {
+          @media (min-width: 576px) {
+            display: block;
+            column-count: 2;
+            column-gap: 0;
+            > div {
+              display: inline-block;
+              width: 100%;
+              max-width: 100%;
+              break-inside: avoid;
+            }
+          }
+          @media (min-width: 768px) {
+            column-count: 3;
+          }
+        }
         a {
-          height: 200px;
           width: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          display: block;
           position: relative;
           margin-bottom: 15px;
           @media (min-width: 576px) {
-            height: 150px;
             margin-bottom: 30px;
-          }
-          @media (min-width: 992px) {
-            height: 200px;
           }
           &:hover {
             &:after {
@@ -321,8 +323,8 @@ main {
           }
           img {
             display: block;
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: auto;
             border-radius: 0.6em;
           }
           &:after {
