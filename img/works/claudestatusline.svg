@@ -1,7 +1,22 @@
-<svg width="1180" height="152" viewBox="0 0 1180 152" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1180" height="152" rx="6" fill="#1e1e1e"/>
-  <text x="20" y="34" font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc"><tspan fill="#d70000">⏸paused to 20:01</tspan><tspan fill="#555555"> | </tspan><tspan fill="#8700af">◆Opus 5·1M</tspan><tspan fill="#0087af">✦high</tspan><tspan fill="#555555"> | </tspan><tspan fill="#d78700">▤Ctx:28%</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮5h:85%</tspan><tspan fill="#af8700"> ⧖3h42m</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮1w:64%</tspan><tspan fill="#af8700"> ⧖Sep 7 11:00</tspan></text>
-  <text x="20" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc"><tspan fill="#0087d7">~/Dev/claud....ge-guard</tspan><tspan fill="#555555"> | </tspan><tspan fill="#af875f">⑂wt-pause-badge</tspan><tspan fill="#555555"> | </tspan><tspan fill="#af5f5f">⌥pause-badge-wording ? ∙2 !3 ↑1 ↓4</tspan></text>
-  <text x="20" y="90" font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc"><tspan fill="#5f8700">◎goal:ship the release</tspan><tspan fill="#555555"> | </tspan><tspan fill="#00af5f">⟳loops:20m Poll the Slack · 1h check my tasks</tspan></text>
-  <text x="20" y="118" font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc"><tspan fill="#af8700">◷crons:17:13 (1h) check my tasks · 21:12 (once) resume</tspan></text>
+<svg width="1200" height="460" viewBox="0 0 1200 460" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="460" rx="12" fill="#1e1e1e"/>
+  <path d="M12 0H1188A12 12 0 0 1 1200 12V40H0V12A12 12 0 0 1 12 0Z" fill="#2d2d2d"/>
+  <circle cx="24" cy="20" r="7" fill="#ff5f57"/>
+  <circle cx="46" cy="20" r="7" fill="#febc2e"/>
+  <circle cx="68" cy="20" r="7" fill="#28c840"/>
+  <text x="600" y="25" text-anchor="middle" font-family="-apple-system,'SF Pro Text','Helvetica Neue',sans-serif" font-size="14" fill="#9a9a9a">claude — 120×32</text>
+  <g font-family="'JetBrains Mono','Cascadia Code','Fira Code','SF Mono',monospace" font-size="18" fill="#cccccc">
+    <text x="20" y="84"><tspan fill="#777777">&gt; </tspan>ship the release</text>
+    <text x="20" y="126"><tspan fill="#d77757">● </tspan>Bumped the version to 2.4 and updated CHANGELOG.md</text>
+    <text x="20" y="154"><tspan fill="#5f8700">● </tspan>Bash(git push origin main)</text>
+    <text x="20" y="182" fill="#777777">  ⎿  main -&gt; main</text>
+    <text x="20" y="210"><tspan fill="#d77757">● </tspan>Release 2.4 is out. Next check in 20 minutes.</text>
+    <line x1="20" y1="248" x2="1180" y2="248" stroke="#444444" stroke-width="1"/>
+    <text x="20" y="280" fill="#777777">&gt; Try "check my tasks"</text>
+    <line x1="20" y1="300" x2="1180" y2="300" stroke="#444444" stroke-width="1"/>
+    <text x="20" y="342"><tspan fill="#d70000">⏸paused to 20:01</tspan><tspan fill="#555555"> | </tspan><tspan fill="#8700af">◆Opus 5·1M</tspan><tspan fill="#0087af">✦high</tspan><tspan fill="#555555"> | </tspan><tspan fill="#d78700">▤Ctx:28%</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮5h:85%</tspan><tspan fill="#af8700"> ⧖3h42m</tspan><tspan fill="#555555"> | </tspan><tspan fill="#5f8700">▮1w:64%</tspan><tspan fill="#af8700"> ⧖Sep 7 11:00</tspan></text>
+    <text x="20" y="370"><tspan fill="#0087d7">~/Dev/claud....ge-guard</tspan><tspan fill="#555555"> | </tspan><tspan fill="#af875f">⑂wt-pause-badge</tspan><tspan fill="#555555"> | </tspan><tspan fill="#af5f5f">⌥pause-badge-wording ? ∙2 !3 ↑1 ↓4</tspan></text>
+    <text x="20" y="398"><tspan fill="#5f8700">◎goal:ship the release</tspan><tspan fill="#555555"> | </tspan><tspan fill="#00af5f">⟳loops:20m Poll the Slack · 1h check my tasks</tspan></text>
+    <text x="20" y="426"><tspan fill="#af8700">◷crons:17:13 (1h) check my tasks · 21:12 (once) resume</tspan></text>
+  </g>
 </svg>

@@ -2748,11 +2748,23 @@ main section.contactme img {
   vertical-align: text-bottom;
   margin-right: 2px;
 }
+main section.contactme ul li {
+  padding-left: 0.6em;
+  text-indent: -0.6em;
+}
 main section.contactme .contact-links {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.5em 1.5em;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75em;
+}
+@media (min-width: 768px) {
+  main section.contactme .contact-links {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5em 1.5em;
+  }
 }
 main section.contactme .contact-links a {
   display: inline-flex;
