@@ -135,7 +135,8 @@ main {
           height: 200px;
           width: 100%;
           display: block;
-          background-size: cover;
+          background-size: contain;
+          background-repeat: no-repeat;
           background-position: 50%;
           position: relative;
           margin-bottom: 15px;
@@ -291,7 +292,8 @@ main {
           height: 200px;
           width: 100%;
           display: block;
-          background-size: cover;
+          background-size: contain;
+          background-repeat: no-repeat;
           background-position: 50%;
           position: relative;
           margin-bottom: 15px;

@@ -2507,7 +2507,8 @@ main section.topprojects .row a {
   height: 200px;
   width: 100%;
   display: block;
-  background-size: cover;
+  background-size: contain;
+  background-repeat: no-repeat;
   background-position: center;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
@@ -2751,7 +2752,8 @@ main section.projects .year-block a {
   height: 200px;
   width: 100%;
   display: block;
-  background-size: cover;
+  background-size: contain;
+  background-repeat: no-repeat;
   background-position: center;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
