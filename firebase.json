@@ -1,6 +1,8 @@
 {
   "hosting": {
     "public": ".",
+    "cleanUrls": true,
+    "trailingSlash": false,
     "ignore": [
       "firebase.json",
       "readme.md",
@@ -10,14 +12,6 @@
       "**/node_modules/**"
     ],
     "rewrites": [
-      {
-        "source": "/project.html",
-        "destination": "/project.html"
-      },
-      {
-        "source": "/projects.html",
-        "destination": "/projects.html"
-      },
       {
         "source": "**",
         "destination": "/index.html"
@@ -30,6 +24,15 @@
           {
             "key": "Cache-Control",
             "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(jpg|jpeg|png|svg|webp|gif|ico|pdf)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=604800, stale-while-revalidate=86400"
           }
         ]
       }

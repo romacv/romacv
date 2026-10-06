@@ -38,7 +38,7 @@ function renderProjects(data) {
             projectCol.className = 'col-md-4 col-sm-6 col-12';
 
             const projectLink = document.createElement('a');
-            projectLink.href = `project.html?name=${key}`;
+            projectLink.href = `project?name=${key}`;
             const projectImage = document.createElement('img');
             projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261006`;
             projectImage.alt = project.title;
@@ -59,7 +59,7 @@ function renderProjects(data) {
 function checkHashAndRedirect() {
     const hash = window.location.hash.substring(1);
     if (hash) {
-        window.location.href = `project.html?name=${hash}`;
+        window.location.href = `project?name=${hash}`;
     }
 }
 

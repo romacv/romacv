@@ -9,11 +9,11 @@
 - Tool and MCP integrations: remote MCP servers, OAuth, Cloudflare Workers
 
 ## Work
-- [CloudShots: Screenshot History](https://www.resrom.com/project.html?name=cloudshots): iPhone, iPad and Mac screenshot search with on-device text recognition and Apple Intelligence
+- [CloudShots: Screenshot History](https://www.resrom.com/project?name=cloudshots): iPhone, iPad and Mac screenshot search with on-device text recognition and Apple Intelligence
 - [Marcus: Second Brain](https://github.com/romacv/marcus-source-code): open-source remote MCP memory server for Claude, ChatGPT and Perplexity
 - [Claude Usage Guard](https://github.com/romacv/claude-usage-guard): stands a long-running Claude Code session down before its rate limit and resumes it automatically
 - [Claude Code Plan Usage Statusline](https://github.com/romacv/claude-plan-usage-statusline): status line showing real plan headroom, goals and loops
-- [All projects](https://www.resrom.com/projects.html)
+- [All projects](https://www.resrom.com/projects)
 
 ## Contact
 - Website: https://www.resrom.com/#contact
