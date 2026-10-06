@@ -55,6 +55,12 @@
             "desc": "Math Panda is an iOS app that makes mental math fun for kids and adults. It features visual hints, a friendly AI-powered panda tutor, and safe interactive quizzes. Practice and learn anytime with fun AI chat and smart math tasks.",
             "link": "https://apps.apple.com/app/id6746938495",
             "img": "mathpanda"
+        },
+        "sleeptrack": {
+            "title": "Snore Recorder: SleepTrack",
+            "desc": "SleepTrack records snoring and sleep talk overnight, plays the clips back in the morning with a simple sleep score, and wakes you with a smart alarm inside a gentle wake-up window. It also offers sleep sounds with a timer and 7-day trends. No account, no data collection: every recording, score and report stays on the iPhone. Built with SwiftUI and AVFoundation.",
+            "link": "https://apps.apple.com/app/id6815288215",
+            "img": "sleeptrack"
         }
     },
     "2024": {
