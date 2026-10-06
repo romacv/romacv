@@ -240,7 +240,7 @@ main {
       .skills-grid {
         display: grid;
         grid-template-columns: 1fr;
-        gap: 1.5em;
+        gap: 1em;
         @media (min-width: 576px) {
           grid-template-columns: repeat(2, 1fr);
         }
@@ -250,9 +250,9 @@ main {
       }
       .skill-category {
         h3 {
-          font-size: 1em;
+          font-size: 0.75em;
           font-weight: 600;
-          margin-bottom: 0.75em;
+          margin-bottom: 0.5em;
           color: $submain;
           text-transform: uppercase;
         }
@@ -261,14 +261,14 @@ main {
         display: flex;
         flex-wrap: wrap;
         justify-content: center;
-        gap: 0.5em;
+        gap: 0.35em;
         span {
           display: inline-block;
-          padding: 0.4em 0.8em;
+          padding: 0.25em 0.65em;
           background-color: $gray;
           border: 1px solid #e8e8e8;
           border-radius: 1em;
-          font-size: 0.85em;
+          font-size: 0.7em;
           @include shift();
           &:hover {
             border-color: $main;

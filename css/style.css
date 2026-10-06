@@ -2659,7 +2659,7 @@ main section.skills {
 main section.skills .skills-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 1.5em;
+  gap: 1em;
 }
 @media (min-width: 576px) {
   main section.skills .skills-grid {
@@ -2672,9 +2672,9 @@ main section.skills .skills-grid {
   }
 }
 main section.skills .skill-category h3 {
-  font-size: 1em;
+  font-size: 0.75em;
   font-weight: 600;
-  margin-bottom: 0.75em;
+  margin-bottom: 0.5em;
   color: #888888;
   text-transform: uppercase;
 }
@@ -2682,15 +2682,15 @@ main section.skills .skill-tags {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 0.5em;
+  gap: 0.35em;
 }
 main section.skills .skill-tags span {
   display: inline-block;
-  padding: 0.4em 0.8em;
+  padding: 0.25em 0.65em;
   background-color: #F5F5F5;
   border: 1px solid #e8e8e8;
   border-radius: 1em;
-  font-size: 0.85em;
+  font-size: 0.7em;
   -webkit-transition: all 0.3s ease;
   -moz-transition: all 0.3s ease;
   -o-transition: all 0.3s ease;
