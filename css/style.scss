@@ -134,10 +134,9 @@ main {
         a {
           height: 200px;
           width: 100%;
-          display: block;
-          background-size: contain;
-          background-repeat: no-repeat;
-          background-position: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           position: relative;
           margin-bottom: 15px;
           @media (min-width: 576px) {
@@ -152,8 +151,16 @@ main {
               opacity: 1;
             }
           }
+          img {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 0.6em;
+          }
           &:after {
             position: absolute;
+            top: 0;
+            left: 0;
             background-color: transparentize($main,.2);
             width: 100%;
             opacity: 0;
@@ -291,10 +298,9 @@ main {
         a {
           height: 200px;
           width: 100%;
-          display: block;
-          background-size: contain;
-          background-repeat: no-repeat;
-          background-position: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           position: relative;
           margin-bottom: 15px;
           @media (min-width: 576px) {
@@ -309,8 +315,16 @@ main {
               opacity: 1;
             }
           }
+          img {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 0.6em;
+          }
           &:after {
             position: absolute;
+            top: 0;
+            left: 0;
             background-color: transparentize($main,.2);
             width: 100%;
             opacity: 0;

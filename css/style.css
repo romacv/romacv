@@ -2503,13 +2503,19 @@ main section.aboutme .photo img {
   overflow: hidden;
   background-color: #f2f3f5;
 }
+main section.topprojects .row a img,
+main section.projects .year-block a img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 0.6em;
+}
 main section.topprojects .row a {
   height: 200px;
   width: 100%;
-  display: block;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
   position: relative;
@@ -2532,6 +2538,8 @@ main section.topprojects .row a:hover:after {
 }
 main section.topprojects .row a:after {
   position: absolute;
+  top: 0;
+  left: 0;
   background-color: rgba(126, 201, 171, 0.8);
   width: 100%;
   opacity: 0;
@@ -2751,10 +2759,9 @@ main section.projects .year-block h3 {
 main section.projects .year-block a {
   height: 200px;
   width: 100%;
-  display: block;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-sizing: border-box;
   border: 6px solid #f2f3f5;
   position: relative;
@@ -2777,6 +2784,8 @@ main section.projects .year-block a:hover:after {
 }
 main section.projects .year-block a:after {
   position: absolute;
+  top: 0;
+  left: 0;
   background-color: rgba(126, 201, 171, 0.8);
   width: 100%;
   opacity: 0;

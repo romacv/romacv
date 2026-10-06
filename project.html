@@ -6,11 +6,11 @@
     <meta name="viewport"
         content="width=device-width, initial-scale=1, shrink-to-fit=no, maximum-scale=1.0, user-scalable=0, user-scalable=no">
     <meta name="keywords"
-        content="iOS project, Swift project, Objective-C project, mobile app development project, iOS application, Apple, SwiftUI, UIKit, Xcode, Swift Concurrency, Core Data, ARKit, MLKit, Realm, Firebase, Alamofire, Grand Central Dispatch, Core Animation, Metal, Fastlane, CI/CD, App Store Optimization, ASO, TDD, BDD, Agile, Scrum, Kanban, Git, iOS development, custom iOS apps, iOS consulting, iPhone app, iPad app, watchOS app, visionOS app, tvOS app">
+        content="iOS developer portfolio, macOS developer, agentic AI developer, App Store apps, Claude Code tools, MCP server, Swift, SwiftUI, AppKit">
     <meta name="description"
-        content="Discover details of this Apple platform project by Roman Resenchuk, covering native app development for iOS, macOS, watchOS, tvOS, and visionOS.">
+        content="A project by Roman Resenchuk, iOS/macOS and agentic AI developer.">
     <meta name="author" content="Roman Resenchuk">
-    <meta name="theme-color" content="#7ec9ab">
+    <meta name="theme-color" content="#f5f5f5">
     <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
 
     <!-- Open Graph / Facebook -->
@@ -18,16 +18,16 @@
     <meta property="og:url" content="https://www.resrom.com/project.html?name=">
     <meta property="og:title" content="Project | Roman Resenchuk">
     <meta property="og:description"
-        content="Discover details of this iOS project by Roman Resenchuk, an experienced iOS Developer.">
+        content="A project by Roman Resenchuk, iOS/macOS and agentic AI developer.">
     <meta property="og:image" content="https://www.resrom.com/img/avatar3.jpg">
 
     <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="https://www.resrom.com/project.html?name=">
-    <meta property="twitter:title" content="Project | Roman Resenchuk">
-    <meta property="twitter:description"
-        content="Discover details of this iOS project by Roman Resenchuk, an experienced iOS Developer.">
-    <meta property="twitter:image" content="https://www.resrom.com/img/avatar3.jpg">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://www.resrom.com/project.html?name=">
+    <meta name="twitter:title" content="Project | Roman Resenchuk">
+    <meta name="twitter:description"
+        content="A project by Roman Resenchuk, iOS/macOS and agentic AI developer.">
+    <meta name="twitter:image" content="https://www.resrom.com/img/avatar3.jpg">
 
     <link rel="canonical" href="https://www.resrom.com/project.html?name=">
     <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM-readable profile summary">
@@ -41,14 +41,14 @@
         <div class="container">
             <div class="logo">
                 <a href="/">
-                    <h1>Roman Resenchuk<small>Software Development Engineer</small></h1>
+                    <h1>Roman Resenchuk<small> iOS/macOS &amp; Agentic AI Developer</small></h1>
                 </a>
             </div>
             <div class="menu">
                 <ul>
-                    <li><a href="projects.html">All works</a></li>
-                    <li><a href="index.html#about">About me</a></li>
-                    <li><a href="index.html#contact">Contact me</a></li>
+                    <li><a href="/projects.html">All projects</a></li>
+                    <li><a href="/#about">About me</a></li>
+                    <li><a href="/#contact">Contact me</a></li>
                 </ul>
             </div>
         </div>
@@ -103,10 +103,10 @@
                 document.querySelector('meta[property="og:title"]').setAttribute('content', `${project.title} | Roman Resenchuk`);
                 document.querySelector('meta[property="og:description"]').setAttribute('content', project.desc);
                 document.querySelector('meta[property="og:image"]').setAttribute('content', `https://www.resrom.com/img/works/${project.img}.jpg`);
-                document.querySelector('meta[property="twitter:url"]').setAttribute('content', `https://www.resrom.com/project.html?name=${projectName}`);
-                document.querySelector('meta[property="twitter:title"]').setAttribute('content', `${project.title} | Roman Resenchuk`);
-                document.querySelector('meta[property="twitter:description"]').setAttribute('content', project.desc);
-                document.querySelector('meta[property="twitter:image"]').setAttribute('content', `https://www.resrom.com/img/works/${project.img}.jpg`);
+                document.querySelector('meta[name="twitter:url"]').setAttribute('content', `https://www.resrom.com/project.html?name=${projectName}`);
+                document.querySelector('meta[name="twitter:title"]').setAttribute('content', `${project.title} | Roman Resenchuk`);
+                document.querySelector('meta[name="twitter:description"]').setAttribute('content', project.desc);
+                document.querySelector('meta[name="twitter:image"]').setAttribute('content', `https://www.resrom.com/img/works/${project.img}.jpg`);
                 document.querySelector('link[rel="canonical"]').setAttribute('href', `https://www.resrom.com/project.html?name=${projectName}`);
 
                 const container = document.getElementById('project-details');
