@@ -2400,6 +2400,7 @@ body {
   background-color: #F5F5F5;
 }
 main {
+  display: flow-root;
   background-color: #fff;
 }
 header {
@@ -2609,12 +2610,17 @@ main section.ai-summary .skill-tags span + span::before {
   margin: 0 0.55em;
 }
 main section.aboutme p,
+main section.aboutme {
+  padding-top: 35px;
+}
 main section.aboutme li {
   font-size: 17px;
 }
 main section.aboutme ul {
   margin-top: -1em;
   margin-bottom: 1em;
+  padding-left: 1.25em;
+  list-style-type: disc;
 }
 @media (min-width: 576px) and (max-width: 767px) {
   main section.aboutme .photo {
