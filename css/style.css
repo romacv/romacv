@@ -2396,6 +2396,12 @@ hr {
   background-color: #e8e8e8;
 }
 
+body {
+  background-color: #F5F5F5;
+}
+main {
+  background-color: #fff;
+}
 header {
   background-color: #F5F5F5;
   border-bottom: 1px solid #e8e8e8;
@@ -2841,6 +2847,8 @@ footer {
   text-align: center;
   text-transform: uppercase;
   color: #888888;
+  border-top: 1px solid #e8e8e8;
+  padding-top: 50px;
   padding-bottom: 50px;
 }
 
