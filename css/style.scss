@@ -36,7 +36,7 @@ hr {
   border:0;
   height: 1px;
   width: 290px;
-  margin: 35px auto;
+  margin: 24px auto;
   background-color: #e8e8e8;
 }
 
@@ -129,11 +129,11 @@ main {
     h2 {
       text-align: center;
       font-weight: 600;
-      margin-bottom: 1.5em;
+      margin-bottom: 1em;
       text-transform: uppercase;
     }
     &.topprojects {
-      padding-top: 35px;
+      padding-top: 24px;
       text-align: center;
       .row {
         a {
@@ -201,7 +201,7 @@ main {
       }
     }
     &.aboutme {
-      padding-top: 35px;
+      padding-top: 24px;
       p,
       li {
         font-size: 17px;
@@ -319,7 +319,7 @@ main {
       }
     }
     &.projects {
-      padding-top: 35px;
+      padding-top: 24px;
       .year-block {
         margin-bottom: 1em;
         h3 {
@@ -396,7 +396,7 @@ main {
       }
     }
     &.project {
-      padding-top: 35px;
+      padding-top: 24px;
       text-align: center;
       h2 {
         margin: 2em 0 1.25em;
@@ -422,8 +422,8 @@ footer {
   text-transform: uppercase;
   color: $submain;
   border-top: 1px solid #e8e8e8;
-  padding-top: 50px;
-  padding-bottom: 50px;
+  padding-top: 32px;
+  padding-bottom: 32px;
 }
 
 .fade-in {
