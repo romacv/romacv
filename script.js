@@ -40,7 +40,7 @@ function renderProjects(data) {
             const projectLink = document.createElement('a');
             projectLink.href = `project?name=${key}`;
             const projectImage = document.createElement('img');
-            projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261006`;
+            projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261006b`;
             projectImage.alt = project.title;
             projectImage.loading = 'lazy';
             projectLink.appendChild(projectImage);
