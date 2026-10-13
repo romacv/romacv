@@ -66,6 +66,12 @@
         }
     },
     "2024": {
+        "docuclean": {
+            "title": "PDF Scanner & OCR: DocuClean",
+            "desc": "DocuClean scans documents, receipts, letters and ID cards into clean PDFs and finds any of them by a word inside. Text recognition runs on the iPhone, with on-device AI naming and summaries on iOS 27. No account, no uploads, no watermark, no ads. Built with SwiftUI and Vision.",
+            "link": "https://apps.apple.com/app/id6815216632",
+            "img": "docuclean"
+        },
         "xchess": {
             "title": "X-Chess & X-Checkers",
             "desc": "Led full-cycle development of a unified gaming platform for chess and checkers. Designed and implemented the client-server architecture for online play, AI bots (including Stockfish integration) and social features. Built matchmaking, ratings and gameplay customization. Set up CI/CD pipelines and analytics with automated event tracking and crash reporting.",
@@ -79,36 +85,42 @@
             "img": "ondoc"
         }
     },
-    "2020 - 2023": {
-        "mynovels": {
-            "title": "MyNovel: Novels & Stories",
-            "desc": "Led the development of MyNovel, a premium iOS reading platform built with Clean Swift architecture. As the technical lead, I managed the team that shipped the app. It launched with a scalable architecture.",
-            "link": "https://apps.apple.com/us/app/id1572410762",
-            "img": "mynovels"
-        },
+    "2023": {
         "tapcentive": {
             "title": "Tapcentive - Tablet Smart Chip Gaming",
             "desc": "Led iOS development for an iPad-based gaming platform, working with a team of engineers, designers and marketers. Integrated NFC technology and Smart Chip Cards for a secure, portable gaming solution. The application is distributed through Apple Business Manager.",
             "link": "",
             "img": "tapcentive"
-        },
+        }
+    },
+    "2022": {
         "mathbrain": {
             "title": "Math Brain - Arithmetic Learning Games Quiz",
             "desc": "Designed and developed an educational app that turns math learning into a daily challenge. Daily exercises train arithmetic, mental agility and cognitive speed, covering the fundamental operations.",
             "link": "",
             "img": "mathbrain"
+        }
+    },
+    "2021": {
+        "mynovels": {
+            "title": "MyNovel: Novels & Stories",
+            "desc": "Led the development of MyNovel, a premium iOS reading platform built with Clean Swift architecture. As the technical lead, I managed the team that shipped the app. It launched with a scalable architecture.",
+            "link": "https://apps.apple.com/us/app/id1572410762",
+            "img": "mynovels"
+        }
+    },
+    "2020": {
+        "wordix": {
+            "title": "Wordix: Memorize word Game",
+            "desc": "Developed a memory training app that applies neuroscience principles. Wordix offers daily exercises for memory retention, attention span and logical reasoning.",
+            "link": "",
+            "img": "wordix"
         },
         "twin": {
             "title": "Twin - Pair Match Symbol Cards",
             "desc": "Created a memory-matching game with smooth animations that tests focus and reaction time.",
             "link": "",
             "img": "twin"
-        },
-        "wordix": {
-            "title": "Wordix: Memorize word Game",
-            "desc": "Developed a memory training app that applies neuroscience principles. Wordix offers daily exercises for memory retention, attention span and logical reasoning.",
-            "link": "",
-            "img": "wordix"
         }
     },
     "2019": {
@@ -125,24 +137,26 @@
             "img": "tarot"
         }
     },
-    "2017 - 2018": {
+    "2018": {
         "autorent": {
             "title": "AUTO.rent",
             "desc": "Developed a peer-to-peer car rental platform that connects vehicle owners with renters. The app features secure payment processing, real-time availability tracking and a review system.",
             "link": "",
             "img": "autorent"
+        }
+    },
+    "2017": {
+        "solo": {
+            "title": "SOLO",
+            "desc": "Developed an international calling app for voice calls across borders. It features competitive rates and clear audio quality.",
+            "link": "",
+            "img": "solo"
         },
         "tipntrip": {
             "title": "tip n trip",
             "desc": "Created a travel companion app that helps users document and share their trips. The platform combines social features with practical travel tools for creating, organizing and sharing travel memories.",
             "link": "",
             "img": "tipntrip"
-        },
-        "solo": {
-            "title": "SOLO",
-            "desc": "Developed an international calling app for voice calls across borders. It features competitive rates and clear audio quality.",
-            "link": "",
-            "img": "solo"
         }
     },
     "2016": {
