@@ -9,7 +9,7 @@
 | autopost-render | Приватный Cloud Run job: подготовка аудио, кадров и контактных листов, затем отдельный финальный монтаж; 2 CPU, 2 GiB, 1800 с, без retries |
 | Firestore Native | Состояния, версии, checkpoints, tokens и outbox; us-central1, клиентские rules deny all |
 | Storage | Приватный resromcom-493b4-autopost: inbox/ и media/, поколения объектов и SHA-256, lifecycle 2 дня |
-| daily | Каждые 15 минут восстанавливает зависшие публикации; обслуживание выполняет раз в день в 06:00 выбранной зоны, по умолчанию UTC |
+| daily | Каждые 15 минут восстанавливает зависшие публикации; обслуживание выполняет раз в день в 06:00 выбранной зоны, по умолчанию Asia/Makassar |
 | budget_kill | Отдельный codebase и SA; SIMULATE_DEACTIVATION=True до drill |
 
 Код расположен в `autopost/functions/`; промпт — `autopost/functions/draft-agent.md`, накопленные правила — `autopost/functions/EXPERIENCE.md`. Черновик создаёт Anthropic с одной коррекцией JSON и локальной валидацией. Speech-to-Text V1 возвращает слова с таймкодами; резервирование в Firestore останавливает распознавание на 55 мин/месяц.

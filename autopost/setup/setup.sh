@@ -158,7 +158,7 @@ def config():
     result = {name: key(name + '.txt') for name in ('telegram_bot_token', 'webhook_secret', 'github_pat', 'github_noreply', 'anthropic_key', 'webhook_url', 'worker_url')}
     result.update({name: key(name + '.json', True) for name in ('channels', 'instagram', 'threads')})
     result.update({name: int(key(name + '.txt')) for name in ('telegram_bot_id', 'roman_user_id', 'roman_chat_id')})
-    result.update(runtime_service_account=RUNTIME, bucket=PROJECT + '-autopost', timezone='UTC', speech_language='ru-RU')
+    result.update(runtime_service_account=RUNTIME, bucket=PROJECT + '-autopost', timezone='Asia/Makassar', speech_language='ru-RU')
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', result['webhook_secret']):
         raise RuntimeError('Invalid webhook secret format.')
     if not result['github_noreply'].endswith('@users.noreply.github.com'):

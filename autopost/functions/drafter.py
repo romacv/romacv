@@ -4,6 +4,7 @@ import re
 import struct
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
 def validate(spec, prepared=True, copy_only=False):
@@ -164,6 +165,8 @@ def language_errors(spec):
 def ask(config, payload, images, validator, montage=False):
     import anthropic
     client = anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
+    local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
+    payload = {**payload,'timezone':config.get('timezone','Asia/Makassar'),'current_time':local.isoformat()}
     content = [{'type':'text','text':json.dumps(payload,ensure_ascii=False)}]
     for path in images:
         content.append({'type':'image','source':{'type':'base64','media_type':'image/jpeg','data':base64.b64encode(path.read_bytes()).decode()}})

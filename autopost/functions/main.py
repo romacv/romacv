@@ -356,7 +356,7 @@ def rendered(config,store,bucket,payload,directory):
     if job.get('state') != 'done':
         raise Error('Рендер не завершён. Материал сохранён.')
     edl = job['edl']
-    spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(timezone.utc).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],'approval':{}}
+    spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
     preview(config,store,bucket,payload['item'],spec,assets,directory)
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
@@ -776,7 +776,7 @@ def daily(event):
     platforms.configure(config,store,Path('/tmp'))
     recover_running(config,store)
     store.flush(enqueue)
-    local = datetime.now(ZoneInfo(config.get('timezone','UTC')))
+    local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
     if local.hour != 6 or local.minute >= 15:
         return
     def claim(value):

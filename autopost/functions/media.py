@@ -125,7 +125,7 @@ def transcribe(bucket, store, path, source_id, config):
     if language not in ('ru-RU','en-US'):
         raise Error('Unsupported speech language')
     client = speech.SpeechClient()
-    operation = client.long_running_recognize(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.FLAC,sample_rate_hertz=16000,language_code=language,enable_word_time_offsets=True,enable_automatic_punctuation=True),audio=speech.RecognitionAudio(uri='gs://' + bucket.name + '/' + name))
+    operation = client.long_running_recognize(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.FLAC,sample_rate_hertz=16000,language_code=language,alternative_language_codes=['en-US' if language == 'ru-RU' else 'ru-RU'],enable_word_time_offsets=True,enable_automatic_punctuation=True),audio=speech.RecognitionAudio(uri='gs://' + bucket.name + '/' + name))
     response = operation.result(timeout=240)
     text, words = [], []
     for result in response.results:
