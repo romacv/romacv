@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import stat
 import subprocess
 import sys
 import tempfile
@@ -154,6 +155,78 @@ def key(name, structured=False):
     return json.loads(value) if structured else value
 
 
+class IdsError(RuntimeError):
+    pass
+
+
+def write_id(name, value):
+    path = KEYS / name
+    structured = name.endswith('.json')
+    if os.path.lexists(path):
+        if key(name, structured) != value:
+            raise IdsError(name + ' differs; refusing to overwrite.')
+        return
+    data = json.dumps(value) if structured else str(value)
+    descriptor, temporary = tempfile.mkstemp(dir=KEYS)
+    try:
+        with os.fdopen(descriptor, 'w') as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write(data + '\n')
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if key(name, structured) != value:
+                raise IdsError(name + ' differs; refusing to overwrite.')
+            return
+        say(name)
+    finally:
+        os.unlink(temporary)
+
+
+def ids():
+    directory = KEYS.lstat()
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or stat.S_IMODE(directory.st_mode) != 0o700:
+        raise IdsError('Keys directory must be owner-owned, mode 700, without symlinks.')
+    token = key('telegram_bot_token.txt')
+
+    def telegram(method, **payload):
+        request = urllib.request.Request('https://api.telegram.org/bot' + token + '/' + method, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.load(response)
+        if not result.get('ok'):
+            raise IdsError('Telegram ' + method + ' rejected.')
+        return result['result']
+
+    bot_id = telegram('getMe')['id']
+    write_id('telegram_bot_id.txt', str(bot_id))
+    if telegram('getWebhookInfo').get('url'):
+        raise IdsError('A webhook is set; getUpdates would fail. Remove the webhook before running ids.')
+    users = {}
+    for update in telegram('getUpdates'):
+        message = update.get('message', {})
+        if message.get('chat', {}).get('type') == 'private' and 'id' in message.get('from', {}):
+            users[message['from']['id']] = message['chat']['id']
+    if not users:
+        raise IdsError('Send /start to the bot, then rerun.')
+    if len(users) != 1:
+        raise IdsError('Several users wrote to the bot; refusing to guess.')
+    user_id, chat_id = next(iter(users.items()))
+    write_id('roman_user_id.txt', str(user_id))
+    write_id('roman_chat_id.txt', str(chat_id))
+    channel = telegram('getChat', chat_id='@romacv777')
+    if channel.get('type') != 'channel':
+        raise IdsError('Telegram chat must be type channel.')
+    member = telegram('getChatMember', chat_id=channel['id'], user_id=bot_id)
+    if member.get('status') != 'administrator':
+        raise IdsError('Bot is missing administrator status.')
+    for right in ('can_post_messages', 'can_edit_messages', 'can_delete_messages'):
+        if not member.get(right):
+            raise IdsError('Bot is missing ' + right + '.')
+    write_id('channels.json', {'tg-channel': channel['id']})
+
+
 def config():
     result = {name: key(name + '.txt') for name in ('telegram_bot_token', 'webhook_secret', 'github_pat', 'github_noreply', 'anthropic_key', 'webhook_url', 'worker_url')}
     result.update({name: key(name + '.json', True) for name in ('channels', 'instagram', 'threads')})
@@ -225,11 +298,13 @@ def publish_budget_sample():
     say('Sample published. Inspect disable-billing logs for the simulated result; local source does not prove deployed simulation mode.')
 
 
-commands = {'apis': apis, 'infra': infra, 'iam': iam, 'secret': secret, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
+commands = {'apis': apis, 'infra': infra, 'iam': iam, 'ids': ids, 'secret': secret, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
 if len(sys.argv) != 2 or sys.argv[1] not in commands:
-    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|secret|render|webhook|budget-test}')
+    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|ids|secret|render|webhook|budget-test}')
 try:
     commands[sys.argv[1]]()
+except IdsError as error:
+    sys.exit(str(error))
 except Exception:
     sys.exit('Setup failed; details suppressed to keep credentials private. Check key-file schema, owner permissions and documented prerequisites.')
 PY
