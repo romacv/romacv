@@ -1,0 +1,44 @@
+# Автопостер на Firebase
+
+Роман отправляет боту текст, фото, голос или видео. Бот готовит черновик и финальные файлы, показывает их в личном чате и ждёт «Опубликовать». Подтверждение привязано к конкретным текстам и байтам медиа. «Править» создаёт новую версию, «Отклонить» закрывает черновик.
+
+| Часть | Назначение |
+| --- | --- |
+| webhook | Functions 2nd gen, Python 3.12, us-central1; проверяет Telegram secret, владельца и личный чат; сохраняет update и outbox транзакцией |
+| worker | 2 GiB, 540 с, одна попытка и один параллельный вызов; черновики, превью, публикация и приём результатов job |
+| autopost-render | Приватный Cloud Run job: подготовка аудио, кадров и контактных листов, затем отдельный финальный монтаж; 2 CPU, 2 GiB, 1800 с, без retries |
+| Firestore Native | Состояния, версии, checkpoints, tokens и outbox; us-central1, клиентские rules deny all |
+| Storage | Приватный resromcom-493b4-autopost: inbox/ и media/, поколения объектов и SHA-256, lifecycle 2 дня |
+| daily | Каждые 15 минут восстанавливает зависшие публикации; обслуживание выполняет раз в день в 06:00 выбранной зоны, по умолчанию UTC |
+| budget_kill | Отдельный codebase и SA; SIMULATE_DEACTIVATION=True до drill |
+
+Код расположен в `autopost/functions/`; промпт — `autopost/functions/draft-agent.md`, накопленные правила — `autopost/functions/EXPERIENCE.md`. Черновик создаёт Anthropic с одной коррекцией JSON и локальной валидацией. Speech-to-Text V1 возвращает слова с таймкодами; резервирование в Firestore останавливает распознавание на 55 мин/месяц.
+
+Альбом собирается с задержкой **10 с**; revision делает устаревшие задания неактуальными. Видео накапливаются до слова «монтаж». Пакет ограничен **1 GiB и 20 файлами**, отдельный MP4 — 512 MiB. Для видео больше 20 MiB бот выдаёт ссылку /u/ на 15 минут; /upload обновляет ссылку ожидающего пакета. Файлы выбираются по порядку списка. HMAC билета отделён от webhook secret, квитанция проверяет Origin, срок и revision.
+
+Страница /u/ закрепляет endpoint `https://us-central1-resromcom-493b4.cloudfunctions.net/webhook` и bucket `https://storage.googleapis.com/resromcom-493b4-autopost/` в проверках и CSP. Произвольные run.app и чужие buckets не допускаются; после deploy сверить адрес webhook с этой настройкой.
+
+Подготовка аудио/видео выполняется в Cloud Run: worker передаёт manifests объектов, а не весь пакет в памяти. Job извлекает FLAC, длительности, кадры раз в секунду и до 100 контактных листов. Монтаж проверяет источники, конечные числовые времена, границы клипов и субтитров. Каждый итоговый файл очищается от метаданных перед хешированием. Reel/каналы/Threads — до 90 с, stories — до 60 с. Финальный render делает crop/blur pad, loudnorm и встроенные субтитры; Reel — H.264/AAC 1080×1920, Telegram story — H.265/AAC 720×1280 до 30 MB. Обложка входит в длительность. Перед подтверждением нужно проверить изображение и звук.
+
+Планирование `at` ограничено **36 часами** от проверки; lifecycle не гарантирует наличие материала после долгого ожидания подтверждения. При отсутствии объекта бот сообщает «Материал истёк. Пришли файлы заново.»; при загрузке возможен вариант «Материал истёк или не загружен. Пришли файлы заново.».
+
+Состояния: drafting → previewed → approved → running → done/partial/failed. Истёкший материал завершает публикацию в failed без кнопки повтора. Правка снимает старое подтверждение; повторные update/callback не публикуют материал снова. Перед внешним действием сохраняется pending checkpoint, после ответа — done с ID. Явный HTTP 4xx помечает попытку failed; сетевой сбой оставляет pending до ручной сверки результата у платформы. «Повторить» из partial пропускает готовые шаги и не снимает pending. Контейнеры Meta ERROR/EXPIRED пересоздаются без сброса успешного publish checkpoint. Blog после PATCH 422 сверяет текущую ссылку ветки.
+
+Каждый **15-минутный tick** переводит running старше 10 минут в partial и предлагает повтор с сохранёнными результатами. Ежедневное обслуживание также восстанавливает недоставленные результаты prepare/render. Подписанные GET привязаны к generation и действуют 60 минут; проверяются полным GET, Content-Type, длиной и SHA-256. Неудачная проверка публичной ссылки не вызывает повторную публикацию.
+
+Telegram публикуется по-русски; рабочие Instagram/Threads и blog — по-английски, личные тексты — по-русски. Blog использует атомарный Git Data commit в main от Roman Resenchuk с GitHub noreply; отчёт сверяет Action по commit SHA и title статьи. Непроверенный URL отмечается явно. Facebook mirror проверяется после Instagram; при отсутствии нужна ручная публикация. Ссылку `ig-story`, вычисленную из shortcode, обязательно открыть на телефоне **при первой живой story**; до этой проверки её корректность не подтверждена.
+
+## Настройка
+
+Права каждого SA и причины grants перечислены в [reference.md](../autopost/setup/reference.md). Runtime читает только AUTOPOST через secretAccessor, без удаления версий и инвентаризации функций. Для подписания выдан только signBlob на собственном SA; для запуска job — run и runWithOverrides на конкретном job. Speech V1 не требует отдельной Speech role: см. официальные [longrunningrecognize](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/speech/longrunningrecognize) и [operations.get](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/operations/get).
+
+1. Включить Blaze, выполнить `autopost/setup/setup.sh apis`, затем `infra` и `iam`. Подключить существующий bucket к Firebase Storage. Подготовить Telegram Post messages/Manage stories, Meta app и testers, GitHub PAT и Anthropic prepaid с auto-reload off и месячным limit.
+2. Создать приватные файлы по [keys-template.md](../autopost/setup/keys-template.md). Явный `setup.sh secret` всегда добавляет версию из переданных владельцем файлов, не читая существующее значение.
+3. Выполнить `setup.sh render`; выложить functions, Firestore/Storage rules и Hosting. Проверить приватность worker/job и публичность webhook. Сверить URL, повторить `iam` и `infra` для resource grants и настроек после deploy. После первого deploy измерить суммарный размер Artifact Registry.
+4. После каждого изменения AUTOPOST выполнить redeploy webhook, worker и daily, проверить работу и привязанные версии. Вручную уничтожить прежнюю неиспользуемую версию: [AUTOPOST → Versions](https://console.cloud.google.com/security/secret-manager/secret/AUTOPOST/versions?project=resromcom-493b4), Actions → Destroy. Free tier — **6 активных версий**; автоматической очистки нет. Не уничтожать версии, ещё используемые deployments: [Firebase secrets](https://firebase.google.com/docs/functions/config-env?gen=2nd), [Secret Manager](https://docs.cloud.google.com/secret-manager/docs/destroy-secret-version).
+5. Выполнить `setup.sh webhook` с тем же секретом и URL; pending updates сохраняются. Настроить бюджет $0.01, пороги 50/90/100%, Pub/Sub budget-alerts и право публикации уведомлений.
+6. Проверить deployed SIMULATE_DEACTIVATION=True. `setup.sh budget-test` отправляет sample; проверить «Billing disabled. (Simulated)». **Kill switch остаётся в симуляции до drill в отдельном проекте**; реальное отключение включается отдельным решением. Отключение billing останавливает все сервисы проекта, включая Hosting сайта, и может удалить ресурсы. Уведомления запаздывают и не ограничивают расходы: [Google sample](https://docs.cloud.google.com/billing/docs/how-to/disable-billing-with-notifications).
+
+Первый запуск проверять последовательно с отдельным подтверждением Романа: Telegram text/photo/album/story, Threads, Instagram post/story/Reel и Facebook mirror, blog, большой MP4 через /u/, монтаж, правки, отклонение и несколько целей. Проверить доступность медиа для Meta, конечные кодеки, длительность, звук и все ссылки на телефоне.
+
+Free tier не гарантирует нулевой счёт. Scheduler: 3 бесплатных задания на billing account. Cloud Build оставляет исходники в staging bucket: после первого deploy проверить его и удалить staged sources. Artifact Registry: превышение 0.5 GB суммарно вероятно; cleanup старше суток не является лимитом размера. Secret Manager: 6 активных версий; Speech V1 Standard: первые 60 минут, приложение резервирует до 55. Soft delete bucket отключён (0). Render, builds, egress и другие workloads billing account учитываются отдельно. После первого deploy и живого запуска проверить размер образов и Billing report: [free tier](https://docs.cloud.google.com/free/docs/free-cloud-features), [Cloud Run](https://cloud.google.com/run/pricing), [Speech](https://cloud.google.com/speech-to-text/pricing), [Secret Manager](https://cloud.google.com/secret-manager/pricing).

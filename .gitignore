@@ -64,3 +64,9 @@ node_modules/
 
 # dotenv environment variables file
 .env
+
+# Personal autoposter private runtime data
+__pycache__/
+autopost/functions/venv/
+autopost/keys/*
+!autopost/keys/README.md

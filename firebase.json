@@ -5,13 +5,17 @@
     "trailingSlash": false,
     "ignore": [
       "firebase.json",
+      "firestore.rules",
+      "storage.rules",
       "readme.md",
       "firebase-debug.log*",
       "firebase-debug.*.log*",
       "**/*.scss",
       "**/*.map",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "autopost/**",
+      "docs/**"
     ],
     "rewrites": [
       {
@@ -39,5 +43,26 @@
         ]
       }
     ]
-  }
+  },
+  "functions": [
+    {
+      "source": "autopost/functions",
+      "codebase": "autopost",
+      "runtime": "python312"
+    },
+    {
+      "source": "autopost/budget",
+      "codebase": "budget",
+      "runtime": "python312"
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": [
+    {
+      "bucket": "resromcom-493b4-autopost",
+      "rules": "storage.rules"
+    }
+  ]
 }

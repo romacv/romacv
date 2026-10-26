@@ -1,0 +1,95 @@
+# Posting and media experience
+
+Read every row before drafting or sending a preview. Dates record the original lesson; rules are adapted to this personal publisher. The drafting agent checks the visual and editorial rules; the publisher enforces the mechanical gates. Platform-specific requirements override a generic format rule.
+
+| Date | Source lesson | Rule now |
+| --- | --- | --- |
+| 2026-10-13 | Recording under UI-test load juddered; frame-rate conversion baked it in. | Capture without UI tests or accessibility queries during motion; measure packet timestamps; reject motion gaps of 50 ms or more. Never hide gaps with duplicate frames. |
+| 2026-10-13 | Pasted typing looked fake and showed edit menus. | Real typing shows on-screen key presses throughout; never tap an already focused field. |
+| 2026-10-13 | Stretching takes to caption cues created slow motion and frozen tails. | Cut on action; no freeze holds, slow motion or crossfades inside a take. Picture follows the action. |
+| 2026-10-13 | Small devices, bare padding and blank cuts wasted the frame. | Fill the frame with the subject, one eased camera move per take; no blank frame or empty screen longer than a beat. |
+| 2026-10-13 | Low-rate composition lost smoothness. | Render designed demo compositions at 60 fps; preserve natural source timing and respect platform requirements. |
+| 2026-10-13 | Demo clocks were inconsistent. | Staged iOS demonstrations show 9:41. Do not falsify documentary personal footage. |
+| 2026-10-13 | Voice claims and screen actions disagreed. | Show every claimed action and every named device; never substitute a title for evidence. |
+| 2026-10-13 | Highlighting a name inside a negation and repeated end text confused the message. | Highlight the actual benefit; each teaser or end-card message appears once. |
+| 2026-10-13 | Stray pills, handles and inactive overlays escaped review. | Inspect the first frame of every take and remove accidental overlays in the source. |
+| 2026-10-13 | A portrait crop was reused in a wide empty composition. | Compose each format for its own frame with suitable caption sizes. |
+| 2026-10-13 | Unverified assets and generated screens were used. | Verify rights; use real app screenshots and recordings, never generated or redrawn app UI. Neutral fictional surrounding content is allowed. |
+| 2026-10-13 | Flying thumbnails did not match the captured content or landing cell. | Match the exact source fixture, destination, timestamp and grid slot; reveal the real cell only when the thumbnail lands. |
+| 2026-10-13 | Device depictions used missing bezels and wrong companions. | Use real captures inside the correct bezel; a watch demonstration sits beside its paired phone. |
+| 2026-10-13 | Choppy scrolling was repeatedly retaken. | Use a clean static stretch with a camera push when appropriate; a repeated hitch at the same action is an app defect to report. |
+| 2026-10-13 | Paid generations were nearly lost and a concurrency error triggered another call. | Archive each result and source note under the inbox item's generated directory. Never repeat a paid generation call; poll the saved job. |
+| 2026-10-13 | Paid footage was requested before free alternatives were searched. | Search licensed free stock first. A paid generation requires separate approval of its quoted cost; this autoposter never makes paid generation calls. |
+| 2026-10-13 | Typing B-roll did not match the narrated action. | B-roll must match the action; generated footage never depicts a screen. Keep stock inserts brief. |
+| 2026-10-13 | Music alternated between overpowering and inaudible. | Review by ear with voice clearly above an audible bed; approximately 0.13 is a starting mix level, not a loudness guarantee. Never validate music by a hallucinated transcript. |
+| 2026-10-13 | Full renders reached review before beat stills were checked. | Inspect stills at every beat, then the complete render, before the preview goes to Roman. |
+| 2026-10-14 | Copy and covers were absent from the approval chat. | Send actual phone-friendly media, cover and every target's copy and blog text before approval buttons. A successful send response is delivery evidence. |
+| 2026-10-13 | Placeholder toolbar pills and hand-drawn system glyphs looked artificial. | Use native system assets, real text, correct contemporary chrome, verified fonts and licensed symbols. |
+| 2026-10-13 | Private windows, notifications, location widgets and desktop files leaked. | Stage captures with fictional data, remove private overlays, and inspect every surface. Keep desktop/Dock placement natural and brand-neutral; remove unrelated third-party marks. |
+| 2026-10-13 | Background staging did not support the story. | Show the relevant source window and content; do not show arriving content before its action happens. |
+| 2026-10-13 | Recorder orchestration followed wrapper PIDs and stopped too early. | Use an explicit recording-ready handshake, one driver, the actual app identity, and an explicit end marker. Do not ask Roman for duplicate takes. |
+| 2026-10-13 | Watch recording had timestamp gaps, disconnected state and unwanted face frames. | Boot the paired phone, inspect timestamps, use a slow press-drag-hold rather than a crown/fling, and trim at the end marker. |
+| 2026-10-13 | Intros misrepresented the developer's role. | Describe Roman as an independent iOS/macOS/AI developer only where public evidence supports it; lead with the real problem, with an optional brief founder insert. |
+| 2026-10-13 | References were only links, and composition notes drifted. | Save a reference still or storyboard with its source; keep the draft's copy, paths, captions and composition notes synchronized. |
+| 2026-10-14 | Terminal titles leaked host/user names; stale windows were captured. | Use fictional terminal fixtures and titles; open only one intended window, confirm capture visibility and hide accidental cursors. |
+| 2026-10-14 | Maps exposed prompts and unrelated pins. | Stage the intended location before capturing; exclude unrelated branding and privacy prompts. Never add location metadata to outgoing posts. |
+| 2026-10-14 | A renderer overwrote captured fixtures. | Mark captured originals and never overwrite them. Keep raw takes out of later desktop captures. |
+| 2026-10-14 | Arrivals fired before the screen settled. | Wait for a visible ready state before triggering actions; all devices in a montage show the same intended newest content. |
+| 2026-10-14 | Raw seeks and copied offsets showed the wrong moment. | Inspect the actual final input; normalize a review copy before seeking if timestamps require it; find swaps by scene scan, not stale notes. |
+| 2026-10-14 | Device scales, overlaps and broken title phrases made covers cluttered. | Preserve credible relative scale and every device's visible shape; equal margins, no mid-phrase title break, no device covering another device's app UI. |
+| 2026-10-14 | Platform overlays covered captions at both top and bottom. | At 1080x1920, key text stays y=300–1250 and x=150–930, centered. Scale these coordinates proportionally for other sizes. Check against platform UI overlays. |
+| 2026-10-18 | Some video targets would have used a random frame. | Every video has a designed 9:16 sRGB cover. Use a native cover field where supported; otherwise insert that cover as frame zero, delaying audio by one source frame. Review and bind both files' hashes. |
+| 2026-10-18 | A wide Reel cover was rejected. | Ship a 1080x1920 JPEG with an embedded sRGB profile, at most 8 MB; warm its own public URL. |
+| 2026-10-18 | The profile grid cropped the title. | Cover text stays inside the middle 3:4 crop: y=240–1680 of 1080x1920; use the stricter social text safe zone for shared key text. |
+| 2026-10-14 | Caption styling drifted between shots. | One consistent type system and caption style per video, white spoken phrases, subdued unspoken words and dark shadow; never one isolated word at a time. |
+| 2026-10-15 | Face-cam flubs, repeated phrases and breaths remained. | Transcribe, keep the last clean phrase, remove flubs and pauses over 0.5 s with breaths; compare the render transcript to the script. |
+| 2026-10-18 | Oversized title gaps and empty fixtures looked broken. | Tight, consistent text stacks; roughly 32–48 px title gaps at 1080p when adjacent; fixtures fit their content, tracking scales with type. No large blank bands. |
+| 2026-10-18 | Approved copy opened with a concrete problem and named result. | First caption line is a real search phrase plus hook; state a specific problem then the demonstrated result in Roman's first person. |
+| 2026-10-19 | A clear founder lower third was praised. | For a founder plate, use a violet name/role band and white tagline band, edge to edge; preserve the approved design, keep gear visible and text inside safe areas. |
+| 2026-10-19 | Real-frame, benefit-led covers were praised. | Use a real frame with a title selling the result, keep the person and device visible, and preserve the approved plate. No generated screen or isolated cropped head. |
+| 2026-10-22 | One validated approval-gated run worked well. | Write article and hook first, validate until clean, preview all fields, approve once, run all targets with checkpoints, then report links and blog commit paths. |
+| 2026-10-18 | Threads could not fetch an Instagram media URL. | Every platform fetches media only from our own signed bucket URL, never Instagram CDN URLs or Telegram token-bearing URLs. |
+| 2026-10-18 | A cold cover fetch took 14 seconds and timed out. | GET every public object fully, require 200 and matching MIME and bytes before creating any container. |
+| 2026-10-19 | An API story was mistaken for a tappable repost. | Instagram Stories are standalone media. The publishing API cannot reshare a feed post or add interactive stickers; bake text into media, or let Roman reshare manually. |
+| 2026-10-19 | Shadows clipped to hard boxes and devices overlapped poorly. | Pad shadows beyond their blur, check on white at 1:1, use balanced overlaps and keep all app content visible. |
+| 2026-10-19 | Recut points from another composition clipped speech. | Cut against word timings of the exact render, before the next caption; listen to every seam. |
+| 2026-10-19 | A visual hold interrupted a sentence; loudness hid breaths. | Visuals overlay running voice. Use word boundaries, not loudness; seams at most 0.15 s and no longer than the original natural pause. |
+| 2026-10-19 | Unspoken headlines looked like unvoiced subtitles. | Caption style is only for spoken words. Short unspoken headlines use a distinct style; with title on top, captions go below the device but above overlays. Face-cam captions stay on top. |
+| 2026-10-19 | Narrow columns and asymmetric offsets hurt readability. | Center captions across the safe width with equal side margins, one or two lines; fill the composition height. In wide media allow only player-bar room below. |
+| 2026-10-19 | A blog card cropped the carousel title. | Blog images preserve intrinsic aspect ratio; inspect the article and index after deployment. |
+| 2026-10-19 | A Graph-generated link failed on a phone. | Construct links from returned IDs/shortcodes, never Graph permalink_url. Check each URL before reporting it; failed verification is stated and never triggers a repost. Roman verifies mobile opening on the first live post. |
+| 2026-10-19 | Voice matching and word stretching introduced gurgles. | Use the established voice denoiser, not home-made spectral subtraction. Pace with pauses and room tone, never stretch individual words; listen to output. |
+| 2026-10-20 | A rebuild dropped previously approved beats. | List protected beats and staging before revisions, verify every file exists, compare the new frame sheet beat by beat to the approved one. Never silently omit a device or caption. |
+| 2026-10-20 | A known caption typo still reached review. | Fix every observed defect before notifying Roman. A passing build is insufficient. |
+| 2026-10-20 | Cropping made one device look like another. | Keep each device recognizable in its real shape; name the intended device in each frame check. |
+| 2026-10-20 | A draft used a moving working tree and a pipeline hid failure. | Render a stable snapshot; verify the renderer's own exit code, output timestamp and full requested runtime. Report the actual captions/voice reviewed. |
+| 2026-10-20 | Per-file symlinks drifted and broke. | Prefer direct repo-local assets; if linking shared assets, link directories rather than individual files. Never link private material into public output. |
+| 2026-10-20 | Scrims were added to plain backgrounds and device beats. | Keep device frames below captions; no scrim on a plain background. Over footage, use a blurred background hugging each line, never a radial circle or flat oversized box. |
+| 2026-10-20 | A review preview took 13 minutes. | Use low-rate proxies for a phone-friendly review preview, target under a minute; do not throttle it. Check full-quality output separately. |
+| 2026-10-20 | A six-second slice was reported as a full check. | A check is complete only when its exact requested scope ran in full. |
+| 2026-10-20 | Repeated small patches did not rescue a rejected cut. | Stop and re-plan from the script, references and recorded review remarks when defects recur; require a new plan approval before rebuilding that rejected composition. |
+| 2026-10-21 | Unrequested changes to an approved plate caused an incident. | Change only what Roman requested. Restore from the published approved artifact, never an intermediate working commit. |
+| 2026-10-21 | End voice vanished and offsets caused silence. | N breakpoints require N+1 audio segments; apply offsets once. Transcribe first 4 s and last 10 s, listen to every seam and confirm the final phrase before sending. |
+| 2026-10-23 | Articles and hooks were retrofitted after publishing. | Write the complete English work article and each hook before posting; a published post is never edited or reposted, fixes belong to the next post. |
+| 2026-10-23 | Square icons and take corners escaped bezels. | Use the platform's rounded app icon shape and clip each take to its bezel; inspect every corner at full size. |
+| 2026-10-23 | Drawn line art replaced a requested real system screenshot. | Use the actual screenshot/recording for a system-action claim; missing evidence blocks that claim. |
+| 2026-10-13 | Generic discovery copy and tags added little. | Search phrase and hook first; 3–5 specific Instagram feed/Reel hashtags, never #fyp or #viral. Threads overrides this with at most one hashtag, first line a fact/situation, last character a question mark, at most 500 UTF-8 bytes. |
+| 2026-10-21 | A banned CTA survived an exception. | No “link in bio”, no empty marketing phrases and no AI-content label in copy, overlays, metadata or API payloads. Work copy has no emoji. |
+| 2026-10-26 | Metadata cleaning was required before mounting media. | Clean every file's metadata before hashing and preview. Approve and run verify cleanliness without changing bytes. |
+| 2026-10-26 | Locale, alt text and link tracking were inconsistent. | English blog uses en-US, canonical, RSS, sitemap, social metadata and BlogPosting author Roman Resenchuk. Meaningful alt text for images, stable optional tracking parameters, no location/reach restriction fields. |
+| 2026-10-26 | Replies worked best in the reader's language and without link dumps. | If drafting a reply, use one friendly paragraph, real pain first, no invented promises or competitor criticism. Respond personally; this tool does not auto-reply. |
+| 2026-10-26 | Provider-specific gates and unofficial assumptions caused failures. | Verify current official API/auth/limits first, use the dedicated personal identities, preserve uncertain checkpoints, report one numbered line per target. No unsupported network is silently substituted. |
+| 2026-10-26 | Webhook deliveries repeat on any non-2XX | Store update_id and callback_query.id before acting; answer 200 fast, do work in a task. |
+| 2026-10-26 | A task queue retries a half-posted run | max_attempts=1; only a human tap re-runs pending targets. |
+| 2026-10-26 | A budget kill switch removes the whole project's billing | Dry-run first; every secret also kept offline; list every free-tier line that can produce a cent. |
+| 2026-10-26 | Bot API getFile stops at 20 MB | Large media by a 15-minute signed PUT URL in the page fragment, never by chat upload. |
+| 2026-10-26 | Secrets bound at deploy | Rotating tokens live in Firestore, human-set ones in the single secret. |
+| 2026-10-26 | Copy language drifts with mixed Russian and English inputs | A Cyrillic-ratio validator per target, not a prompt line. |
+| 2026-10-26 | Raw clip batches need an explicit end | Collect videos until монтаж, including caption hints; album revisions invalidate earlier delayed tasks. |
+| 2026-10-26 | Unchecked edit decisions can exceed source or platform limits | Validate every EDL source, finite in/out, total including the cover frame, cover time and subtitle interval; allow one correction. |
+| 2026-10-26 | Subtitles can hide the subject or inject ASS controls | One or two plain lines, <=32 characters each; x=150–930, y=300–1250; no overlapping cues or ASS escapes. |
+| 2026-10-26 | Long rendering does not fit a short function invocation | Use the private Cloud Run render job; immutable object generations and SHA-256 tie outputs to approval. |
+| 2026-10-26 | Different platforms need different encodes | Preview each derivative: Reel H.264 1080x1920, Telegram story H.265 720x1280, keyframe each second and <=30 MB; stories <=60 s. |
+| 2026-10-26 | Replacing a secret can leave deployed functions on an older version | Redeploy every bound function before cleanup; preserve versions referenced by deployed functions as well as latest. |
+
+Firebase runtime clarification: historical references above to queue files and review sidecars describe the original workflow. The worker now cleans metadata in memory/local temporary derivatives, stores manifests and checkpoints in Firestore, and previews exact immutable output bytes. No Mac tool or local sidecar is required. Human review of every final derivative remains required before approval.

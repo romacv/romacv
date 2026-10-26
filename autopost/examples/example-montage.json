@@ -1,0 +1,28 @@
+{
+  "sources": {"clip-a": 12.5, "clip-b": 18.0},
+  "edl": {
+    "version": 1,
+    "kind": "personal",
+    "fit": "blur",
+    "targets": {
+      "tg-personal": {
+        "clips": [{"source":"clip-a","in":1.0,"out":7.0},{"source":"clip-b","in":2.0,"out":10.0}],
+        "subtitles": [{"start":0.5,"end":3.0,"lines":["Сохранил два коротких момента."]},{"start":6.5,"end":10.0,"lines":["Оставил естественный звук."]}]
+      },
+      "tg-story": {
+        "clips": [{"source":"clip-a","in":1.0,"out":7.0},{"source":"clip-b","in":2.0,"out":7.0}],
+        "subtitles": [{"start":0.5,"end":3.0,"lines":["Сохранил два коротких момента."]}]
+      },
+      "threads": {
+        "clips": [{"source":"clip-a","in":1.0,"out":7.0},{"source":"clip-b","in":2.0,"out":10.0}],
+        "subtitles": [{"start":0.5,"end":3.0,"lines":["Сохранил два коротких момента."]}]
+      }
+    },
+    "cover": {"target":"tg-personal","time":2.0},
+    "copy": {
+      "tg-personal":"Два коротких момента: оставил естественный звук и собрал их в одно видео.",
+      "tg-story":"Два коротких момента с естественным звуком.",
+      "threads":"Собрал два коротких момента в одно видео.\nВы сохраняете такие записи со звуком или с музыкой?"
+    }
+  }
+}
