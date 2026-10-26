@@ -169,8 +169,8 @@ def config():
     for provider in ('instagram', 'threads'):
         if set(result[provider]) != {'access_token', 'user_id', 'issued_at', 'expires_at'}:
             raise RuntimeError('Invalid provider key fields.')
-    if set(result['channels']) != {'tg-work', 'tg-personal'}:
-        raise RuntimeError('Both channel IDs required.')
+    if set(result['channels']) != {'tg-channel'}:
+        raise RuntimeError('Telegram channel ID required.')
     return result
 
 

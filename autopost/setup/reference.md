@@ -34,7 +34,7 @@
 
 ## Telegram stories
 
-Stories в рабочем и личном каналах не поддерживаются Bot API и не добавлены в цели. Официальные [postStory](https://core.telegram.org/bots/api#poststory), [editStory](https://core.telegram.org/bots/api#editstory) и [deleteStory](https://core.telegram.org/bots/api#deletestory) работают только от имени управляемого Business-аккаунта: обязательный `business_connection_id`, а не `chat_id`. Для личной цели `tg-story` проверяются владелец, активность подключения и Business-право `can_manage_stories`; правка также требует исходное медиа. Канальные права Post/Edit/Delete stories не запрашиваются и не проверяются, пока нет поддерживаемой канальной цели; обычные публикации в каналах их не требуют.
+Stories в канале не поддерживаются Bot API и не добавлены в цели. Официальные [postStory](https://core.telegram.org/bots/api#poststory), [editStory](https://core.telegram.org/bots/api#editstory) и [deleteStory](https://core.telegram.org/bots/api#deletestory) работают только от имени управляемого Business-аккаунта: обязательный `business_connection_id`, а не `chat_id`. Для личной цели `tg-story` проверяются владелец, активность подключения и Business-право `can_manage_stories`; правка также требует исходное медиа. Канальные права Post/Edit/Delete stories не запрашиваются и не проверяются, пока нет поддерживаемой канальной цели; обычные публикации в канале их не требуют.
 
 ## Meta: правка и удаление
 

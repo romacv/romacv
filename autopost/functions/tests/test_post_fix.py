@@ -20,7 +20,7 @@ from blog_commit import build_files, GitHub
 class PublishedTests(unittest.TestCase):
     def setUp(self):
         self.store = Store(FakeFirestore())
-        self.config = {'roman_user_id':1,'roman_chat_id':1,'telegram_bot_id':2,'channels':{'tg-work':-100123}}
+        self.config = {'roman_user_id':1,'roman_chat_id':1,'telegram_bot_id':2,'channels':{'tg-channel':-100123}}
         self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1])
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -28,8 +28,8 @@ class PublishedTests(unittest.TestCase):
         keyboard = patch.object(app,'remove_keyboard')
         self.keyboard = keyboard.start()
         self.addCleanup(keyboard.stop)
-        self.spec = {'slug':'article','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-work','threads','ig-post'],'media':{},'copy':{'tg-work':'Здесь ошибка в тексте.','threads':'A concrete fact.\nWhat next?','ig-post':'A concrete fact. #tools #coding #software'},'approval':{}}
-        self.results = {'tg-work':{'url':'https://t.me/example/10','chat_id':-100123,'message_ids':[10,11],'caption':True,'copy':self.spec['copy']['tg-work']},'threads':{'url':'https://www.threads.com/@romacv777/post/Abc','id':'123','copy':self.spec['copy']['threads']},'ig-post':{'url':'https://www.instagram.com/p/Abc/','id':'456','copy':self.spec['copy']['ig-post']}}
+        self.spec = {'slug':'article','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-channel','threads','ig-post'],'media':{},'copy':{'tg-channel':'Здесь ошибка в тексте.','threads':'A concrete fact.\nWhat next?','ig-post':'A concrete fact. #tools #coding #software'},'approval':{}}
+        self.results = {'tg-channel':{'url':'https://t.me/example/10','chat_id':-100123,'message_ids':[10,11],'caption':True,'copy':self.spec['copy']['tg-channel']},'threads':{'url':'https://www.threads.com/@romacv777/post/Abc','id':'123','copy':self.spec['copy']['threads']},'ig-post':{'url':'https://www.instagram.com/p/Abc/','id':'456','copy':self.spec['copy']['ig-post']}}
         self.source = {'item':'item-1','state':'done','spec':self.spec,'results':self.results,'preview_message':20,'published_at':1}
         self.store.put('specs/article',self.source)
         self.store.put('items/item-1',{'status':'previewed','revision':1})
@@ -42,7 +42,7 @@ class PublishedTests(unittest.TestCase):
 
     def prepare(self, operation='fix'):
         self.intake('удали пост' if operation == 'delete' else 'поправь ошибку в посте',20)
-        corrected = {'copy':{**self.spec['copy'],'tg-work':'Здесь исправленный текст.'},'blog':None}
+        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Здесь исправленный текст.'},'blog':None}
         with patch.object(app,'tell',return_value={'message_id':30}), patch.object(drafter,'ask',return_value=corrected):
             app.fix(self.config,self.store,'fix-100')
         return self.store.get('specs/fix-100')
@@ -93,21 +93,21 @@ class PublishedTests(unittest.TestCase):
         with patch.object(p,'change_published') as change, patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':31}):
             app.apply_fix(self.config,self.store,None,'fix-100',self.root)
         change.assert_not_called()
-        self.assertIn('Approval hash mismatch',self.store.get('specs/fix-100')['errors']['tg-work'])
+        self.assertIn('Approval hash mismatch',self.store.get('specs/fix-100')['errors']['tg-channel'])
         self.assertEqual(self.store.get('specs/fix-100')['state'],'rejected')
 
     def test_preview_only_changed_lines_and_language_validator(self):
-        corrected = {'copy':{**self.spec['copy'],'tg-work':'Русская строка.\nИсправлено.'},'blog':None}
-        self.spec['copy']['tg-work'] = 'Русская строка.\nОшибка.'
+        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Русская строка.\nИсправлено.'},'blog':None}
+        self.spec['copy']['tg-channel'] = 'Русская строка.\nОшибка.'
         self.source['spec'] = self.spec
-        self.source['results']['tg-work']['copy'] = self.spec['copy']['tg-work']
+        self.source['results']['tg-channel']['copy'] = self.spec['copy']['tg-channel']
         self.store.put('specs/article',self.source)
         self.intake('поправь ошибку',20)
         def ask(config,payload,images,validator):
             self.assertEqual(payload['mode'],'fix')
             self.assertEqual(validator(corrected),[])
             invalid = copy.deepcopy(corrected)
-            invalid['copy']['tg-work'] = 'An English sentence.'
+            invalid['copy']['tg-channel'] = 'An English sentence.'
             self.assertTrue(any('language mismatch' in e for e in validator(invalid)))
             return corrected
         with patch.object(drafter,'ask',side_effect=ask), patch.object(app,'tell',return_value={'message_id':30}) as tell:
@@ -131,12 +131,12 @@ class PublishedTests(unittest.TestCase):
             app.apply_fix(self.config,self.store,None,'fix-100',self.root)
             self.assertEqual(action.call_count,4)
             self.assertEqual(action.call_args.args[0],'threads')
-        self.assertEqual(self.store.get('specs/article')['results']['tg-work']['deleted'],True)
+        self.assertEqual(self.store.get('specs/article')['results']['tg-channel']['deleted'],True)
         action = unittest.mock.Mock(side_effect=p.Error('timeout'))
         with self.assertRaises(p.Error):
-            self.store.checkpoint('another','tg-work:apply',action)
+            self.store.checkpoint('another','tg-channel:apply',action)
         with self.assertRaises(StateError):
-            self.store.checkpoint('another','tg-work:apply',action)
+            self.store.checkpoint('another','tg-channel:apply',action)
         action.assert_called_once()
 
     def test_manual_target_report_has_link_and_no_call(self):
@@ -160,25 +160,25 @@ class PublishedTests(unittest.TestCase):
             app.apply_fix(self.config,self.store,None,'fix-100',self.root)
             self.assertIn('нет права на правку в канале',tell.call_args.args[1])
             self.assertIn('Threads: удалено',tell.call_args.args[1])
-            self.assertEqual(p.telegram_identity('tg-work')['id'],-100123)
+            self.assertEqual(p.telegram_identity('tg-channel')['id'],-100123)
 
     def test_album_edit_first_and_delete_all(self):
         with patch.object(p,'telegram_identity',return_value={'id':-100123}), patch.object(p,'telegram',return_value=True) as telegram:
-            p.change_published('tg-work',self.results['tg-work'],self.spec,'fix',self.root)
+            p.change_published('tg-channel',self.results['tg-channel'],self.spec,'fix',self.root)
             self.assertEqual(telegram.call_args.args[0],'editMessageCaption')
             self.assertEqual(telegram.call_args.args[1]['message_id'],10)
-            p.change_published('tg-work',self.results['tg-work'],self.spec,'delete',self.root)
+            p.change_published('tg-channel',self.results['tg-channel'],self.spec,'delete',self.root)
             self.assertEqual(telegram.call_args.args[1]['message_ids'],[10,11])
 
     def test_album_publication_checkpoint_keeps_every_message(self):
-        spec = {**self.spec,'targets':['tg-work'],'media':{'images':[{'path':'a.jpg','alt':'First'},{'path':'b.jpg','alt':'Second'}]}}
+        spec = {**self.spec,'targets':['tg-channel'],'media':{'images':[{'path':'a.jpg','alt':'First'},{'path':'b.jpg','alt':'Second'}]}}
         messages = [{'message_id':10},{'message_id':11}]
         state = {'steps':{}}
-        with patch.object(p,'media_files',return_value={'image0':self.root/'a.jpg','image1':self.root/'b.jpg'}), patch.object(p,'telegram_identity',return_value={'id':-100123,'username':'example'}), patch.object(p,'telegram',return_value=messages) as telegram:
-            self.assertEqual(p.post_telegram(spec,state,'tg-work'),'https://t.me/example/10')
+        with patch.object(p,'media_files',return_value={'image0':self.root/'a.jpg','image1':self.root/'b.jpg'}), patch.object(p,'telegram_identity',return_value={'id':-100123,'username':'romacv777'}), patch.object(p,'telegram',return_value=messages) as telegram:
+            self.assertEqual(p.post_telegram(spec,state,'tg-channel'),'https://t.me/romacv777/10')
         self.assertEqual(telegram.call_args.args[0],'sendMediaGroup')
-        self.assertEqual(state['steps']['tg-work:publish']['value'],messages)
-        self.assertEqual(self.store.checkpoint('article','tg-work:publish',lambda:self.fail('republished')),messages)
+        self.assertEqual(state['steps']['tg-channel:publish']['value'],messages)
+        self.assertEqual(self.store.checkpoint('article','tg-channel:publish',lambda:self.fail('republished')),messages)
 
     def test_threads_delete_pins_id_and_checks_identity(self):
         with patch.object(p,'social_session',return_value=('token','1',p.THREADS)) as identity, patch.object(p,'quota'), patch.object(p,'request',return_value={'success':True}) as request:
@@ -227,23 +227,23 @@ class PublishedTests(unittest.TestCase):
     def test_stale_source_refuses_application(self):
         saved = self.prepare('delete')
         self.approve(saved,'del')
-        self.store.change('specs/article',lambda value:value['published']['tg-work'].update(copy='Другая версия'))
+        self.store.change('specs/article',lambda value:value['published']['tg-channel'].update(copy='Другая версия'))
         with patch.object(p,'change_published',return_value='удали вручную') as action, patch.object(app,'tell',return_value={'message_id':31}):
             app.apply_fix(self.config,self.store,None,'fix-100',self.root)
-        self.assertNotIn('tg-work',[call.args[0] for call in action.call_args_list])
+        self.assertNotIn('tg-channel',[call.args[0] for call in action.call_args_list])
 
     def test_legacy_checkpoint_backfill_and_incomplete_album(self):
         legacy = copy.deepcopy(self.source)
         legacy['spec']['media'] = {'images':[{'path':'a.jpg','alt':'First'},{'path':'b.jpg','alt':'Second'}]}
-        legacy['results']['tg-work'] = {'url':self.results['tg-work']['url'],'verified':True}
+        legacy['results']['tg-channel'] = {'url':self.results['tg-channel']['url'],'verified':True}
         self.store.put('specs/article',legacy)
-        checkpoint = 'specs/article/checkpoints/' + hashlib.sha256(b'tg-work:publish').hexdigest()
+        checkpoint = 'specs/article/checkpoints/' + hashlib.sha256(b'tg-channel:publish').hexdigest()
         self.store.put(checkpoint,{'state':'done','value':{'message_id':10,'chat':{'id':-100123}}})
         self.prepare('delete')
-        published = self.store.get('specs/fix-100')['before']['tg-work']
+        published = self.store.get('specs/fix-100')['before']['tg-channel']
         self.assertEqual(published['message_ids'],[10])
         with patch.object(p,'telegram_identity',return_value={'id':-100123}), patch.object(p,'telegram') as telegram:
-            result = p.change_published('tg-work',published,legacy['spec'],'delete',self.root)
+            result = p.change_published('tg-channel',published,legacy['spec'],'delete',self.root)
         self.assertIn('вручную',result)
         telegram.assert_not_called()
 
@@ -261,12 +261,12 @@ class PublishedTests(unittest.TestCase):
         self.assertTrue(self.store.get('specs/fix-100')['keyboard_removed'])
 
     def test_preview_manual_missing_id_and_registered_chunks(self):
-        self.source['results']['tg-work'].pop('message_ids')
+        self.source['results']['tg-channel'].pop('message_ids')
         self.store.put('specs/article',self.source)
         self.intake('удали пост',20)
         with patch.object(app,'tell',side_effect=[{'message_id':29},{'message_id':30}]) as tell:
             app.fix(self.config,self.store,'fix-100')
-        self.assertIn('tg-work: удали вручную: ID не сохранён',tell.call_args_list[0].args[1])
+        self.assertIn('tg-channel: удали вручную: ID не сохранён',tell.call_args_list[0].args[1])
         self.assertEqual(self.store.get('published-messages/29'),{'slug':'article'})
         self.assertEqual(self.store.get('published-messages/30'),{'slug':'article'})
 
@@ -361,16 +361,16 @@ class PublishedTests(unittest.TestCase):
         self.assertEqual(self.store.get('specs/article')['results'],original_results)
 
     def test_run_saves_every_album_id_in_item(self):
-        spec = {**self.spec,'targets':['tg-work'],'media':{'images':[{'path':'a.jpg','alt':'First'},{'path':'b.jpg','alt':'Second'}]}}
-        assets = {'tg-work':{}}
+        spec = {**self.spec,'targets':['tg-channel'],'media':{'images':[{'path':'a.jpg','alt':'First'},{'path':'b.jpg','alt':'Second'}]}}
+        assets = {'tg-channel':{}}
         digest = app.asset_hash(spec,assets)
         self.store.put('specs/article',{**self.source,'spec':spec,'state':'approved','hash':digest,'approved_hash':digest,'assets':assets,'results':{},'errors':{}})
         def post(spec,state,target):
             state['steps'][target + ':publish'] = {'value':[{'message_id':10},{'message_id':11}]}
-            return self.results['tg-work']['url']
+            return self.results['tg-channel']['url']
         with patch.object(app,'remove_keyboard'), patch.object(app.media,'materialize'), patch.object(p,'post_telegram',side_effect=post), patch.object(p,'link_opens',return_value=True), patch.object(app,'tell',return_value={'message_id':31}):
             app.run(self.config,self.store,None,'article',self.root)
-        self.assertEqual(self.store.get('items/item-1')['published']['tg-work']['message_ids'],[10,11])
+        self.assertEqual(self.store.get('items/item-1')['published']['tg-channel']['message_ids'],[10,11])
 
 
 class BlogChangeTests(unittest.TestCase):

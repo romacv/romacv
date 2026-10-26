@@ -83,7 +83,7 @@ def validate(spec, prepared=True, copy_only=False):
                 elif images:
                     if image_size(files['image0']) != (1080, 1920) or files['image0'].stat().st_size > 10_000_000:
                         errors.append('tg-story photo must be 1080x1920, at most 10 MB')
-            if any(t in targets for t in ('tg-work', 'tg-personal')):
+            if 'tg-channel' in targets:
                 for name, path in files.items():
                     if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
                         errors.append(name + ': exceeds Telegram upload limit')

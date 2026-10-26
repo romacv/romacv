@@ -9,7 +9,7 @@
 | webhook_secret.txt | Стабильный случайный секрет: 1–256 символов A–Z, a–z, 0–9, `_`, `-` |
 | roman_user_id.txt | Числовой Telegram ID владельца |
 | roman_chat_id.txt | Числовой ID личного чата |
-| channels.json | Объект с tg-work и tg-personal: ID каналов, где бот имеет Post messages |
+| channels.json | Объект `{"tg-channel": <id>}`: ID публичного канала @romacv777 «Канал им. Ресенчука Романа», где бот имеет Post messages |
 | instagram.json | access_token, user_id, issued_at, expires_at; Instagram Login Creator |
 | threads.json | access_token, user_id, issued_at, expires_at |
 | github_pat.txt | Fine-grained PAT только romacv/romacv, Contents read/write |

@@ -19,7 +19,7 @@ def validate(edl, sources):
     targets = edl.get('targets')
     if not isinstance(targets, dict) or not targets:
         return errors + ['targets must be nonempty object']
-    allowed = {'ig-reel':90, 'ig-story':60, 'tg-story':60, 'tg-work':90, 'tg-personal':90, 'threads':90}
+    allowed = {'ig-reel':90, 'ig-story':60, 'tg-story':60, 'tg-channel':90, 'threads':90}
     totals = {}
     for target, timeline in targets.items():
         if target not in allowed or not isinstance(timeline, dict) or set(timeline) != {'clips', 'subtitles'}:

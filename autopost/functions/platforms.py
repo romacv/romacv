@@ -17,7 +17,7 @@ SITE = 'https://www.resrom.com'
 USERNAME = 'romacv777'
 IG = 'https://graph.instagram.com/v25.0'
 THREADS = 'https://graph.threads.net/v1.0'
-TARGETS = {'tg-work', 'tg-personal', 'tg-story', 'ig-post', 'ig-reel', 'ig-story', 'threads', 'blog'}
+TARGETS = {'tg-channel', 'tg-story', 'ig-post', 'ig-reel', 'ig-story', 'threads', 'blog'}
 BANNED = ('seamless', 'unlock', 'elevate', 'effortless', 'game-changer', 'link in bio')
 EMOJI = re.compile('[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f\u200d\u20e3\u2300-\u23ff]')
 CONTEXT = ContextVar('publishing_context')
@@ -170,7 +170,7 @@ def telegram_identity(target=None, operation=None):
     me = telegram('getMe')
     if not cfg.get('telegram_bot_id') or str(me['id']) != str(cfg['telegram_bot_id']):
         raise Error('Dedicated Telegram bot identity mismatch')
-    if target in ('tg-work', 'tg-personal'):
+    if target == 'tg-channel':
         channel = cfg['channels'][target]
         chat = telegram('getChat', {'chat_id': channel})
         member = telegram('getChatMember', {'chat_id': channel, 'user_id': me['id']})
@@ -503,12 +503,12 @@ def link_opens(url, title=None):
 def manual_change(target, published, spec, operation):
     if target.startswith('ig-'):
         return 'удали вручную' if operation == 'delete' else 'правь вручную'
-    required = 'path' if target == 'blog' else 'message_ids' if target in ('tg-work','tg-personal') else 'id'
+    required = 'path' if target == 'blog' else 'message_ids' if target == 'tg-channel' else 'id'
     if published.get('deleted'):
         return 'уже удалено'
     if not published.get(required):
         return 'удали вручную: ID не сохранён' if operation == 'delete' else 'правь вручную: ID не сохранён'
-    if operation == 'delete' and target in ('tg-work','tg-personal') and len(spec.get('media',{}).get('images',[])) > len(published['message_ids']):
+    if operation == 'delete' and target == 'tg-channel' and len(spec.get('media',{}).get('images',[])) > len(published['message_ids']):
         return 'удали вручную: сохранён только первый ID альбома'
     return None
 

@@ -469,7 +469,7 @@ def published_ids(config,spec,target,assets,publication):
         return {'path':'blog/' + spec['slug'] + '.html','blog':spec['blog']}
     if publication is None:
         return {}
-    if target in ('tg-work','tg-personal'):
+    if target == 'tg-channel':
         messages = publication if isinstance(publication,list) else [publication]
         return {'chat_id':messages[0].get('chat',{}).get('id') or config['channels'][target],'message_ids':[m['message_id'] for m in messages],'caption':bool(spec.get('media',{}).get('images') or spec.get('media',{}).get('video'))}
     if target == 'tg-story':
@@ -490,7 +490,7 @@ def fix(config,store,slug):
         raise StateError('Публикация ещё не завершена или уже удалена.')
     published_targets = {**source.get('results',{}),**source.get('published',{})}
     for target, published in published_targets.items():
-        required = 'path' if target == 'blog' else 'message_ids' if target in ('tg-work','tg-personal') else 'id'
+        required = 'path' if target == 'blog' else 'message_ids' if target == 'tg-channel' else 'id'
         if required not in published:
             name = target + ':publish'
             checkpoint = store.get('specs/' + saved['source'] + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()) or {}
