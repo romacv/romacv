@@ -33,7 +33,7 @@ def say(message):
 def cloud(*args, data=None, missing=False):
     result = subprocess.run(['gcloud', '--project=' + PROJECT, '--quiet', '--verbosity=error', *args], input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV)
     if result.returncode:
-        if missing and (b'NOT_FOUND' in result.stderr or b'not found' in result.stderr.lower()):
+        if missing and (b'NOT_FOUND' in result.stderr or b'not found' in result.stderr.lower() or b'cannot find' in result.stderr.lower()):
             return None
         raise RuntimeError('gcloud operation failed; output suppressed. Check owner access and prerequisites.')
     return result.stdout
@@ -85,7 +85,8 @@ def policies():
 def apis():
     services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging']
     say('Enable APIs: ' + ', '.join(services))
-    cloud('services', 'enable', *[service + '.googleapis.com' for service in services])
+    for start in range(0, len(services), 20):
+        cloud('services', 'enable', *[service + '.googleapis.com' for service in services[start:start + 20]])
 
 
 def infra():
@@ -94,8 +95,8 @@ def infra():
     if database.get('locationId') != REGION or database.get('type') != 'FIRESTORE_NATIVE':
         raise RuntimeError('Existing default Firestore must be Native in us-central1; no migration attempted.')
     ensure(('storage', 'buckets', 'describe', BUCKET), ('storage', 'buckets', 'create', BUCKET, '--location=' + REGION, '--uniform-bucket-level-access', '--public-access-prevention'))
-    bucket = json.loads(cloud('storage', 'buckets', 'describe', BUCKET, '--format=json'))
-    if bucket.get('location', '').lower() != REGION or str(bucket.get('project_number')) != cloud('projects', 'describe', PROJECT, '--format=value(projectNumber)').decode().strip():
+    bucket = json.loads(cloud('storage', 'buckets', 'describe', BUCKET, '--raw', '--format=json'))
+    if bucket.get('location', '').lower() != REGION or str(bucket.get('projectNumber')) != cloud('projects', 'describe', PROJECT, '--format=value(projectNumber)').decode().strip():
         raise RuntimeError('Bucket must belong to this project and be in us-central1.')
     ensure(('tasks', 'queues', 'describe', 'worker', '--location=' + REGION), ('tasks', 'queues', 'create', 'worker', '--location=' + REGION))
     say('Set worker queue to one attempt and one concurrent dispatch')
