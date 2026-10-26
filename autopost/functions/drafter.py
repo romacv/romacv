@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
-def validate(spec, prepared=True):
+def validate(spec, prepared=True, copy_only=False):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
     try:
@@ -31,61 +31,62 @@ def validate(spec, prepared=True):
         for item in images:
             if not isinstance(item, dict) or set(item) != {'path', 'alt'} or not isinstance(item['alt'], str) or not 1 <= len(item['alt']) <= 1000:
                 raise Error('Each image needs path and alt (1–1000 characters)')
-        files = media_files(spec)
-        if images and media.get('video'):
-            errors.append('Choose images or video for a spec, not both')
-        if media.get('cover') and not media.get('video'):
-            errors.append('cover requires video')
-        for name, path in files.items():
-            if path.stat().st_size == 0:
-                errors.append(name + ': empty media')
-            if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
-                errors.append(name + ': exceeds dedicated bot preview upload limit')
-            if name == 'video':
-                with path.open('rb') as f:
-                    header = f.read(12)
-                if path.suffix.lower() != '.mp4' or header[4:8] != b'ftyp':
-                    errors.append('video must be an MP4 file')
-            else:
-                image_size(path)
-        if media.get('video'):
-            if 'cover' not in files:
-                errors.append('Every video requires a designed 9:16 sRGB JPEG cover')
-            else:
-                w, h = image_size(files['cover'])
-                data = files['cover'].read_bytes()
-                if (w, h) != (1080, 1920) or data[:3] != b'\xff\xd8\xff' or b'sRGB' not in data:
-                    errors.append('cover must be 1080x1920 JPEG with embedded sRGB profile')
-        if 'ig-post' in targets and (not images or media.get('video')):
-            errors.append('ig-post needs 1 image or 2–10 carousel images')
-        if 'ig-reel' in targets and not media.get('video'):
-            errors.append('ig-reel needs video')
-        for t in ('ig-story', 'tg-story'):
-            if t in targets and not (media.get('video') or len(images) == 1):
-                errors.append(t + ' needs one image or video')
-        if any(t.startswith('ig-') for t in targets):
+        if not copy_only:
+            files = media_files(spec)
+            if images and media.get('video'):
+                errors.append('Choose images or video for a spec, not both')
+            if media.get('cover') and not media.get('video'):
+                errors.append('cover requires video')
             for name, path in files.items():
-                if name != 'video' and (path.read_bytes()[:3] != b'\xff\xd8\xff' or path.stat().st_size > 8_000_000):
-                    errors.append(name + ': Instagram requires JPEG at most 8 MB')
-            for i in range(len(images)):
-                w, h = image_size(files[f'image{i}'])
-                if 'ig-post' in targets and (not 320 <= w <= 1440 or not 0.8 <= w / h <= 1.91):
-                    errors.append('ig-post: image width 320–1440, ratio 4:5–1.91:1 required')
-        if 'threads' in targets:
-            for i in range(len(images)):
-                if files[f'image{i}'].stat().st_size > 8_000_000:
-                    errors.append('threads: image exceeds 8 MB')
-        if 'tg-story' in targets and prepared:
-            if media.get('video'):
-                if files['video'].stat().st_size > 30_000_000:
-                    errors.append('tg-story video exceeds 30 MB')
-            elif images:
-                if image_size(files['image0']) != (1080, 1920) or files['image0'].stat().st_size > 10_000_000:
-                    errors.append('tg-story photo must be 1080x1920, at most 10 MB')
-        if any(t in targets for t in ('tg-work', 'tg-personal')):
-            for name, path in files.items():
+                if path.stat().st_size == 0:
+                    errors.append(name + ': empty media')
                 if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
-                    errors.append(name + ': exceeds Telegram upload limit')
+                    errors.append(name + ': exceeds dedicated bot preview upload limit')
+                if name == 'video':
+                    with path.open('rb') as f:
+                        header = f.read(12)
+                    if path.suffix.lower() != '.mp4' or header[4:8] != b'ftyp':
+                        errors.append('video must be an MP4 file')
+                else:
+                    image_size(path)
+            if media.get('video'):
+                if 'cover' not in files:
+                    errors.append('Every video requires a designed 9:16 sRGB JPEG cover')
+                else:
+                    w, h = image_size(files['cover'])
+                    data = files['cover'].read_bytes()
+                    if (w, h) != (1080, 1920) or data[:3] != b'\xff\xd8\xff' or b'sRGB' not in data:
+                        errors.append('cover must be 1080x1920 JPEG with embedded sRGB profile')
+            if 'ig-post' in targets and (not images or media.get('video')):
+                errors.append('ig-post needs 1 image or 2–10 carousel images')
+            if 'ig-reel' in targets and not media.get('video'):
+                errors.append('ig-reel needs video')
+            for t in ('ig-story', 'tg-story'):
+                if t in targets and not (media.get('video') or len(images) == 1):
+                    errors.append(t + ' needs one image or video')
+            if any(t.startswith('ig-') for t in targets):
+                for name, path in files.items():
+                    if name != 'video' and (path.read_bytes()[:3] != b'\xff\xd8\xff' or path.stat().st_size > 8_000_000):
+                        errors.append(name + ': Instagram requires JPEG at most 8 MB')
+                for i in range(len(images)):
+                    w, h = image_size(files[f'image{i}'])
+                    if 'ig-post' in targets and (not 320 <= w <= 1440 or not 0.8 <= w / h <= 1.91):
+                        errors.append('ig-post: image width 320–1440, ratio 4:5–1.91:1 required')
+            if 'threads' in targets:
+                for i in range(len(images)):
+                    if files[f'image{i}'].stat().st_size > 8_000_000:
+                        errors.append('threads: image exceeds 8 MB')
+            if 'tg-story' in targets and prepared:
+                if media.get('video'):
+                    if files['video'].stat().st_size > 30_000_000:
+                        errors.append('tg-story video exceeds 30 MB')
+                elif images:
+                    if image_size(files['image0']) != (1080, 1920) or files['image0'].stat().st_size > 10_000_000:
+                        errors.append('tg-story photo must be 1080x1920, at most 10 MB')
+            if any(t in targets for t in ('tg-work', 'tg-personal')):
+                for name, path in files.items():
+                    if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
+                        errors.append(name + ': exceeds Telegram upload limit')
         for t in targets:
             if t == 'blog':
                 continue

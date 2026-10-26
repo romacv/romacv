@@ -1,3 +1,5 @@
+import copy
+import difflib
 import hashlib
 import hmac
 import json
@@ -128,6 +130,12 @@ def buttons(slug, digest, retry=False):
 
 
 def preview(config, store, bucket, item_id, spec, assets, directory):
+    def send(method, fields, files=None):
+        message = platforms.telegram(method,fields,files)
+        store.put('published-messages/' + str(message['message_id']),{'slug':spec['slug']})
+        return message
+    def say(text, **extra):
+        return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
     previous = store.get('specs/' + spec['slug']) or {}
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
@@ -139,22 +147,22 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
         target_assets = assets.get(target,{})
         media.materialize(bucket,target_assets,directory)
         if 'video.mp4' in target_assets:
-            platforms.telegram('sendVideo',{'chat_id':config['roman_chat_id'],'caption':target},{'video':directory/'video.mp4'})
+            send('sendVideo',{'chat_id':config['roman_chat_id'],'caption':target},{'video':directory/'video.mp4'})
             if 'cover.jpg' in target_assets:
-                platforms.telegram('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target + ' cover'},{'photo':directory/'cover.jpg'})
+                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target + ' cover'},{'photo':directory/'cover.jpg'})
         else:
             for name in target_assets:
-                platforms.telegram('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target},{'photo':directory/name})
+                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target},{'photo':directory/name})
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
         chunk = target + '\n'
         for char in text:
             if platforms.units(chunk + char) > 3500:
-                tell(config,chunk)
+                say(chunk)
                 chunk = ''
             chunk += char
         if chunk:
-            tell(config,chunk)
-    message = tell(config,'Черновик ' + spec['slug'],reply_markup=buttons(spec['slug'],digest))
+            say(chunk)
+    message = say('Черновик ' + spec['slug'],reply_markup=buttons(spec['slug'],digest))
     saved.update(state='previewed',preview_message=message['message_id'])
     store.put('specs/' + spec['slug'],saved)
     store.change('items/' + item_id,lambda value:value.update(status='previewed'))
@@ -367,6 +375,10 @@ def run(config,store,bucket,slug,directory):
     saved = store.claim_run(slug)
     if not saved:
         return
+    if saved.get('deleted'):
+        store.change('specs/' + slug,lambda value:value.update(state='rejected'))
+        tell(config,'Публикация уже удалена. Повторная публикация запрещена.')
+        return
     if not saved.get('keyboard_removed'):
         remove_keyboard(config,saved)
         store.change('specs/' + slug,lambda value:value.update(keyboard_removed=True))
@@ -382,16 +394,18 @@ def run(config,store,bucket,slug,directory):
         store.change('specs/' + slug,lambda value:value.update(state='approved'))
         enqueue({'step':'run','slug':slug},'due-' + slug + '-' + secrets.token_hex(8),max(1,int((due-datetime.now(timezone.utc)).total_seconds())))
         return
+    published_targets = {**saved['results'],**saved.get('published',{})}
     for target in spec['targets']:
-        if target in saved['results']:
+        if target in published_targets:
             continue
         attempts = saved.setdefault('attempts',{})
         if attempts.get(target,0) >= 3:
             continue
         attempts[target] = attempts.get(target,0) + 1
         store.change('specs/' + slug,lambda value:value.update(attempts=attempts))
+        state = {'steps':{}}
+        target_assets = assets.get(target,{})
         try:
-            target_assets = assets.get(target,{})
             media.materialize(bucket,target_assets,directory)
             target_spec = json.loads(json.dumps(spec))
             if 'video.mp4' in target_assets:
@@ -421,15 +435,23 @@ def run(config,store,bucket,slug,directory):
                     platforms.probe(url,path,manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
                 result = platforms.post_social(target_spec,state,target,urls,session)
                 verified = platforms.link_opens(result)
-            saved['results'][target] = {'url':result,'verified':verified}
+            publication = state['steps'].get(target + ':publish',{}).get('value')
+            published = {'url':result,'verified':verified,'copy':spec.get('copy',{}).get(target)}
+            published.update(published_ids(config,spec,target,target_assets,publication))
+            saved['results'][target] = published
+            published_targets[target] = published
             saved['errors'].pop(target,None)
         except platforms.ExpiredMaterial:
             raise
         except Exception as failure:
             saved['errors'][target] = str(failure) if isinstance(failure,(Error,StateError)) else 'Target failed; reconcile saved checkpoints'
-        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors']))
+        publication = state['steps'].get(target + ':publish',{})
+        if target not in published_targets and publication.get('status') == 'done':
+            published_targets[target] = {'url':'','verified':False,'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
+        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets))
+        store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
     state = 'done' if len(saved['results']) == len(spec['targets']) else 'partial'
-    store.change('specs/' + slug,lambda value:value.update(state=state))
+    store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
     lines = []
     for index,target in enumerate(spec['targets'],1):
         result = saved['results'].get(target)
@@ -438,7 +460,207 @@ def run(config,store,bucket,slug,directory):
     if any(target.startswith('ig-') for target in spec['targets']):
         lines.append('Facebook: поделиться вручную из Instagram, если автоматическая публикация не появилась.')
     extra = {'reply_markup':buttons(slug,saved['hash'],True)} if state == 'partial' else {}
-    tell(config,'\n'.join(lines),**extra)
+    message = tell(config,'\n'.join(lines),**extra)
+    store.put('published-messages/' + str(message['message_id']),{'slug':slug})
+
+
+def published_ids(config,spec,target,assets,publication):
+    if target == 'blog':
+        return {'path':'blog/' + spec['slug'] + '.html','blog':spec['blog']}
+    if publication is None:
+        return {}
+    if target in ('tg-work','tg-personal'):
+        messages = publication if isinstance(publication,list) else [publication]
+        return {'chat_id':messages[0].get('chat',{}).get('id') or config['channels'][target],'message_ids':[m['message_id'] for m in messages],'caption':bool(spec.get('media',{}).get('images') or spec.get('media',{}).get('video'))}
+    if target == 'tg-story':
+        return {'id':publication['id'],'business_connection_id':platforms.key('telegram-business.json')['business_connection_id'],'assets':assets}
+    return {'id':publication,'assets':assets}
+
+
+def fix_hash(saved):
+    return hashlib.sha256(json.dumps({k:saved[k] for k in ('operation','source','before','spec')},sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+
+
+def fix(config,store,slug):
+    saved = store.get('specs/' + slug)
+    if not saved or saved['state'] != 'drafting':
+        return
+    source = store.get('specs/' + saved['source'])
+    if source.get('state') not in ('done','partial') or source.get('deleted'):
+        raise StateError('Публикация ещё не завершена или уже удалена.')
+    published_targets = {**source.get('results',{}),**source.get('published',{})}
+    for target, published in published_targets.items():
+        required = 'path' if target == 'blog' else 'message_ids' if target in ('tg-work','tg-personal') else 'id'
+        if required not in published:
+            name = target + ':publish'
+            checkpoint = store.get('specs/' + saved['source'] + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()) or {}
+            published.update(published_ids(config,source['spec'],target,source.get('assets',{}).get(target,{}),checkpoint.get('value') if checkpoint.get('state') == 'done' else None))
+        if target == 'threads':
+            published.setdefault('assets',source.get('assets',{}).get(target,{}))
+        if target != 'blog':
+            published.setdefault('copy',source['spec']['copy'][target])
+    store.change('specs/' + saved['source'],lambda value:value.update(published=published_targets))
+    store.change('items/' + source['item'],lambda value:value.update(published=published_targets))
+    before = copy.deepcopy(published_targets)
+    spec = copy.deepcopy(source['spec'])
+    spec['targets'] = [t for t in spec['targets'] if t in before and not before[t].get('deleted')]
+    spec['copy'] = {t:before[t].get('copy') or spec['copy'][t] for t in spec['targets'] if t != 'blog'}
+    if 'blog' in spec['targets']:
+        spec['blog'] = before['blog'].get('blog',spec['blog'])
+    if saved['operation'] == 'fix':
+        def validate(value):
+            if not isinstance(value,dict) or set(value) != {'copy','blog'}:
+                return ['Return exactly copy and blog']
+            if not isinstance(value['copy'],dict) or set(value['copy']) != set(spec['copy']):
+                return ['Keep exactly the published copy targets']
+            if 'blog' not in spec['targets'] and value['blog'] is not None:
+                return ['No blog was published']
+            candidate = {**spec,'copy':value['copy'],'blog':value['blog'] if value['blog'] is not None else spec.get('blog')}
+            return drafter.validate(candidate,prepared=False,copy_only=True)
+        corrected = drafter.ask(config,{'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'instruction':saved['instruction']},[],validate)
+        after = {**spec,'copy':corrected['copy']}
+        if corrected['blog'] is not None:
+            after['blog'] = corrected['blog']
+    else:
+        after = spec
+    saved.update(before=before,spec=after)
+    saved['hash'] = fix_hash(saved)
+    store.put('specs/' + slug,saved)
+    lines = []
+    for target in spec['targets']:
+        label = 'Instagram' if target.startswith('ig-') else 'Threads' if target == 'threads' else target
+        if saved['operation'] == 'delete':
+            capability = platforms.manual_change(target,before[target],spec,'delete') or 'удалить'
+            lines.append(label + ': ' + capability + ' ' + (before[target]['url'] or 'ссылка не получена'))
+        else:
+            old = '\n'.join(key + ':\n' + str(value) for key,value in spec['blog'].items()) if target == 'blog' else spec['copy'][target]
+            new = '\n'.join(key + ':\n' + str(value) for key,value in after['blog'].items()) if target == 'blog' else after['copy'][target]
+            changes = [line for line in difflib.ndiff(old.splitlines(),new.splitlines()) if line.startswith(('- ','+ '))]
+            if changes:
+                warning = '\nбудет удалён и опубликован заново, лайки и комментарии пропадут' if target == 'threads' else '\nправь вручную' if target.startswith('ig-') else ''
+                lines.append(label + warning + '\n' + '\n'.join(changes))
+    text = '\n'.join(lines) or 'Изменений нет.'
+    def say(text):
+        message = tell(config,text)
+        store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
+    chunk = ''
+    for char in text:
+        if platforms.units(chunk + char) > 3500:
+            say(chunk)
+            chunk = ''
+        chunk += char
+    if chunk:
+        say(chunk)
+    verb, label = ('del','Подтвердить удаление') if saved['operation'] == 'delete' else ('fix','Опубликовать правку')
+    markup = {'inline_keyboard':[[{'text':label,'callback_data':verb + ':' + slug + ':' + saved['hash'][:8]},{'text':'Отклонить','callback_data':'rej:' + slug + ':' + saved['hash'][:8]}]]}
+    message = tell(config,'Удаление ' + source['spec']['slug'] if saved['operation'] == 'delete' else 'Правка ' + source['spec']['slug'],reply_markup=markup)
+    store.change('specs/' + slug,lambda value:value.update(state='previewed',preview_message=message['message_id']))
+    store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
+
+
+def apply_fix(config,store,bucket,slug,directory):
+    saved = store.claim_run(slug)
+    if not saved:
+        return
+    if not saved.get('keyboard_removed'):
+        remove_keyboard(config,saved)
+        store.change('specs/' + slug,lambda value:value.update(keyboard_removed=True))
+    for target in saved['spec']['targets']:
+        if target in saved['results']:
+            continue
+        try:
+            if fix_hash(saved) != saved['approved_hash']:
+                raise StateError('Approval hash mismatch; запроси новое превью')
+            published = saved['before'][target]
+            source = store.get('specs/' + saved['source'])
+            current = {**source.get('results',{}),**source.get('published',{})}[target]
+            awaiting = {**published,'deleted':True,'awaiting_republish':slug,'url':''}
+            if current != published and current != awaiting:
+                raise StateError('Пост изменился после превью. Запроси новую правку.')
+            unchanged = saved['operation'] == 'fix' and (saved['spec']['blog'] == published.get('blog') if target == 'blog' else saved['spec']['copy'][target] == published.get('copy'))
+            if target == 'threads' and saved['operation'] == 'fix' and not unchanged and not platforms.manual_change(target,published,saved['spec'],'fix'):
+                replacement = copy.deepcopy(saved['spec'])
+                replacement['slug'] = slug
+                assets = published.get('assets',{})
+                media.materialize(bucket,assets,directory)
+                if 'video.mp4' in assets:
+                    replacement['media'] = {'video':'video.mp4','cover':'cover.jpg'}
+                else:
+                    originals = saved['spec'].get('media',{}).get('images',[])
+                    if originals and not assets:
+                        raise platforms.ExpiredMaterial('Материал истёк. Пришли файлы заново.')
+                    replacement['media'] = {'images':[{'path':name,'alt':originals[index]['alt']} for index,name in enumerate(assets)]}
+                session = platforms.social_session('threads',deleting=True)
+                platforms.quota(session,False)
+                urls = {name.removesuffix('.mp4').removesuffix('.jpg'):media.signed(bucket,manifest['object'],config,generation=manifest['generation']) for name,manifest in assets.items()}
+                for name,url in urls.items():
+                    filename = name + ('.mp4' if name == 'video' else '.jpg')
+                    manifest = assets[filename]
+                    platforms.probe(url,directory / filename,manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
+                def deleted(tx):
+                    original = store.get('specs/' + saved['source'],tx)
+                    original.setdefault('published',{})[target] = awaiting
+                    if target in original.get('results',{}):
+                        original['results'][target] = awaiting
+                    store.put('specs/' + saved['source'],original,tx)
+                store.checkpoint(slug,target + ':delete',lambda:platforms.change_published(target,published,replacement,'delete',directory,bucket),deleted)
+                state = {'steps':{}}
+                for snapshot in store.db.collection('specs/' + slug + '/checkpoints').stream():
+                    step = snapshot.to_dict()
+                    state['steps'][step['name']] = {'status':step['state'],'value':step.get('value')}
+                url = platforms.post_social(replacement,state,target,urls,session)
+                result = {'status':'исправлено','id':state['steps'][target + ':publish']['value'],'url':url,'assets':assets}
+            else:
+                result = store.checkpoint(slug,target + ':apply',lambda:'без изменений' if unchanged else platforms.change_published(target,published,saved['spec'],saved['operation'],directory,bucket))
+            if isinstance(result,dict) or result in ('исправлено','удалено'):
+                def update(tx):
+                    original = store.get('specs/' + saved['source'],tx)
+                    mutation = store.get('specs/' + slug,tx)
+                    item = copy.deepcopy({**original.get('results',{}),**original.get('published',{})}[target])
+                    if isinstance(result,dict):
+                        item.update({k:v for k,v in result.items() if k != 'status'})
+                        item.pop('deleted',None)
+                        item.pop('awaiting_republish',None)
+                    if saved['operation'] == 'delete':
+                        item['deleted'] = True
+                    elif target == 'blog':
+                        item['blog'] = saved['spec']['blog']
+                    else:
+                        item['copy'] = saved['spec']['copy'][target]
+                    original.setdefault('published',{})[target] = item
+                    if target in original.get('results',{}):
+                        original['results'][target] = item
+                    mutation.setdefault('results',{})[target] = result
+                    mutation.setdefault('errors',{}).pop(target,None)
+                    store.put('specs/' + saved['source'],original,tx)
+                    store.put('specs/' + slug,mutation,tx)
+                store.atomic(update)
+            saved['results'][target] = result
+            saved['errors'].pop(target,None)
+        except Exception as failure:
+            saved['errors'][target] = str(failure) if isinstance(failure,(Error,StateError)) else 'Ошибка; сверь контрольные точки'
+        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors']))
+    state = 'done' if len(saved['results']) == len(saved['spec']['targets']) else 'partial'
+    if fix_hash(saved) != saved['approved_hash']:
+        state = 'rejected'
+    store.change('specs/' + slug,lambda value:value.update(state=state))
+    source = store.get('specs/' + saved['source'])
+    published_targets = {**source.get('results',{}),**source.get('published',{})}
+    deleted = saved['operation'] == 'delete' and state == 'done' and all(x.get('deleted') or platforms.manual_change(t,x,saved['spec'],'delete') for t,x in published_targets.items())
+    store.change('specs/' + saved['source'],lambda value:value.update(deleted=deleted))
+    store.change('items/' + saved['item'],lambda value:value.update(published=published_targets,deleted=deleted))
+    lines = []
+    for target in saved['spec']['targets']:
+        label = 'Instagram' if target.startswith('ig-') else 'Threads' if target == 'threads' else target
+        result = saved['results'].get(target,saved['errors'].get(target,'Ошибка'))
+        status = result['status'] if isinstance(result,dict) else result
+        url = published_targets[target].get('url','')
+        if published_targets[target].get('awaiting_republish'):
+            status += '; удалено, ожидает повторной публикации'
+        lines.append(label + ': ' + status + ' ' + (url or 'ссылка не получена'))
+    extra = {'reply_markup':buttons(slug,saved['hash'],True)} if state == 'partial' else {}
+    message = tell(config,'\n'.join(lines),**extra)
+    store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
 
 
 @tasks_fn.on_task_dispatched(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],retry_config=options.RetryConfig(max_attempts=1),rate_limits=options.RateLimits(max_concurrent_dispatches=1),memory=options.MemoryOption.GB_2,timeout_sec=540,min_instances=0,max_instances=1)
@@ -462,6 +684,10 @@ def handle_worker(request):
                 prepared(config,store,bucket,payload)
             elif step == 'rendered':
                 rendered(config,store,bucket,payload,directory)
+            elif step == 'fix':
+                fix(config,store,payload['slug'])
+            elif step == 'apply-fix':
+                apply_fix(config,store,bucket,payload['slug'],directory)
             elif step == 'run':
                 run(config,store,bucket,payload['slug'],directory)
             elif step == 'upload-prompt':
@@ -481,11 +707,11 @@ def handle_worker(request):
             logging.error(json.dumps({'code':'worker_failed','step':payload.get('step')}))
             if payload.get('item'):
                 store.change('items/' + payload['item'],lambda value:value.update(status='failed'))
-            if payload.get('step') == 'run' and payload.get('slug'):
+            if payload.get('step') in ('run','apply-fix') and payload.get('slug'):
                 store.change('specs/' + payload['slug'],lambda value:value.update(state='failed' if isinstance(failure,platforms.ExpiredMaterial) else 'partial'))
             text = str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.'
             extra = {}
-            if payload.get('step') == 'run' and payload.get('slug') and not isinstance(failure,platforms.ExpiredMaterial):
+            if payload.get('step') in ('run','apply-fix') and payload.get('slug') and not isinstance(failure,platforms.ExpiredMaterial):
                 saved = store.get('specs/' + payload['slug'])
                 if saved and saved.get('hash'):
                     extra['reply_markup'] = buttons(payload['slug'],saved['hash'],True)
@@ -525,7 +751,7 @@ def maintenance(config,store,bucket):
             store.change('renders/' + render_snapshot.id,lambda value:value.update(delivered=True))
     for snapshot in store.db.collection('specs').stream():
         saved = snapshot.to_dict()
-        if saved.get('state') == 'rejected':
+        if saved.get('state') == 'rejected' and not saved.get('operation'):
             for prefix in ('inbox/' + saved['item'] + '/','media/' + snapshot.id + '/'):
                 for blob in bucket.list_blobs(prefix=prefix):
                     blob.delete(if_generation_match=blob.generation)

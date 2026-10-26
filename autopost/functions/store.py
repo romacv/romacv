@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -84,6 +85,19 @@ class Store:
                     self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier)
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Правки приняты.' if accepted else 'Кнопка устарела'
+            text = message.get('text', '')
+            command = re.match(r'^\s*(поправь|исправь|отредактируй|удали|fix|delete)\b', text, re.I)
+            published = self.published_match(message, tx, command)
+            if text and command:
+                self.put(update_path, {'received':time.time()}, tx)
+                if not published:
+                    return 'Какой пост? Ответь на его превью или отчёт либо пришли ссылку.'
+                slug, source = published
+                operation = 'delete' if command.group(1).lower() in ('удали','delete') else 'fix'
+                name = 'fix-' + identifier
+                self.put('specs/' + name, {'operation':operation,'source':slug,'item':source['item'], 'instruction':text,'state':'drafting','results':{},'errors':{},'hash':''}, tx)
+                self.job(tx, {'step':'fix','slug':name}, 'fix-' + identifier)
+                return 'Готовлю превью удаления.' if operation == 'delete' else 'Готовлю превью правки.'
             session = self.get('sessions/inbox', tx) or {}
             for key in ('video_batch', 'upload_item'):
                 current = self.get('items/' + session[key], tx) if session.get(key) else None
@@ -132,6 +146,29 @@ class Store:
             return {'item':item_id, 'revision':item['revision'], 'text':'Клипы сохранены. Пришли ещё или напиши «монтаж».' if item['status'] == 'collecting' else 'Принял, готовлю черновик.'}
         return self.atomic(apply)
 
+    def published_match(self, message, tx, command=False):
+        text = message.get('text', '')
+        reply = str(message.get('reply_to_message', {}).get('message_id', ''))
+        urls = re.findall(r'(?:https?://|tg://|www\.)[^\s<>]+', text)
+        if not command or not (reply or urls):
+            return None
+        linked = self.get('published-messages/' + reply, tx) if reply else None
+        if linked:
+            saved = self.get('specs/' + linked['slug'], tx)
+            if saved and saved.get('state') in ('done','partial') and not saved.get('deleted'):
+                return linked['slug'], saved
+            return None
+        matches = []
+        for snapshot in self.db.collection('specs').stream():
+            saved = snapshot.to_dict()
+            if saved.get('operation') or saved.get('state') not in ('done','partial') or saved.get('deleted'):
+                continue
+            published = {**saved.get('results',{}),**saved.get('published',{})}
+            known = {x.get('url','').rstrip('/') for x in published.values() if not x.get('deleted')}
+            if (reply and reply == str(saved.get('preview_message',''))) or any(u.rstrip('/.,)') in known for u in urls):
+                matches.append((snapshot.id,saved))
+        return matches[0] if len(matches) == 1 else None
+
     def callback(self, tx, update_path, query):
         callback_path = 'callbacks/' + query['id']
         if self.get(callback_path, tx):
@@ -148,11 +185,14 @@ class Store:
         self.put(callback_path, {'received':time.time()}, tx)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
-        payload = {'slug':slug, 'step':'run'}
-        if verb == 'pub' and saved['state'] == 'previewed':
+        payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
+        if verb in ('fix','del') and saved.get('operation') == ('fix' if verb == 'fix' else 'delete') and saved['state'] == 'previewed':
             saved['state'] = 'approved'
             saved['approved_hash'] = saved['hash']
-        elif verb == 'edit' and saved['state'] == 'previewed':
+        elif verb == 'pub' and not saved.get('operation') and saved['state'] == 'previewed':
+            saved['state'] = 'approved'
+            saved['approved_hash'] = saved['hash']
+        elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'needs-edit'
             payload['step'] = 'edit-prompt'
         elif verb == 'rej' and saved['state'] == 'previewed':
@@ -183,7 +223,7 @@ class Store:
             return copy.deepcopy(value)
         return self.change('specs/' + slug, claim)
 
-    def checkpoint(self, slug, name, action):
+    def checkpoint(self, slug, name, action, complete=None):
         path = 'specs/' + slug + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()
         def claim(value):
             if value.get('state') == 'done':
@@ -202,7 +242,11 @@ class Store:
             if isinstance(status, int) and 400 <= status < 500:
                 self.put(path, {'state':'failed', 'name':name})
             raise
-        self.put(path, {'state':'done', 'name':name, 'value':result})
+        def finish(tx):
+            if complete:
+                complete(tx)
+            self.put(path, {'state':'done', 'name':name, 'value':result}, tx)
+        self.atomic(finish)
         return result
 
     def invalidate(self, slug, name):

@@ -27,20 +27,26 @@ def shell_page(root, title, description, url, content, image=None, structured=No
             '<link rel="stylesheet" href="/css/style.css?v=20260930"><link rel="alternate" type="application/rss+xml" href="/blog/feed.xml">'
             f'{tags}{ld}</head><body>{header}<main><div class="container">{content}<hr></div></main>{footer}</body></html>')
 
-def build_files(spec, root):
+def build_files(spec, root, operation=None):
     name, blog = spec['slug'], spec['blog']
     directory = root / 'blog'
-    if (directory / (name + '.html')).exists():
+    if not operation and (directory / (name + '.html')).exists():
         raise Error('Published blog slug already exists')
     plan = {'files': {}, 'assets': {}}
     url = SITE + '/blog/' + name
     figures = []
-    for i, item in enumerate(spec.get('media', {}).get('images', [])):
+    for i, item in enumerate(spec.get('media', {}).get('images', []) if not operation else []):
         source = local(item['path'])
         relative = f'blog/{name}/{i}{source.suffix.lower()}'
         plan['assets'][relative] = item['path']
         figures.append(f'<figure><img class="img-fluid" src="/{relative}" alt="{html.escape(item["alt"], quote=True)}"></figure>')
     image = SITE + '/' + next(iter(plan['assets'])) if plan['assets'] else None
+    if operation == 'fix':
+        old = (directory / (name + '.html')).read_text()
+        figures = re.findall(r'<figure>.*?</figure>',old,re.S)
+        metadata = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>',old,re.S).group(1))
+        image = metadata.get('image')
+        plan['assets'] = {}
     ld = {'@context': 'https://schema.org', '@type': 'BlogPosting', 'headline': blog['title'],
           'description': blog['description'], 'datePublished': spec['at'], 'inLanguage': 'en-US',
           'author': {'@type': 'Person', 'name': 'Roman Resenchuk', 'url': SITE},
@@ -56,7 +62,10 @@ def build_files(spec, root):
             raise Error('Existing blog page lacks BlogPosting metadata; reconcile index manually')
         entry = json.loads(match.group(1))
         entries.append(entry)
-    entries.append(ld)
+    if operation != 'delete':
+        entries.append(ld)
+    else:
+        plan['files'].pop(f'blog/{name}.html')
     entries.sort(key=lambda x: datetime.fromisoformat(x['datePublished'].replace('Z', '+00:00')), reverse=True)
     listing = '<section class="projects"><h1>Blog</h1><ul>' + ''.join(
         f'<li><time>{html.escape(x["datePublished"][:10])}</time> <a href="{html.escape(x["url"], quote=True)}">{html.escape(x["headline"])}</a><p>{html.escape(x["description"])}</p></li>' for x in entries) + '</ul></section>'
@@ -73,8 +82,12 @@ def build_files(spec, root):
     ns = 'http://www.sitemaps.org/schemas/sitemap/0.9'
     ET.register_namespace('', ns)
     sitemap = ET.parse(root / 'sitemap.xml').getroot() if (root / 'sitemap.xml').exists() else ET.Element('{' + ns + '}urlset')
+    if operation == 'delete':
+        for entry in list(sitemap):
+            if entry.findtext('{' + ns + '}loc') == url:
+                sitemap.remove(entry)
     present = {x.text for x in sitemap.iter('{' + ns + '}loc')}
-    for link in (url, SITE + '/blog'):
+    for link in ((SITE + '/blog',) if operation == 'delete' else (url, SITE + '/blog')):
         if link not in present:
             ET.SubElement(ET.SubElement(sitemap, '{' + ns + '}url'), '{' + ns + '}loc').text = link
     plan['files']['sitemap.xml'] = ET.tostring(sitemap, encoding='unicode', xml_declaration=True)
@@ -140,3 +153,40 @@ class GitHub:
                 return True
             time.sleep(10)
         return False
+
+
+    def change_post(self, spec, path, operation, root):
+        if path != 'blog/' + spec['slug'] + '.html':
+            raise Error('Blog path mismatch')
+        parent = self.api('GET','/git/ref/heads/main')['object']['sha']
+        commit = self.api('GET','/git/commits/' + parent)
+        tree = self.api('GET','/git/trees/' + commit['tree']['sha'] + '?recursive=1')
+        if tree.get('truncated'):
+            raise Error('Git tree truncated')
+        entries = {x['path']:x for x in tree['tree'] if x['type'] == 'blob'}
+        if path not in entries:
+            raise Error('Blog post missing; reconcile')
+        for name, entry in entries.items():
+            if name in ('project.html','sitemap.xml') or name.startswith('blog/') and name.endswith('.html'):
+                content = self.api('GET','/git/blobs/' + entry['sha'])
+                destination = root / name
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                destination.write_bytes(base64.b64decode(content['content']))
+        plan = build_files(spec,root,operation)
+        nodes = []
+        for name, content in plan['files'].items():
+            sha = self.api('POST','/git/blobs',{'content':base64.b64encode(content.encode()).decode(),'encoding':'base64'})['sha']
+            nodes.append({'path':name,'mode':'100644','type':'blob','sha':sha})
+        if operation == 'delete':
+            for name in entries:
+                if name == path or re.fullmatch(r'blog/' + re.escape(spec['slug']) + r'/[0-9]+\.jpg',name):
+                    nodes.append({'path':name,'mode':'100644','type':'blob','sha':None})
+        tree_sha = self.api('POST','/git/trees',{'base_tree':commit['tree']['sha'],'tree':nodes})['sha']
+        author = {'name':'Roman Resenchuk','email':self.email,'date':datetime.now(timezone.utc).isoformat()}
+        new_commit = self.api('POST','/git/commits',{'message':('Delete ' if operation == 'delete' else 'Fix ') + spec['blog']['title'],'tree':tree_sha,'parents':[parent],'author':author,'committer':author})['sha']
+        try:
+            self.api('PATCH','/git/refs/heads/main',{'sha':new_commit,'force':False})
+        except Error as failure:
+            if failure.status_code != 422 or self.api('GET','/git/ref/heads/main')['object']['sha'] != new_commit:
+                raise
+        return new_commit

@@ -165,7 +165,7 @@ def telegram(method, fields=None, files=None):
     return reply['result']
 
 
-def telegram_identity(target=None):
+def telegram_identity(target=None, operation=None):
     cfg = config()
     me = telegram('getMe')
     if not cfg.get('telegram_bot_id') or str(me['id']) != str(cfg['telegram_bot_id']):
@@ -176,6 +176,8 @@ def telegram_identity(target=None):
         member = telegram('getChatMember', {'chat_id': channel, 'user_id': me['id']})
         if chat.get('type') != 'channel' or str(chat['id']) != str(channel) or member.get('status') != 'administrator' or not member.get('can_post_messages'):
             raise Error('Telegram channel identity or administrator rights mismatch')
+        if operation and (not member.get('can_edit_messages') or not member.get('can_delete_messages')):
+            raise Error('нет права на правку в канале',403)
         return chat
     if target == 'tg-story':
         saved = key('telegram-business.json')
@@ -203,17 +205,19 @@ def personal_identity(provider, token):
     return reply
 
 
-def quota(session, instagram=True):
+def quota(session, instagram=True, deleting=False):
     token, user, base = session
     edge = 'content_publishing_limit' if instagram else 'threads_publishing_limit'
-    rows = request('GET', f'{base}/{user}/{edge}', {'fields': 'quota_usage,config'}, token=token).get('data', [])
+    usage, settings = ('delete_quota_usage','delete_config') if deleting else ('quota_usage','config')
+    rows = request('GET', f'{base}/{user}/{edge}', {'fields': usage + ',' + settings}, token=token).get('data', [])
     if not rows:
         raise Error('Publishing quota unavailable')
     for row in rows:
-        limit = row.get('config', {}).get('quota_total')
+        limit = row.get(settings, {}).get('quota_total')
         if limit is None:
             raise Error('Publishing quota configuration unavailable')
-        if int(row['quota_usage']) >= int(limit):
+        ceiling = min(int(limit),100) if deleting else int(limit)
+        if int(row.get(usage,ceiling)) >= ceiling:
             raise Error('Publishing quota exhausted; retry later')
 
 
@@ -262,11 +266,12 @@ def post_telegram(spec, state, target):
         images = spec.get('media', {}).get('images', [])
         if len(images) > 1:
             media = [{'type': 'photo', 'media': 'attach://image' + str(i), **({'caption': text} if i == 0 else {})} for i in range(len(images))]
-            return telegram('sendMediaGroup', {'chat_id': chat_id, 'media': media}, {k: v for k, v in files.items() if k.startswith('image')})[0]
+            return telegram('sendMediaGroup', {'chat_id': chat_id, 'media': media}, {k: v for k, v in files.items() if k.startswith('image')})
         if images:
             return telegram('sendPhoto', {'chat_id': chat_id, 'caption': text}, {'photo': files['image0']})
         return telegram('sendMessage', {'chat_id': chat_id, 'text': text})
     result = checkpoint(spec, state, target, 'publish', send)
+    result = result[0] if isinstance(result, list) else result
     prefix = identity.get('username') or ('c/' + str(chat_id).removeprefix('-100'))
     return f'https://t.me/{prefix}/{result["message_id"]}'
 
@@ -383,10 +388,15 @@ def markdown(body):
     return '\n'.join(blocks)
 
 
-def social_session(provider):
+def social_session(provider, deleting=False):
     saved = key(provider + '-token.json')
     token = saved['access_token']
     me = personal_identity(provider, token)
+    if deleting:
+        scopes = saved.get('scopes',[])
+        granted = set(scopes.split(',')) if isinstance(scopes,str) else set(scopes)
+        if not {'threads_basic','threads_delete'} <= granted:
+            raise Error('Missing Threads permissions: threads_basic, threads_delete',403)
     if str(me['id']) != str(saved['user_id']):
         raise Error('Live personal identity mismatch')
     return token, str(me['id']), IG if provider == 'instagram' else THREADS
@@ -488,3 +498,57 @@ def link_opens(url, title=None):
             return title is None or ('<title>' + html.escape(title) + ' | Roman Resenchuk</title>') in body
     except (urllib.error.URLError, OSError, ValueError):
         return False
+
+
+def manual_change(target, published, spec, operation):
+    if target.startswith('ig-'):
+        return 'удали вручную' if operation == 'delete' else 'правь вручную'
+    required = 'path' if target == 'blog' else 'message_ids' if target in ('tg-work','tg-personal') else 'id'
+    if published.get('deleted'):
+        return 'уже удалено'
+    if not published.get(required):
+        return 'удали вручную: ID не сохранён' if operation == 'delete' else 'правь вручную: ID не сохранён'
+    if operation == 'delete' and target in ('tg-work','tg-personal') and len(spec.get('media',{}).get('images',[])) > len(published['message_ids']):
+        return 'удали вручную: сохранён только первый ID альбома'
+    return None
+
+
+def change_published(target, published, spec, operation, directory, bucket=None):
+    manual = manual_change(target,published,spec,operation)
+    if manual:
+        return manual
+    if target == 'threads':
+        session = social_session('threads', deleting=True)
+        token, user, base = session
+        quota(session, False, deleting=True)
+        result = request('DELETE', base + '/' + str(published['id']), token=token)
+        if not result.get('success'):
+            raise Error('Threads delete failed')
+    elif target == 'blog':
+        from blog_commit import GitHub
+        GitHub(config()).change_post(spec, published['path'], operation, directory)
+    else:
+        identity = telegram_identity(target, operation)
+        if target == 'tg-story':
+            if identity['id'] != published['business_connection_id']:
+                raise Error('Business connection changed; reconcile')
+            fields = {'business_connection_id':identity['id'],'story_id':published['id']}
+            if operation == 'delete':
+                telegram('deleteStory', fields)
+            else:
+                import media
+                media.materialize(bucket, published['assets'], directory)
+                video = 'video.mp4' in published['assets']
+                field = 'video' if video else 'photo'
+                fields.update(caption=spec['copy'][target], content={'type':field,field:'attach://asset'})
+                telegram('editStory', fields, {'asset':directory / ('video.mp4' if video else 'image0.jpg')})
+        else:
+            if str(identity['id']) != str(published['chat_id']):
+                raise Error('Channel changed; reconcile')
+            fields = {'chat_id':published['chat_id']}
+            if operation == 'delete':
+                telegram('deleteMessages', {**fields,'message_ids':published['message_ids']})
+            else:
+                caption = published['caption']
+                telegram('editMessageCaption' if caption else 'editMessageText', {**fields,'message_id':published['message_ids'][0], 'caption' if caption else 'text':spec['copy'][target]})
+    return 'удалено' if operation == 'delete' else 'исправлено'

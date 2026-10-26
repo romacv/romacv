@@ -56,10 +56,41 @@ class PublisherTests(unittest.TestCase):
 
     def test_completed_targets_never_repost(self):
         self.callback()
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell'), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
             app.run(self.config,self.store,None,'example',self.root)
             app.run(self.config,self.store,None,'example',self.root)
         self.assertEqual((tg.call_count,th.call_count),(1,1))
+
+    def test_retry_skips_published_targets_and_preserves_published_precedence(self):
+        self.callback()
+        for results in ({},{'tg-work':{'url':'https://t.me/example/1','verified':True}}):
+            with self.subTest(results=results):
+                published = {'tg-work':{'url':'','verified':True,'deleted':True,'copy':'Исправленный текст'}}
+                self.store.change('specs/example',lambda value:value.update(state='partial',results=results,published=published,errors={'threads':'setup'},attempts={}))
+                self.assertTrue(self.callback('retry',identifier=10 + len(results)))
+                with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+                    app.run(self.config,self.store,None,'example',self.root)
+                tg.assert_not_called()
+                th.assert_called_once()
+                self.assertEqual(self.store.get('specs/example')['published']['tg-work'],published['tg-work'])
+                self.assertEqual(self.store.get('items/item-1')['published']['tg-work'],published['tg-work'])
+
+    def test_retry_deleted_source_reports_and_stops(self):
+        self.callback()
+        self.store.change('specs/example',lambda value:value.update(state='partial',deleted=True,errors={'threads':'setup'}))
+        self.store.change('items/item-1',lambda value:value.update(deleted=True))
+        self.assertTrue(self.callback('retry',identifier=2))
+        item = self.store.get('items/item-1')
+        with patch.object(app,'remove_keyboard') as keyboard, patch.object(app,'tell',return_value={'message_id':999}) as tell, patch.object(app.media,'materialize') as materialize, patch.object(p,'post_telegram') as tg, patch.object(p,'post_social') as th:
+            app.run(self.config,self.store,None,'example',self.root)
+        keyboard.assert_not_called()
+        materialize.assert_not_called()
+        tg.assert_not_called()
+        th.assert_not_called()
+        self.assertIn('удалена',tell.call_args.args[1])
+        self.assertEqual(self.store.get('specs/example')['state'],'rejected')
+        self.assertTrue(self.store.get('specs/example')['deleted'])
+        self.assertEqual(self.store.get('items/item-1'),item)
 
     def test_pending_creation_never_repeated(self):
         action = Mock(side_effect=p.Error('timeout'))
@@ -70,7 +101,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_failed_target_caps_at_three_independent_success_saved(self):
         self.callback()
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell'), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',side_effect=p.Error('setup')) as th:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',side_effect=p.Error('setup')) as th:
             for identifier in range(2,7):
                 app.run(self.config,self.store,None,'example',self.root)
                 self.callback('retry',identifier=identifier)
