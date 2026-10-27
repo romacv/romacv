@@ -153,4 +153,4 @@ class FinalRenderTests(unittest.TestCase):
             app.maintenance(config,self.store,Mock())
         steps = sorted((call.args[0]['render'],call.args[0]['step']) for call in enqueue.call_args_list if call.args[0].get('render') in ('r-draft','r-final'))
         self.assertEqual(steps,[('r-draft','rendered'),('r-final','rendered')])
-        self.assertTrue(self.store.get('renders/r-final')['delivered'])
+        self.assertFalse(self.store.get('renders/r-final').get('delivered',False))

@@ -254,7 +254,6 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
             return False
         value.update(state='previewed',preview_message=message['message_id'],preview_targets=scoped)
         item.update(status='previewed')
-        item.pop('edit_photos',None)
         session['current'] = spec['slug']
         store.put('specs/' + spec['slug'],value,tx)
         store.put('items/' + item_id,item,tx)
@@ -529,11 +528,18 @@ def fail_final(config,store,slug,render,after=0):
         if value.get('final_render') != render or value.get('state') != 'rendering' or after and time.time() - value.get('started_at',time.time()) < after:
             return False
         value['state'] = 'partial'
+        value['retry_pending'] = 'final'
         return value
     saved = store.change('specs/' + slug,fail)
     if saved:
-        tell(config,'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.',reply_markup=buttons(slug,saved['hash'],True))
+        announce_retry(config,store,slug,saved)
     return bool(saved)
+
+
+def announce_retry(config,store,slug,saved):
+    text = 'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.' if saved['retry_pending'] == 'final' else 'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.'
+    tell(config,text,reply_markup=buttons(slug,saved['hash'],True))
+    store.change('specs/' + slug,lambda value:value.pop('retry_pending',None))
 
 
 def finish_final(config,store,payload,item,job):
@@ -745,6 +751,8 @@ def fix(config,store,slug):
     before = copy.deepcopy(published_targets)
     spec = copy.deepcopy(source['spec'])
     spec['targets'] = [t for t in spec['targets'] if t in before and not before[t].get('deleted')]
+    if 'overlay' in spec:
+        spec['overlay'] = {t:v for t,v in spec['overlay'].items() if t in spec['targets']}
     spec['copy'] = {t:before[t].get('copy') or spec['copy'][t] for t in spec['targets'] if t != 'blog'}
     if 'blog' in spec['targets']:
         spec['blog'] = before['blog'].get('blog',spec['blog'])
@@ -918,7 +926,10 @@ def handle_worker(request):
         try:
             step = payload['step']
             if payload.get('say'):
-                tell(config,payload['say'])
+                try:
+                    tell(config,payload['say'])
+                except Exception:
+                    logging.error(json.dumps({'code':'say_failed','step':payload.get('step')}))
             if step == 'draft':
                 draft(config,store,bucket,payload,directory)
             elif step == 'montage':
@@ -947,7 +958,7 @@ def handle_worker(request):
                 if collecting and collecting.get('status') == 'collecting':
                     tell(config,collected(collecting),reply_markup=collect_keyboard(payload['item'],collecting['batch_token']))
             elif step == 'fix-prompt':
-                tell(config,'Напиши, что поправить.')
+                tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
         except Exception as failure:
             logging.error(json.dumps({'code':'worker_failed','step':payload.get('step')}))
@@ -1015,8 +1026,7 @@ def maintenance(config,store,bucket):
     for render_snapshot in store.db.collection('renders').stream():
         render_job = render_snapshot.to_dict()
         if render_job.get('state') in ('done','failed') and not render_job.get('delivered'):
-            enqueue({'step':'prepared' if render_job.get('mode') == 'prepare' else 'rendered','item':render_job['item'],'revision':render_job['revision'],'render':render_snapshot.id},'render-recovery-' + render_snapshot.id + '-' + secrets.token_hex(8))
-            store.change('renders/' + render_snapshot.id,lambda value:value.update(delivered=True))
+            enqueue({'step':'prepared' if render_job.get('mode') == 'prepare' else 'rendered','item':render_job['item'],'revision':render_job['revision'],'render':render_snapshot.id},'render-recovery-' + render_snapshot.id)
     for snapshot in store.db.collection('specs').stream():
         saved = snapshot.to_dict()
         if saved.get('state') == 'rejected' and not saved.get('operation'):
@@ -1036,10 +1046,15 @@ def recover_running(config,store):
             if value.get('state') != 'running' or time.time() - value.get('started_at',time.time()) <= 600:
                 return False
             value['state'] = 'partial'
+            value['retry_pending'] = 'run'
             return value
         saved = store.change('specs/' + snapshot.id,recover)
         if saved:
-            tell(config,'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
+            announce_retry(config,store,snapshot.id,saved)
+    for snapshot in store.db.collection('specs').where('state', '==', 'partial').stream():
+        pending = snapshot.to_dict()
+        if pending.get('retry_pending'):
+            announce_retry(config,store,snapshot.id,pending)
     for snapshot in store.db.collection('specs').where('state', '==', 'rendering').stream():
         render = snapshot.to_dict().get('final_render')
         if render and (store.get('renders/' + render) or {}).get('state') != 'done':

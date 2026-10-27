@@ -55,13 +55,13 @@ class RoundTwoTests(unittest.TestCase):
         self.assertEqual(sent[-1][1]['reply_markup'],{'inline_keyboard':[]})
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
-    def test_matching_revision_commits_the_preview_and_clears_edit_photos(self):
+    def test_matching_revision_commits_the_preview_and_keeps_edit_photos(self):
         self.store.change('items/item-1',lambda value:value.update(edit_photos=[{'message_id':5}]))
         self.preview()
         self.assertEqual(self.store.get('specs/album')['state'],'previewed')
         item = self.store.get('items/item-1')
         self.assertEqual(item['status'],'previewed')
-        self.assertNotIn('edit_photos',item)
+        self.assertEqual(item['edit_photos'],[{'message_id':5}])
         self.assertEqual(self.store.get('sessions/inbox')['current'],'album')
 
     def final_spec(self, **extra):

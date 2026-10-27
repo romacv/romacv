@@ -212,14 +212,15 @@ class ReviewFixTests(unittest.TestCase):
             app.webhook(request)
         self.assertNotEqual(enqueue.call_args_list[0].args[1],enqueue.call_args_list[1].args[1])
 
-    def test_render_recovery_uses_fresh_task_names(self):
+    def test_render_recovery_uses_one_task_name_and_stays_undelivered(self):
         self.store.put('renders/render-1',{'state':'done','item':'item-1','revision':1})
         with patch.object(app.platforms,'telegram',return_value={'url':'test'}), patch.object(app.platforms,'request',return_value={}), patch.object(app,'enqueue') as enqueue, patch.object(app,'tell'), patch('urllib.request.urlopen',side_effect=OSError()):
             config = {**self.config,'webhook_url':'test','github_pat':'test'}
             app.maintenance(config,self.store,Mock())
-            self.store.change('renders/render-1',lambda value:value.update(delivered=False))
             app.maintenance(config,self.store,Mock())
-        self.assertNotEqual(enqueue.call_args_list[0].args[1],enqueue.call_args_list[1].args[1])
+        self.assertEqual(enqueue.call_args_list[0].args[1],'render-recovery-render-1')
+        self.assertEqual(enqueue.call_args_list[0].args[1],enqueue.call_args_list[1].args[1])
+        self.assertFalse(self.store.get('renders/render-1').get('delivered',False))
 
     def test_expired_material_is_terminal_without_retry(self):
         for during_download in (False,True):

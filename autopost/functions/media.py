@@ -241,7 +241,7 @@ def compose_story(source, destination, overlay):
     width, height = block.size
     ax = overlay['anchor'][0]*photo.width*scale - left
     ay = overlay['anchor'][1]*photo.height*scale - top
-    x = ax - {'left':0,'center':width/2,'right':width}[align]
+    x = ax - width/2
     x = round(min(max(x,STORY_SAFE[0]),STORY_SAFE[2]-width))
     y = round(min(max(ay-height/2,STORY_SAFE[1]),STORY_SAFE[3]-height))
     text_x = x + {'left':0,'center':(width-text.width)//2,'right':width-text.width}[align]

@@ -127,7 +127,8 @@ def located(message):
 
 
 def titled(item):
-    return snippet(next((m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')), ''))
+    texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')]
+    return snippet(next((t for t in texts if not t.startswith(('Место: ', 'Место (координаты): '))), texts[0] if texts else ''))
 
 
 class Store:
@@ -187,9 +188,12 @@ class Store:
             session = self.get('sessions/inbox', tx) or {}
             reply_id = str(message.get('reply_to_message', {}).get('message_id', ''))
             text = message.get('text', '')
+            name = command(message)
+            if name not in COMMANDS:
+                name = None
             replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
-            if spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
+            if name != '/post' and spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 head = (message['reply_to_message'].get('text') or message['reply_to_message'].get('caption', '')).split('\n', 1)[0]
                 names = spec['preview_targets'].get(reply_id, []) if 'preview_targets' in spec else [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
                 quote = message.get('quote', {}).get('text')
@@ -201,7 +205,7 @@ class Store:
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
                 return editing(spec, item)
-            published = self.published_match(reply_id, tx) if text and reply_id else None
+            published = self.published_match(reply_id, tx) if text and reply_id and name != '/post' else None
             if published:
                 item = self.get('items/' + published[1]['item'], tx)
                 self.put(update_path, {'received':time.time()}, tx)
@@ -211,9 +215,6 @@ class Store:
                 current = self.get('items/' + session[key], tx) if session.get(key) else None
                 if not current or current.get('status') not in statuses:
                     session.pop(key, None)
-            name = command(message)
-            if name not in COMMANDS:
-                name = None
             text = message.get('text', message.get('caption', ''))
             note = text.strip()
             photo = message.get('photo')
@@ -387,6 +388,8 @@ class Store:
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
             self.queue_fix(tx, slug, saved, 'delete', 'delete', identifier)
             return deleting(saved, item)
+        elif verb == 'pfix' and not saved.get('operation') and session.get('awaiting') == {'kind':'fix','slug':slug}:
+            return 'Жду правку: напиши, что поменять.'
         elif verb == 'pfix' and not saved.get('operation') and self.fixable(saved):
             session['awaiting'] = {'kind':'fix','slug':slug}
             self.put('sessions/inbox', session, tx)
@@ -398,8 +401,6 @@ class Store:
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
-            return 'Жду правку: напиши, что поменять.'
-        elif verb == 'pfix' and not saved.get('operation') and session.get('awaiting') == {'kind':'fix','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
         else:
             return None

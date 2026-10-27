@@ -161,6 +161,8 @@ def overlay_errors(spec, targets, images, size=None):
         text, place, anchor = value['text'], value['place'], value['anchor']
         if not isinstance(text, str) or not 1 <= len(text) <= 60 or EMOJI.search(text) or re.search(r'[\x00-\x1f{}\\]', text):
             errors.append(target + ': overlay text must be 1–60 plain characters without emoji')
+        if isinstance(text, str) and target in spec.get('copy', {}) and text != spec['copy'][target]:
+            errors.append(target + ': overlay text must equal the target copy')
         if place is not None and (not isinstance(place, str) or not 1 <= len(place) <= 40 or EMOJI.search(place) or re.search(r'[\x00-\x1f{}\\]', place)):
             errors.append(target + ': overlay place must be null or 1–40 plain characters without emoji')
         if not isinstance(anchor, list) or len(anchor) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 <= n <= 1 for n in anchor):
