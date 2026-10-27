@@ -24,13 +24,34 @@
             "desc": "NoStress reads heart rate variability from Apple Watch and Fitbit to show your stress level in real time, on the wrist and on the phone. It sends gentle check-in notifications when your body needs a pause, and turns HRV, resting heart rate, sleep and activity into a daily overview and monthly trends. Built with SwiftUI, HealthKit, WatchKit and WidgetKit.",
             "link": "https://apps.apple.com/app/id6756629270",
             "privacy": "/projects/nostress/privacy",
-            "img": "nostress"
+            "img": "nostress",
+            "page": "/projects/nostress"
         },
         "currency": {
             "title": "Currency Converter: Best",
             "desc": "A fast currency converter with live and offline exchange rates for 150+ currencies, a home screen widget, conversion history and a built-in calculator. Rates come from free public sources and are cached for travel without internet. Built with SwiftUI and WidgetKit.",
             "link": "https://apps.apple.com/app/id6755351989",
-            "img": "currency"
+            "img": "currency",
+            "page": "/projects/currency",
+            "privacy": "/projects/currency/privacy"
+        },
+        "glossmi": {
+            "title": "Offline AI Translator: Glossmi",
+            "desc": "A translator that explains every word: tap any word of a translation to see its in-context meaning, literal sense, part of speech, alternatives with nuance, formality and idioms, generated on the iPhone, with translation itself free, unlimited and offline, where rival translators send text to a server and give one flat answer.",
+            "link": "https://apps.apple.com/app/id6817585929",
+            "img": "glossmi",
+            "cover": "glossmi.png",
+            "page": "/projects/glossmi",
+            "privacy": "/projects/glossmi/privacy"
+        },
+        "cardmi": {
+            "title": "Business Loyalty Cards Cardmi",
+            "desc": "A plain loyalty card wallet with no account, no ads and no shopping app around it: scan a card with the camera, show its barcode full screen at full brightness, on a widget and on Apple Watch.",
+            "link": "https://apps.apple.com/app/id6817015127",
+            "img": "cardmi",
+            "cover": "cardmi.png",
+            "page": "/projects/cardmi",
+            "privacy": "/projects/cardmi/privacy"
         }
     },
     "2025": {
@@ -45,13 +66,17 @@
             "title": "Usage Battery for Cluade Code",
             "desc": "A macOS menu bar app that shows Claude Code subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claude Code already stores in the Keychain and talks only to Anthropic, so no data is collected. Built with SwiftUI for macOS.",
             "link": "https://apps.apple.com/app/id6757597561",
-            "img": "usagebattery"
+            "img": "usagebattery",
+            "page": "/projects/usage-battery",
+            "privacy": "/projects/usage-battery/privacy"
         },
         "pixero": {
             "title": "Pixero: Blur, Redact, Erase BG",
             "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
             "link": "https://apps.apple.com/app/id6770034829",
-            "img": "pixero"
+            "img": "pixero",
+            "page": "/projects/pixero",
+            "privacy": "/projects/pixero/privacy"
         },
         "mathpanda": {
             "title": "Math Games for 1st grade w AI",
@@ -63,7 +88,9 @@
             "title": "Snore Recorder: SleepTrack",
             "desc": "SleepTrack records snoring and sleep talk overnight, plays the clips back in the morning with a simple sleep score, and wakes you with a smart alarm inside a gentle wake-up window. It also offers sleep sounds with a timer and 7-day trends. No account, no data collection: every recording, score and report stays on the iPhone. Built with SwiftUI and AVFoundation.",
             "link": "https://apps.apple.com/app/id6815288215",
-            "img": "sleeptrack"
+            "img": "sleeptrack",
+            "page": "/projects/sleeptracker",
+            "privacy": "/projects/sleeptracker/privacy"
         }
     },
     "2024": {
@@ -71,7 +98,9 @@
             "title": "PDF Scanner & OCR: DocuClean",
             "desc": "DocuClean scans documents, receipts, letters and ID cards into clean PDFs and finds any of them by a word inside. Text recognition runs on the iPhone, with on-device AI naming and summaries on iOS 27. No account, no uploads, no watermark, no ads. Built with SwiftUI and Vision.",
             "link": "https://apps.apple.com/app/id6815216632",
-            "img": "docuclean"
+            "img": "docuclean",
+            "page": "/projects/docuclean",
+            "privacy": "/projects/docuclean/privacy"
         },
         "xchess": {
             "title": "X-Chess & X-Checkers",

@@ -38,7 +38,7 @@ function renderProjects(data) {
             projectCol.className = 'col-md-4 col-sm-6 col-12';
 
             const projectLink = document.createElement('a');
-            projectLink.href = `project?name=${key}`;
+            projectLink.href = project.page || `project?name=${key}`;
             const projectImage = document.createElement('img');
             projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261013b`;
             projectImage.alt = project.title;

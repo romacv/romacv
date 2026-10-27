@@ -95,6 +95,11 @@
                     return;
                 }
 
+                if (project.page) {
+                    window.location.replace(project.page);
+                    return;
+                }
+
                 document.title = `${project.title} | Roman Resenchuk`;
                 document.querySelector('meta[name="description"]').setAttribute('content', project.desc);
                 document.querySelector('meta[property="og:url"]').setAttribute('content', `https://www.resrom.com/project?name=${projectName}`);

@@ -19,42 +19,6 @@
         <priority>0.7</priority>
     </url>
     <url>
-        <loc>https://resrom.com/projects/nostress</loc>
-        <lastmod>2026-10-27</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
-        <loc>https://www.resrom.com/project?name=pixero</loc>
-        <lastmod>2026-09-23</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
-        <loc>https://www.resrom.com/project?name=sleeptrack</loc>
-        <lastmod>2026-10-06</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
-        <loc>https://www.resrom.com/project?name=docuclean</loc>
-        <lastmod>2026-10-13</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
-        <loc>https://www.resrom.com/project?name=currency</loc>
-        <lastmod>2026-09-23</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
-        <loc>https://www.resrom.com/project?name=usagebattery</loc>
-        <lastmod>2026-09-23</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
         <loc>https://www.resrom.com/project?name=mathpanda</loc>
         <lastmod>2024-05-27</lastmod>
         <changefreq>monthly</changefreq>
@@ -258,10 +222,36 @@
         <changefreq>monthly</changefreq>
         <priority>0.7</priority>
     </url>
-    <url>
-        <loc>https://resrom.com/projects/nostress/privacy</loc>
-        <lastmod>2026-10-27</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.5</priority>
-    </url>
+<url><loc>https://resrom.com/projects/currency</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/currency/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/currency/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/currency/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/pixero</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/pixero/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/pixero/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/pixero/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/sleeptracker</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/sleeptracker/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/sleeptracker/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/sleeptracker/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/nostress</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/nostress/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/nostress/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/nostress/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/docuclean</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/docuclean/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/docuclean/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/docuclean/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/glossmi</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/glossmi/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/glossmi/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/glossmi/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/cardmi</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/cardmi/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/cardmi/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/cardmi/contact</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/usage-battery</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/usage-battery/privacy</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/usage-battery/terms</loc><lastmod>2026-10-27</lastmod></url>
+<url><loc>https://resrom.com/projects/usage-battery/contact</loc><lastmod>2026-10-27</lastmod></url>
 </urlset> 
