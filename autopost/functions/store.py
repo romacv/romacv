@@ -269,11 +269,7 @@ class Store:
             photo = message.get('photo')
             dropped = []
             if name == '/post':
-                abandoned = session.pop('awaiting', None)
-                if abandoned and abandoned.get('kind') == 'fix':
-                    source = self.get('specs/' + abandoned['slug'], tx)
-                    if self.fixable(source) and source.get('fix_keyboard'):
-                        self.job(tx, {'step':'restore-keyboard', 'slug':abandoned['slug'], 'message':source['fix_keyboard']}, 'restore-' + identifier)
+                session.pop('awaiting', None)
                 dropped = self.open_drafts(tx, session)
                 if dropped:
                     session.pop('current', None)
@@ -311,12 +307,12 @@ class Store:
                 sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [body] for k in ('video', 'voice')]
                 if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20):
                     self.put(update_path, {'received':time.time()}, tx)
-                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
+                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».'
                 group = message.get('media_group_id')
                 joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
                 if filled and isinstance(body.get('photo'), list) and body['photo'] and isinstance(update.get('message', {}).get('document'), dict) and body['photo'][-1].get('file_size', 0) > 20*1024*1024:
                     self.put(update_path, {'received':time.time()}, tx)
-                    return {'item':item_id, 'revision':item['revision'], 'text':'Картинка больше 20 МБ: пришли её как фото или сожми.', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
+                    return {'item':item_id, 'revision':item['revision'], 'text':'Картинка больше 20 МБ: пришли её как фото или сожми.', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else 'Картинка больше 20 МБ: пришли её как фото или сожми.'
                 if filled:
                     item['messages'].append(body)
                     item['revision'] += 1
@@ -500,17 +496,19 @@ class Store:
             self.put('sessions/inbox', session, tx)
             line = 'Жду правку.'
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
+            pending = self.get('specs/' + saved['deleting'], tx) if saved.get('deleting') else None
+            if pending and pending.get('state') in ('drafting', 'previewed', 'approved'):
+                return 'Удаление уже готовится.'
+            saved['deleting'] = 'fix-' + identifier
+            self.put(path, saved, tx)
             self.queue_fix(tx, slug, saved, 'delete', 'delete', identifier)
-            self.retire(taps, query, 'Готовлю удаление…')
             return deleting(saved, item)
         elif verb == 'pfix' and not saved.get('operation') and session.get('awaiting') == {'kind':'fix','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
         elif verb == 'pfix' and not saved.get('operation') and self.fixable(saved):
             session['awaiting'] = {'kind':'fix','slug':slug}
-            saved['fix_keyboard'] = (query.get('message') or {}).get('message_id')
             self.put('sessions/inbox', session, tx)
             payload['step'] = 'fix-prompt'
-            line = 'Жду правку.'
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             payload['step'] = 'remove-keyboard'

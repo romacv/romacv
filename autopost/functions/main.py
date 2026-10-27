@@ -1124,14 +1124,6 @@ def handle_worker(request):
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
                     send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
-            elif step == 'restore-keyboard':
-                restored = store.get('specs/' + payload['slug']) or {}
-                if restored.get('state') in ('done','partial') and not restored.get('deleted') and restored.get('hash'):
-                    try:
-                        platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':payload['message'],'reply_markup':buttons(payload['slug'],restored['hash'],published=True)})
-                    except Error as failure:
-                        if not getattr(failure,'not_modified',False):
-                            raise
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
