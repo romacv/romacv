@@ -90,3 +90,62 @@ Free tier не гарантирует нулевой счёт. Scheduler: 3 бе
 Под отчётом о публикации кнопки «Править» (текст без открытого поста правит черновик) и «Удалить»; ответ текстом на сообщение опубликованного поста тоже правка. Слова в тексте командами не считаются. Бот показывает изменённые строки или список целей удаления и ждёт отдельного подтверждения с хешем. Канал требует дополнительно Edit messages и Delete messages; альбом правится по подписи первого сообщения и удаляется целиком, а старые альбомы без всех ID удаляются вручную. Business story правится с исходным медиа (при истёкшем Storage потребуется ручная правка), Threads правится через удаление и повторную публикацию: превью предупреждает, что лайки и комментарии пропадут. Нужен новый токен со scopes threads_basic, threads_content_publish, threads_delete и их список в scopes выбранного токена; refresh не добавляет разрешения. Перед удалением проверяется [threads_publishing_limit](https://developers.facebook.com/docs/threads/troubleshooting?locale=en_US#retrieve-quota-limits) (delete_quota_usage/delete_config), максимум 100 за 24 часа. Исходное медиа проверяется до удаления; истёкший материал нужно прислать заново. Новый ID и ссылка сохраняются. Instagram caption edit и DELETE не поддерживаются официальным API с Instagram Login: [IG Media](https://developers.facebook.com/docs/instagram-platform/reference/instagram-media). Правка и удаление выполняются вручную по ссылке. Blog меняется одним атомарным Git Data commit; удаление убирает статью из индекса, RSS и sitemap. Отчёт содержит результат и ссылку каждой цели. Повтор пропускает готовые цели; pending требует ручной сверки.
 
 Stories в канале недоступны через Bot API и не добавлены в цели. [postStory](https://core.telegram.org/bots/api#poststory), [editStory](https://core.telegram.org/bots/api#editstory) и [deleteStory](https://core.telegram.org/bots/api#deletestory) требуют `business_connection_id`, а не `chat_id`; поддерживается только личная Business story (`tg-story`) с правом `can_manage_stories`. Канальные права Post/Edit/Delete stories для обычных постов не нужны.
+
+## Как это устроено: для iOS-разработчика
+
+Таблица частей, версий и лимитов — выше; здесь только роли и аналогии.
+
+| Часть | iOS-аналог | Где работает | Кто даёт доступ и как | Что запускает |
+| --- | --- | --- | --- | --- |
+| webhook | push, будящий приложение | Cloud Functions, публичный URL | Telegram secret в заголовке; пускает только владельца в личном чате | Telegram POST на каждое сообщение и нажатие кнопки |
+| worker | фоновая задача `BGTaskScheduler` | Cloud Functions, вызывается из Cloud Tasks (очередь `worker`) | runtime SA с `cloudtasks.enqueuer` у webhook; одна попытка, один параллельный вызов | задача от webhook или от результата job |
+| autopost-render | тяжёлый фоновый процесс (Share Extension с ffmpeg) | Cloud Run job, приватный | `run` и `runWithOverrides` только на этот job, у SA worker | worker, когда нужен монтаж или финальный файл |
+| Firestore | Core Data / CloudKit | Firestore Native | правила клиента deny all; сервер идёт через SA | читают и пишут webhook, worker, daily |
+| Storage | папка Application Support | Cloud Storage, приватный bucket | SA; внешним сервисам — подписанные GET на 60 минут | загрузки, `/u/` |
+| Secret Manager `AUTOPOST` | Keychain | Secret Manager | `secretAccessor` у runtime SA; значения кладёт Роман | читается при старте функций |
+| кнопки в Telegram | confirm alert | Telegram | токен бота, личный чат | подтверждение сверяется с хешем превью |
+| daily | периодический `BGAppRefreshTask` | Cloud Scheduler → Cloud Functions | runtime SA | каждые 15 минут: восстановление; раз в день: обслуживание, refresh токенов |
+| budget_kill | аварийный выключатель | Pub/Sub → отдельная функция | собственный SA с правом отключить billing | уведомление бюджета |
+| Threads, Instagram, Facebook | внешние API-сервисы | Meta APIs | токен приложения Meta (см. раздел про токены) | worker при публикации |
+| Telegram story | действие от имени пользователя | Telegram Bot API | Business connection Романа, `can_manage_stories` | worker при публикации |
+
+Различие с iOS: функции не хранят состояние между вызовами, всё важное лежит в Firestore (как в `ModelContext`, который сохраняют до выхода из процесса). Очередь на одну попытку: упавший шаг не повторяется сам, бот показывает «Повторить».
+
+```mermaid
+flowchart TD
+    cmd["/post в личном чате"] --> intake["intake: webhook принимает текст, фото, видео, голос; видео больше 20 MiB идёт через /u/"]
+    intake --> done["кнопка Готово"]
+    done --> agent["worker: черновик (Anthropic) и Speech-to-Text для голоса"]
+    agent -->|видео| prep["Cloud Run job: подготовка и черновой монтаж"]
+    prep --> preview
+    agent -->|текст и фото| preview["превью: альбом и сообщение с текстом по сетям"]
+    preview -->|Править| edit["новая версия черновика"]
+    edit --> preview
+    preview -->|Отклонить| closed["черновик закрыт"]
+    preview -->|Опубликовать, хеш совпал| final["финальный render из утверждённого EDL"]
+    final -->|ошибка| retry["Повторить"]
+    retry --> final
+    final --> tgc["Telegram-канал"]
+    final --> tgs["Telegram story"]
+    final --> ig["Instagram, затем Facebook mirror"]
+    final --> th["Threads"]
+    final --> blog["Blog: commit в main"]
+    tgc --> report["отчёт со ссылками в чат"]
+    tgs --> report
+    ig --> report
+    th --> report
+    blog --> report
+```
+
+### Стоимость в месяц
+
+| Статья | Сумма | Источник |
+| --- | --- | --- |
+| Google (Functions, Firestore, Storage, Tasks, Scheduler, Secret Manager) | $0 в пределах free tier | план; не проверено живым Billing report |
+| Speech-to-Text | $0, резерв 55 из 60 бесплатных минут | план и раздел «Настройка» |
+| Cloud Run job, Artifact Registry сверх 0.5 GB, сборки, egress | оценка, не измерено | в плане не указано; проверить Billing report после живых запусков |
+| Anthropic | около $0.03 за черновик (оценка из плана), лимит $5 в месяц, prepaid без auto-reload | план |
+| Meta, Telegram, GitHub | $0 | API без платы за использование (не проверялось отдельно) |
+| Предохранитель | бюджет $1, пороги 50/90/100%, затем billing отключается | раздел «Настройка», шаг 5 |
+
+Решения, которые остаются за Романом: ответы на живые тесты из конца раздела «Настройка», уничтожение старых версий AUTOPOST и перевыпуск токенов Meta раз в 60 суток при сбое refresh.
