@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -198,6 +199,23 @@ def located(message):
 def titled(item):
     texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')]
     return snippet(next((t for t in texts if not t.startswith(('Место: ', 'Место (координаты): '))), texts[0] if texts else ''))
+
+
+PRICED = 'claude-sonnet-5-5'
+PRICE = {'input':2.0, 'write5m':2.5, 'write1h':4.0, 'read':0.1, 'output':10.0, 'search':0.01}
+
+
+def tally(usage):
+    def number(source, name):
+        value = source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    created = number(usage, 'cache_creation_input_tokens')
+    split = usage.get('cache_creation') if isinstance(usage, dict) else getattr(usage, 'cache_creation', None)
+    short, long = (number(split, 'ephemeral_5m_input_tokens'), number(split, 'ephemeral_1h_input_tokens')) if split else (created, 0)
+    tools = usage.get('server_tool_use') if isinstance(usage, dict) else getattr(usage, 'server_tool_use', None)
+    row = {'calls':1, 'input_tokens':number(usage, 'input_tokens'), 'output_tokens':number(usage, 'output_tokens'), 'cache_read_tokens':number(usage, 'cache_read_input_tokens'), 'cache_write_tokens':short + long, 'web_searches':number(tools, 'web_search_requests') if tools else 0}
+    row['usd'] = (row['input_tokens'] * PRICE['input'] + short * PRICE['write5m'] + long * PRICE['write1h'] + row['cache_read_tokens'] * PRICE['read'] + row['output_tokens'] * PRICE['output']) / 1e6 + row['web_searches'] * PRICE['search']
+    return row
 
 
 class Store:
@@ -799,6 +817,28 @@ class Store:
         path = 'specs/' + slug + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()
         self.put(path, {'state':'failed', 'name':name})
 
+    def record_usage(self, item, kind, usage):
+        try:
+            row = tally(usage)
+            model = usage.get('model') if isinstance(usage, dict) else getattr(usage, 'model', None)
+            if isinstance(model, str) and not model.startswith(PRICED):
+                logging.error(json.dumps({'code':'usage_model_unpriced','model':model[:100]}, ensure_ascii=False))
+            month = datetime.now(timezone.utc).strftime('%Y-%m')
+            def apply(tx):
+                paths = ['usage/anthropic-' + month] + (['usage/item-' + item] if item else [])
+                values = [self.get(path, tx) or {} for path in paths]
+                targets = [values[0]] + ([values[1].setdefault('anthropic', {}).setdefault(kind, {})] if item else [])
+                for target in targets:
+                    for name, amount in row.items():
+                        target[name] = target.get(name, 0) + amount
+                if item:
+                    values[1]['updated'] = time.time()
+                for path, value in zip(paths, values):
+                    self.put(path, value, tx)
+            self.atomic(apply)
+        except Exception as failure:
+            logging.error(json.dumps({'code':'usage_record_failed','error':str(failure)[:200]}, ensure_ascii=False))
+
     def reserve_speech(self, seconds, reservation):
         month = datetime.now(timezone.utc).strftime('%Y-%m')
         def reserve(value):
@@ -809,3 +849,11 @@ class Store:
             value['seconds'] = value.get('seconds', 0) + seconds
             value.setdefault('reservations', []).append(reservation)
         self.change('usage/' + month, reserve)
+        if '/' in reservation:
+            try:
+                def add(value):
+                    value['speech_seconds'] = value.get('speech_seconds', 0) + seconds
+                    value['updated'] = time.time()
+                self.change('usage/item-' + reservation.split('/')[0], add)
+            except Exception as failure:
+                logging.error(json.dumps({'code':'usage_record_failed','error':str(failure)[:200]}, ensure_ascii=False))

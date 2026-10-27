@@ -25,6 +25,7 @@ BUCKET = 'gs://' + PROJECT + '-autopost'
 RUNTIME = 'autopost-runtime@' + PROJECT + '.iam.gserviceaccount.com'
 RENDER = 'autopost-render@' + PROJECT + '.iam.gserviceaccount.com'
 BUDGET = 'autopost-budget@' + PROJECT + '.iam.gserviceaccount.com'
+DATASET = 'billing_export'
 KEYS = Path.home() / 'Documents/keys/autopost'
 ENV = dict(os.environ, CLOUDSDK_CORE_DISABLE_FILE_LOGGING='true', CLOUDSDK_CORE_LOG_HTTP='false', CLOUDSDK_CORE_VERBOSITY='error', CLOUDSDK_CORE_DISABLE_USAGE_REPORTING='true')
 
@@ -67,6 +68,13 @@ def bind(group, account, role_name):
     cloud(*group, '--member=serviceAccount:' + account, '--role=' + role_name, *condition)
 
 
+def dataset_reader(account):
+    say('Grant roles/bigquery.dataViewer to ' + account + ' on ' + DATASET)
+    result = subprocess.run(['bq', '--project_id=' + PROJECT, 'add-iam-policy-binding', '--dataset', '--member=serviceAccount:' + account, '--role=roles/bigquery.dataViewer', PROJECT + ':' + DATASET], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV)
+    if result.returncode:
+        raise RuntimeError('bq operation failed; output suppressed. Check owner access and prerequisites.')
+
+
 def policies():
     with tempfile.TemporaryDirectory(prefix='autopost-setup-') as directory:
         root = Path(directory)
@@ -86,7 +94,7 @@ def policies():
 
 
 def apis():
-    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging', 'monitoring']
+    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging', 'monitoring', 'bigquery']
     say('Enable APIs: ' + ', '.join(services))
     for start in range(0, len(services), 20):
         cloud('services', 'enable', *[service + '.googleapis.com' for service in services[start:start + 20]])
@@ -139,6 +147,8 @@ def iam():
     grant(BUDGET, budget)
     grant(BUDGET, 'roles/datastore.user')
     grant(RUNTIME, monitoring)
+    grant(RUNTIME, 'roles/bigquery.jobUser')
+    dataset_reader(RUNTIME)
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST'), RUNTIME, 'roles/secretmanager.secretAccessor')
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST_NOTIFY'), RENDER, 'roles/secretmanager.secretAccessor')
     bind(('iam', 'service-accounts', 'add-iam-policy-binding', RUNTIME), RUNTIME, signer)

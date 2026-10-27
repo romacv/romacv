@@ -31,7 +31,7 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 .more a{color:var(--tg-theme-link-color,#2481cc);text-decoration:none;overflow-wrap:anywhere}
 .free{color:var(--tg-theme-hint-color,#6d6d72)}
 #state{margin-top:24px;text-align:center}
-#note{margin:8px 4px 0}
+.note{margin:8px 4px 0}
 </style>
 </head>
 <body>
@@ -73,6 +73,14 @@ function row(key,head,details){
   r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle()}});
   return r;
 }
+function costs(c){
+  const box=el('div','more');
+  c.anthropic.forEach(k=>box.append(line(el('span','','Anthropic: '+k.kind),el('span','time','≈'+money(k.usd)))));
+  if(c.speech_min)box.append(line(el('span','','Речь: '+number(c.speech_min)+' мин'),el('span','time',spend(c.speech_paid))));
+  if(c.vcpu_s||c.gib_s)box.append(line(el('span','','Рендер: '+number(c.vcpu_s)+' vCPU·с, '+number(c.gib_s)+' ГиБ·с'),el('span','time',spend(c.render_paid))));
+  box.append(line(el('span','title','Итого'),el('span','time','≈'+money(c.total))));
+  return box;
+}
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
 function render(){
   if(!data)return;
@@ -80,7 +88,7 @@ function render(){
     const head=el('div'), time=el('span','time');
     head.append(line(el('span','title',job.title||'Без названия'),time));
     if(job.label)head.append(el('div','stage',job.label));
-    return row('a'+(job.id||i),head,job.steps.length?()=>{
+    return row('a'+(job.id||i),head,job.steps.length||job.cost?()=>{
       const box=el('div','more');
       job.steps.forEach(step=>{
         const item=el('div',step.done?'done':'current'), t=el('span','time',clock(step.seconds)+' · '+number(step.vcpu_s)+' vCPU·с'+(step.paid===undefined?'':' · '));
@@ -89,6 +97,7 @@ function render(){
         item.append(el('span','',step.label),t);
         box.append(item);
       });
+      if(job.cost)box.append(costs(job.cost));
       return box;
     }:null);
   }));
@@ -98,6 +107,7 @@ function render(){
       const box=el('div','more');
       box.append(el('div','',w.wait));
       if(w.targets.length)box.append(el('div','hint','Куда: '+w.targets.join(', ')));
+      if(w.cost)box.append(costs(w.cost));
       return box;
     });
   }));
@@ -107,32 +117,34 @@ function render(){
       const box=el('div','more');
       if(!p.links.length)box.append(el('div','hint',p.state==='partial'?'Опубликовано не везде.':'Ссылок нет.'));
       p.links.forEach(l=>{const d=el('div');d.append(link(l.name,l.url));box.append(d)});
+      if(p.cost)box.append(costs(p.cost));
       return box;
     });
   }));
   limits();
   tick();
 }
-function limits(){
-  const box=document.getElementById('limits');box.replaceChildren();
-  const rows=[];
-  (data.quota||[]).forEach(q=>{
-    const r=el('div','row plain');
-    r.append(line(el('span','',q.label),el('span','time',q.paid>0?'≈'+money(q.paid):q.percent>=80?'≈бесплатно':'бесплатно')));
-    r.append(el('div','hint',number(q.used)+' из '+number(q.free)+' '+q.unit+' ('+number(q.percent)+'%)'));
-    rows.push(r);
-  });
-  const b=data.budget;
-  if(b&&b.cost!==undefined&&b.cost!==null){
-    const r=el('div','row plain');
-    r.append(line(el('span','','Месяц: счёт '+money(b.cost,b.currency)+' из бюджета '+money(b.budget,b.currency)),el('span','time','')));
-    if(b.at)r.append(el('div','hint','по данным на '+stamp(b.at)));
-    rows.push(r);
-  }
+function section(head,rows,notes){
+  const box=document.getElementById('limits');
   if(!rows.length)return;
-  box.append(el('h2','','Лимиты'));
+  if(!box.hasChildNodes())box.append(el('h2','','Расходы'));
+  box.append(el('h2','',head));
   const s=el('section');s.append(...rows);box.append(s);
-  if(data.quota&&data.quota.some(q=>q.key==='cpu'||q.key==='mem')){const n=el('p','hint','Бесплатный лимит Cloud Run общий на весь billing account; здесь считаются только render-задачи.');n.id='note';box.append(n)}
+  (notes||[]).forEach(t=>box.append(el('p','hint note',t)));
+}
+function plain(left,right,sub){
+  const r=el('div','row plain');
+  r.append(line(el('span','',left),el('span','time',right||'')));
+  if(sub)r.append(el('div','hint',sub));
+  return r;
+}
+function limits(){
+  document.getElementById('limits').replaceChildren();
+  const b=data.budget, g=data.billing, a=data.anthropic, q=data.quota||[];
+  if(b&&b.cost!==undefined&&b.cost!==null)section('Месяц',[plain('Месяц: счёт '+money(b.cost,b.currency)+' из бюджета '+money(b.budget,b.currency),'',b.at?'по данным на '+stamp(b.at):'')]);
+  if(g)section('Google по сервисам',g.state==='ok'&&g.rows.length?g.rows.map(x=>plain(x.service,money(x.cost,x.currency))):[plain('Выгрузка счёта ещё не пришла','')],g.at?['по данным на '+stamp(g.at)]:[]);
+  if(a)section('Anthropic',[plain('Anthropic за месяц: '+money(a.usd)+', '+number(a.calls)+' вызовов','',number(a.input_tokens)+' вх., '+number(a.output_tokens)+' исх., кэш '+number(a.cache_read_tokens)+' чт. / '+number(a.cache_write_tokens)+' зап., поиск '+number(a.web_searches))]);
+  section('Бесплатные лимиты',q.map(x=>x.percent===null?plain(x.label,'нет метрики','бесплатно '+number(x.free)+' '+x.unit):plain(x.label,x.paid>0?'≈'+money(x.paid):x.percent>=80?'≈бесплатно':'бесплатно',number(x.used)+' из '+number(x.free)+' '+x.unit+' ('+number(x.percent)+'%)'+(x.stale?' · устарело':''))),q.some(x=>x.key==='cpu'||x.key==='mem')?['Бесплатные лимиты Cloud Run и других сервисов общие на весь billing account; здесь считается только этот проект.']:[]);
 }
 function tick(){
   data&&data.active.forEach((job,i)=>{

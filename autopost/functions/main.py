@@ -697,7 +697,7 @@ def draft(config,store,bucket,payload,directory):
     key = 'conversations/' + payload['item']
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
-    spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow)
+    spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit' if follow is not None else 'draft',usage))
     if superseded(store,payload):
         return
     if drafter.answered(spec):
@@ -907,7 +907,7 @@ def plan_montage(config,store,bucket,payload,directory):
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
-    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:(drafter.answer_errors(value) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow)
+    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:(drafter.answer_errors(value) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,lambda usage:store.record_usage(payload['item'],'montage',usage))
     if superseded(store,payload):
         return
     if drafter.answered(edl):
@@ -1280,7 +1280,7 @@ def fix(config,store,slug):
             return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
         status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in source['spec']['targets']}
         asked = {'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'status':status,'instruction':saved['instruction']}
-        corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked)
+        corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked,rec=lambda usage:store.record_usage(saved['item'],'fix',usage))
         if drafter.answered(corrected):
             message = tell(config,corrected['answer'])
             store.change('specs/' + slug,lambda value:value.update(state='rejected'))

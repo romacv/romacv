@@ -27,7 +27,7 @@ def capture(store, item, slug, outcome):
                 store.change('items/' + item, lambda value: value.update(fix_learned=len(saved['turns'])))
             turns[name] = [{'role': t['role'], 'text': t['text'][:CHARS]} for t in rows[:2] + rows[2:][-TURNS:]]
     key = 'learning/' + slug + '-' + outcome + '-' + str(int(time.time()))
-    store.put(key, {'outcome': outcome, 'turns': turns, 'final': (store.get('specs/' + slug) or {}).get('spec'), 'at': time.time()})
+    store.put(key, {'item': item, 'outcome': outcome, 'turns': turns, 'final': (store.get('specs/' + slug) or {}).get('spec'), 'at': time.time()})
     return key
 
 
@@ -80,7 +80,7 @@ def learn(config, store, key):
     corpus = '\n'.join(skills.words([t for t in rows if t['role'] == 'user']))
     assistant = '\n'.join(skills.words([t for t in rows if t['role'] == 'assistant']))
     final = '\n'.join(skills.words(record.get('final')))
-    raw = drafter.converse(config, LEARN + '\n\n' + skills.render(current), evidence)
+    raw = drafter.converse(config, LEARN + '\n\n' + skills.render(current), evidence, rec=lambda usage: store.record_usage(record.get('item'), 'learn', usage))
     skills.apply(store, skills.check(skills.parse(raw), current, corpus, assistant, final), seen)
 
 
@@ -116,7 +116,7 @@ def command(config, store, payload, tell):
         store.put('skills-messages/' + str(message['message_id']), {'at': time.time()})
         return
     try:
-        value = skills.parse(drafter.converse(config, EDIT + '\n\n' + skills.render(current, True), text))
+        value = skills.parse(drafter.converse(config, EDIT + '\n\n' + skills.render(current, True), text, rec=lambda usage: store.record_usage(None, 'skills', usage)))
     except (ValueError, TypeError):
         raise Error('Навыки не изменены: ответ модели не разобран.') from None
     names = skills.change(store, skills.operations(value, current))

@@ -265,7 +265,16 @@ def final_text(content):
     return ''.join(parts).strip()
 
 
-def create(client, system, messages):
+def note(rec, response):
+    if rec:
+        try:
+            usage = response.usage
+            rec({'model':response.model, **{name:getattr(usage, name, None) for name in ('input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens','cache_creation','server_tool_use')}})
+        except Exception as failure:
+            logging.error(json.dumps({'code':'usage_record_failed','error':str(failure)[:200]},ensure_ascii=False))
+
+
+def create(client, system, messages, rec=None):
     import anthropic
     tools, used = [SEARCH], 0
     for attempt in range(PAUSES + 2):
@@ -275,12 +284,14 @@ def create(client, system, messages):
             tools = [{**SEARCH,'max_uses':SEARCHES - used}] if used < SEARCHES else []
         try:
             response = client.messages.create(model=MODEL, max_tokens=12000, thinking={'type':'adaptive'}, system=system, tools=tools, messages=messages)
+            note(rec, response)
         except anthropic.BadRequestError as failure:
             if attempt or not any(word in str(failure) for word in ('web_search','tool')):
                 raise
             logging.warning('web_search rejected by the API (400); retrying without tools')
             tools = []
             response = client.messages.create(model=MODEL, max_tokens=12000, thinking={'type':'adaptive'}, system=system, tools=tools, messages=messages)
+            note(rec, response)
         if response.stop_reason != 'pause_turn':
             break
         used += sum(1 for block in response.content if block.type == 'server_tool_use')
@@ -293,16 +304,17 @@ def connect(config):
     return anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
 
 
-def converse(config, system, text, tokens=4000):
+def converse(config, system, text, tokens=4000, rec=None):
     import anthropic
     try:
         response = connect(config).messages.create(model=MODEL, max_tokens=tokens, system=system, messages=[{'role':'user','content':text}])
     except anthropic.APIStatusError as failure:
         raise Error('Provider rejected request: ' + str(failure.status_code)) from None
+    note(rec, response)
     return final_text(response.content)
 
 
-def ask(config, payload, images, validator, montage=False, thread=None, follow=None):
+def ask(config, payload, images, validator, montage=False, thread=None, follow=None, rec=None):
     import anthropic
     client = connect(config)
     local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
@@ -328,7 +340,7 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
         system.append({'type':'text','text':book,'cache_control':{'type':'ephemeral'}})
     for attempt in range(2):
         try:
-            response = create(client, system, wire(turns, pool))
+            response = create(client, system, wire(turns, pool), rec)
         except anthropic.APIStatusError as failure:
             if failure.status_code == 402:
                 raise Error('черновик не готов: баланс Anthropic') from None
