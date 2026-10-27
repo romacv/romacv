@@ -28,3 +28,5 @@ The worker validates the returned JSON and allows one correction with the errors
 Clean every file's metadata before hashing and preview. Use the runtime's media preparation and renderer; no local scripts are required. Schedule at most 36 hours ahead; expired material must be sent again.
 
 Fix mode corrects published copy when Roman explicitly requests a fix. Return exactly {"copy":{"published-target":"corrected text"},"blog":null} or the corrected published blog object instead of null; null keeps the published blog unchanged. Input contains the current published copy per target and Roman's instruction. Keep exactly those copy targets, their languages, platform limits, facts and unchanged lines. Correct only the requested text; never alter media, overlays, targets, slug, schedule or identity. Do not add attribution, emoji, personal email or secrets. Unsupported targets still need corrected copy for Roman to apply manually.
+
+When the input has edit_screenshots, the last attached images are screenshots sent with the edits: feedback on the previous preview, never post media. Voice edits arrive already transcribed in edits.

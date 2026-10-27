@@ -62,11 +62,11 @@ class PublishedTests(unittest.TestCase):
             self.assertEqual(self.store.get('specs/fix-' + str(identifier))['source'],'article')
         self.assertIsNotNone(self.store.get('outbox/fix-100'))
 
-    def test_words_without_reply_are_plain_material(self):
+    def test_words_without_reply_are_not_commands_and_open_nothing(self):
         for identifier,text in enumerate(['поправь https://t.me/example/10','удали пост','Отклонить','delete','Montage','монтаж'],200):
-            result = self.intake(text,identifier=identifier)
-            self.assertEqual(result['item'],'item-' + str(identifier))
+            self.assertEqual(self.intake(text,identifier=identifier),'Чтобы начать пост, отправь /post.')
             self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
+            self.assertIsNone(self.store.get('items/item-' + str(identifier)))
 
     def test_typed_delete_words_in_reply_are_fix_instructions(self):
         self.store.put('published-messages/21',{'slug':'article'})
@@ -99,7 +99,8 @@ class PublishedTests(unittest.TestCase):
         self.assertIn('Правлю опубликованный пост',self.intake('Опечатка в первом слове',identifier=341))
         saved = self.store.get('specs/fix-341')
         self.assertEqual((saved['operation'],saved['source'],saved['instruction']),('fix','article','Опечатка в первом слове'))
-        self.assertEqual(self.intake('Ещё текст',identifier=342)['item'],'item-342')
+        self.assertEqual(self.intake('Ещё текст',identifier=342),'Чтобы начать пост, отправь /post.')
+        self.assertIsNone(self.store.get('items/item-342'))
 
     def test_plain_message_does_not_scan_specs(self):
         with patch.object(self.store.db,'collection',side_effect=AssertionError('scan')):

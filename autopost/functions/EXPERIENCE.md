@@ -85,7 +85,7 @@ Read every row before drafting or sending a preview. Dates record the original l
 | 2026-10-26 | Bot API getFile stops at 20 MB | Large media by a 15-minute signed PUT URL in the page fragment, never by chat upload. |
 | 2026-10-26 | Secrets bound at deploy | Rotating tokens live in Firestore, human-set ones in the single secret. |
 | 2026-10-26 | Copy language drifts with mixed Russian and English inputs | A Cyrillic-ratio validator per target, not a prompt line. |
-| 2026-10-26 | Raw clip batches need an explicit end | Collect videos until the Смонтировать button; album revisions invalidate earlier delayed tasks. |
+| 2026-10-26 | Raw clip batches need an explicit end | Collect everything after /post until the Готово button; album revisions invalidate earlier delayed tasks. |
 | 2026-10-26 | Unchecked edit decisions can exceed source or platform limits | Validate every EDL source, finite in/out, total including the cover frame, cover time and subtitle interval; allow one correction. |
 | 2026-10-26 | Subtitles can hide the subject or inject ASS controls | One or two plain lines, <=32 characters each; x=150–930, y=300–1250; no overlapping cues or ASS escapes. |
 | 2026-10-26 | Long rendering does not fit a short function invocation | Use the private Cloud Run render job; immutable object generations and SHA-256 tie outputs to approval. |

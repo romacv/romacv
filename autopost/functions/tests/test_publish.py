@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 import sys
 import tempfile
-import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -31,7 +30,7 @@ class PublisherTests(unittest.TestCase):
         self.assets = {target:{} for target in self.spec['targets']}
         self.digest = app.asset_hash(self.spec,self.assets)
         self.store.put('items/item-1', {'status':'previewed','revision':1,'messages':[]})
-        self.store.put('specs/example', {'state':'previewed','hash':self.digest,'item':'item-1','spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
+        self.store.put('specs/example', {'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
 
     def callback(self, verb='pub', digest=None, identifier=1):
         return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':f'{verb}:example:{(digest or self.digest)[:8]}'}},self.config)
@@ -208,11 +207,12 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.store.get('items/item-1')['edits'],['Make shorter'])
         self.assertIsNotNone(self.store.get('outbox/edit-42'))
 
-    def test_text_after_edit_tap_without_reply_is_the_edit_and_stale_tap_is_material(self):
+    def test_text_after_edit_tap_once_previewed_is_not_the_edit(self):
         self.callback('edit')
         self.store.change('specs/example',lambda value:value.update(state='previewed'))
         result = self.store.intake({'update_id':43,'message':{'message_id':10,'text':'Make shorter'}},self.config)
-        self.assertEqual(result['item'],'item-43')
+        self.assertEqual(result,'Чтобы начать пост, отправь /post.')
+        self.assertIsNone(self.store.get('items/item-43'))
         self.assertEqual(self.store.get('items/item-1').get('edits'),None)
 
     def test_quoted_reply_to_preview_copy_queues_edit_with_target(self):
@@ -233,13 +233,14 @@ class PublisherTests(unittest.TestCase):
 
     def edit_and_follow_up(self):
         self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Чайнатаун в Джакарте'}]})
-        self.callback('edit')
-        self.store.intake({'update_id':42,'message':{'message_id':10,'text':'На видео надпись'}},self.config)
+        self.store.put('sessions/inbox',{'current':'example'})
+        first = self.store.intake({'update_id':42,'message':{'message_id':10,'text':'На видео надпись'}},self.config)
+        self.assertEqual(first['text'],'Правлю черновик «Чайнатаун в Джакарте»: На видео надпись.')
         return self.store.intake({'update_id':43,'message':{'message_id':11,'text':'надо надпись наложить'}},self.config)
 
-    def test_follow_up_text_joins_the_edit_with_new_post_button(self):
+    def test_text_with_a_current_draft_is_feedback_with_new_post_button(self):
         result = self.edit_and_follow_up()
-        self.assertEqual(result['text'],'Добавил к правке черновика «Чайнатаун в Джакарте».')
+        self.assertEqual(result['text'],'Правлю черновик «Чайнатаун в Джакарте»: надо надпись наложить.')
         self.assertEqual(result['reply_markup']['inline_keyboard'][0][0]['text'],'Это новый пост')
         self.assertLessEqual(len(result['reply_markup']['inline_keyboard'][0][0]['callback_data'].encode()),64)
         item = self.store.get('items/item-1')
@@ -247,14 +248,51 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.store.get('outbox/edit-43')['payload'],{'item':'item-1','step':'draft','revision':3})
         self.assertIsNone(self.store.get('items/item-43'))
         self.assertEqual(self.store.get('specs/example')['state'],'drafting')
+        self.assertEqual(self.store.get('outbox/unkey-42')['payload']['step'],'remove-keyboard')
 
-    def test_new_post_button_moves_the_follow_up_into_its_own_item(self):
+    def test_photo_with_a_current_draft_is_stored_as_an_edit_attachment(self):
+        self.store.put('sessions/inbox',{'current':'example'})
+        shot = {'message_id':12,'photo':[{'file_id':'small','file_size':1},{'file_id':'large','file_size':9}]}
+        result = self.store.intake({'update_id':44,'message':shot},self.config)
+        self.assertTrue(result['text'].startswith('Правлю черновик') and result['text'].endswith(': скриншот.'))
+        item = self.store.get('items/item-1')
+        self.assertEqual(item['edits'],['Правка на приложенном скриншоте.'])
+        self.assertEqual(item['edit_photos'],[{'message_id':12,'photo':[{'file_id':'large','file_size':9}]}])
+        caption = self.store.intake({'update_id':45,'message':{'message_id':13,'caption':'Аи слоп','photo':[{'file_id':'shot','file_size':5}]}},self.config)
+        self.assertTrue(caption['text'].endswith(': Аи слоп.'))
+        self.assertEqual([x['photo'][0]['file_id'] for x in self.store.get('items/item-1')['edit_photos']],['large','shot'])
+
+    def test_voice_is_an_edit_and_video_gets_the_hint(self):
+        self.store.put('sessions/inbox',{'current':'example'})
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Чайнатаун в Джакарте'}]})
+        voice = {'file_id':'a','file_size':10}
+        result = self.store.intake({'update_id':46,'message':{'message_id':46,'voice':voice}},self.config)
+        self.assertEqual(result['text'],'Правлю черновик «Чайнатаун в Джакарте»: голосовое.')
+        item = self.store.get('items/item-1')
+        self.assertEqual(item['edits'],['[голосовое сообщение 46]'])
+        self.assertEqual([x['voice'] for x in item['edit_voices']],[voice])
+        hint = self.store.intake({'update_id':47,'message':{'message_id':47,'video':{'file_id':'v','file_size':10}}},self.config)
+        self.assertEqual(hint,'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.')
+        self.assertEqual(len(self.store.get('items/item-1')['edits']),1)
+
+    def test_post_command_wins_over_current_draft(self):
+        self.store.put('sessions/inbox',{'current':'example'})
+        message = {'message_id':20,'text':'/post','entities':[{'type':'bot_command','offset':0,'length':5}]}
+        self.assertEqual(self.store.intake({'update_id':48,'message':message},self.config)['item'],'item-48')
+        result = self.store.intake({'update_id':49,'message':{'message_id':21,'text':'Новый материал'}},self.config)
+        self.assertEqual(result['item'],'item-48')
+        self.assertEqual(self.store.get('items/item-1').get('edits'),None)
+
+    def test_new_post_button_moves_the_follow_up_into_a_collecting_item(self):
         data = self.edit_and_follow_up()['reply_markup']['inline_keyboard'][0][0]['callback_data']
         result = self.store.intake({'update_id':44,'callback_query':{'id':'q44','data':data}},self.config)
-        self.assertEqual(result,'Готовлю пост из текста «надо надпись наложить». Превью пришлю сюда.')
+        self.assertEqual(result,'Новый пост открыт.')
         self.assertEqual(self.store.get('items/item-1')['edits'],['На видео надпись'])
-        self.assertEqual(self.store.get('items/item-43')['messages'][0]['text'],'надо надпись наложить')
-        self.assertEqual(self.store.get('outbox/draft-43')['payload'],{'item':'item-43','step':'draft','revision':1})
+        created = self.store.get('items/item-43')
+        self.assertEqual(created['status'],'collecting')
+        self.assertEqual(created['messages'][0]['text'],'надо надпись наложить')
+        self.assertEqual(self.store.get('sessions/inbox')['collecting'],'item-43')
+        self.assertEqual(self.store.get('outbox/collect-43')['payload']['step'],'collect-prompt')
         self.assertEqual(self.store.get('outbox/unmove-43')['payload'],{'item':'item-1','step':'draft','revision':4})
         self.assertIsNone(self.store.intake({'update_id':45,'callback_query':{'id':'q45','data':data}},self.config))
 
@@ -264,22 +302,12 @@ class PublisherTests(unittest.TestCase):
         self.assertIsNone(self.store.intake({'update_id':44,'callback_query':{'id':'q44','data':data}},self.config))
         self.assertEqual(len(self.store.get('items/item-1')['edits']),2)
 
-    def test_text_after_window_or_preview_is_a_new_post(self):
-        self.edit_and_follow_up()
-        self.store.change('sessions/inbox',lambda value:value['editing'].update(until=0))
-        self.assertEqual(self.store.intake({'update_id':50,'message':{'message_id':12,'text':'поздно'}},self.config)['item'],'item-50')
-        self.assertNotIn('editing',self.store.get('sessions/inbox'))
-        self.store.change('sessions/inbox',lambda value:value.update(editing={'slug':'example','until':time.time() + 600}))
-        self.store.change('specs/example',lambda value:value.update(state='previewed'))
-        self.assertEqual(self.store.intake({'update_id':51,'message':{'message_id':13,'text':'после превью'}},self.config)['item'],'item-51')
-        self.assertEqual(len(self.store.get('items/item-1')['edits']),2)
-
-    def test_preview_ends_the_follow_up_window(self):
-        self.edit_and_follow_up()
+    def test_preview_makes_the_draft_current(self):
         spec = {**self.spec,'slug':'example'}
+        self.store.change('specs/example',lambda value:value.update(state='drafting'))
         with patch.object(app.platforms,'telegram',return_value={'message_id':200}), patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
             app.preview(self.config,self.store,None,'item-1',spec,self.assets,self.root)
-        self.assertNotIn('editing',self.store.get('sessions/inbox'))
+        self.assertEqual(self.store.get('sessions/inbox')['current'],'example')
 
     def test_edit_jobs_are_delayed_like_draft_jobs(self):
         self.edit_and_follow_up()
@@ -288,10 +316,11 @@ class PublisherTests(unittest.TestCase):
     def test_preview_header_has_no_id_and_names_match_the_ack(self):
         ack = self.edit_and_follow_up()['text']
         spec = {**self.spec,'slug':'example'}
+        self.store.change('specs/example',lambda value:value.update(state='drafting'))
         with patch.object(app.platforms,'telegram',return_value={'message_id':200}) as telegram, patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
             app.preview(self.config,self.store,None,'item-1',spec,self.assets,self.root)
         header = telegram.call_args.args[1]['text']
-        self.assertEqual(header,'Черновик «Чайнатаун в Джакарте» готов. Опубликовать, править или отклонить?')
+        self.assertTrue(header.startswith('Черновик «Чайнатаун в Джакарте»: куда пойдёт'))
         self.assertNotIn('example',header)
         self.assertNotIn('item-',header)
         self.assertIn('«Чайнатаун в Джакарте»',ack)
@@ -302,45 +331,114 @@ class PublisherTests(unittest.TestCase):
         self.assertTrue(app.superseded(self.store,{'item':'item-1','revision':2}))
         self.assertFalse(app.superseded(self.store,{'item':'item-1','revision':3}))
 
-    def test_reply_to_unknown_message_stays_new_material(self):
-        result = self.store.intake({'update_id':52,'message':{'message_id':13,'text':'идея','reply_to_message':{'message_id':99,'text':'x'}}},self.config)
-        self.assertEqual(result['text'],'Готовлю пост из текста «идея». Превью пришлю сюда.')
+    def test_reply_to_unknown_message_is_plain_feedback_or_hint(self):
+        message = {'message_id':13,'text':'идея','reply_to_message':{'message_id':99,'text':'x'}}
+        self.assertEqual(self.store.intake({'update_id':52,'message':message},self.config),'Чтобы начать пост, отправь /post.')
 
-    def test_album_revision_and_speech_limit(self):
-        for identifier in (10,11):
-            self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config)
-        self.assertFalse(self.store.claim_item('album-123',1))
-        self.assertTrue(self.store.claim_item('album-123',2))
+    def album(self, identifier):
+        return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config)
+
+    def test_album_joins_the_open_item_and_is_acknowledged_once(self):
+        self.store.intake({'update_id':9,'message':{'message_id':9,'text':'/post','entities':[{'type':'bot_command','offset':0,'length':5}]}},self.config)
+        replies = [self.album(identifier) for identifier in (10,11)]
+        self.assertEqual(replies[0]['text'],'Добавил в пост: 1 фото.')
+        self.assertIsNone(replies[1]['text'])
+        item = self.store.get('items/item-9')
+        self.assertEqual((item['status'],len(item['messages']),item['revision']),('collecting',2,2))
+        self.assertIsNone(self.store.get('outbox/draft-11'))
+
+    def test_album_without_post_or_draft_asks_for_post(self):
+        self.assertEqual(self.album(10),'Чтобы начать пост, отправь /post.')
+        self.assertIsNone(self.store.get('items/album-123'))
+
+    def test_speech_limit(self):
         self.store.reserve_speech(55*60,'source')
         with self.assertRaises(StateError):
             self.store.reserve_speech(1,'other')
         with self.assertRaises(StateError):
             self.store.reserve_speech(1,'source')
 
-    def test_album_acknowledged_once(self):
-        replies = [self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config) for identifier in (10,11)]
-        self.assertEqual(replies[0]['text'],'Готовлю пост из 1 фото. Превью пришлю сюда.')
-        self.assertIsNone(replies[1]['text'])
-        self.assertEqual(self.store.get('items/album-123')['revision'],2)
-        self.assertIsNotNone(self.store.get('outbox/draft-11'))
-
-    def test_preview_sends_shared_photos_once(self):
-        photos = {'image0.jpg':{'object':'a'},'image1.jpg':{'object':'b'}}
-        spec = {**self.spec,'slug':'album','targets':['tg-channel','threads'],'copy':{'tg-channel':'Channel copy','threads':'Threads copy'}}
+    def run_preview(self,spec,assets,config=None):
         sent = []
         def telegram(method,fields,files=None):
             sent.append((method,fields,files))
             base = 100 + len(sent)
+            if method == 'getChat':
+                return {'title':'Канал Романа'}
             return [{'message_id':base},{'message_id':base + 50}] if method == 'sendMediaGroup' else {'message_id':base}
         with patch.object(app.platforms,'telegram',side_effect=telegram), patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
-            app.preview(self.config,self.store,None,'item-1',spec,{'tg-channel':photos,'threads':photos},self.root)
-        self.assertEqual([call[0] for call in sent[:-1]],['sendMediaGroup','sendMessage','sendMessage'])
+            app.preview(config or self.config,self.store,None,'item-1',{**spec,'slug':'album'},assets,self.root)
+        return sent
+
+    def test_preview_is_one_album_with_each_file_once_and_captions_by_destination(self):
+        photos = {'image0.jpg':{'object':'a','sha256':'x'},'image1.jpg':{'object':'b','sha256':'y'}}
+        spec = {**self.spec,'targets':['tg-channel','threads'],'copy':{'tg-channel':'Channel copy','threads':'Threads copy'}}
+        sent = self.run_preview(spec,{'tg-channel':photos,'threads':{'image0.jpg':{'object':'c','sha256':'x'},'image1.jpg':{'object':'d','sha256':'y'}}})
+        self.assertEqual([call[0] for call in sent],['sendMediaGroup','sendMessage'])
         group = sent[0][1]['media']
-        self.assertEqual((len(group),group[0]['caption']),(2,'tg-channel, threads'))
-        self.assertEqual(sorted(sent[0][2]),['photo0','photo1'])
-        self.assertEqual([call[1]['text'] for call in sent[1:3]],['tg-channel\nChannel copy','threads\nThreads copy'])
-        for identifier in (101,151,102,103,104):
-            self.assertEqual(self.store.get('published-messages/' + str(identifier)),{'slug':'album'})
+        self.assertEqual([item['caption'] for item in group],['Пост: Telegram, Threads']*2)
+        self.assertEqual(sorted(sent[0][2]),['file0','file1'])
+        self.assertEqual(self.store.get('specs/album')['preview_message'],102)
+
+    def test_preview_album_captions_split_roles_and_cover(self):
+        video = {'object':'v','sha256':'v'}
+        stories = {'object':'s','sha256':'s'}
+        cover = {'object':'c','sha256':'c'}
+        spec = {**self.spec,'targets':['ig-reel','threads','tg-story','ig-story'],'copy':{'ig-reel':'R','threads':'T','tg-story':'S','ig-story':'S'}}
+        assets = {'ig-reel':{'video.mp4':video,'cover.jpg':cover},'threads':{'video.mp4':video},'tg-story':{'video.mp4':stories},'ig-story':{'video.mp4':stories}}
+        sent = self.run_preview(spec,assets)
+        captions = [item['caption'] for item in sent[0][1]['media']]
+        self.assertEqual(captions,['Reels: Instagram · Пост: Threads','Обложка. Reels: Instagram','История: Telegram, Instagram'])
+
+    def test_preview_blocks_use_human_names_and_merge_shared_text(self):
+        spec = {**self.spec,'targets':['tg-channel','threads','ig-post'],'copy':{'tg-channel':'Same','threads':'Same','ig-post':'Other'}}
+        config = {**self.config,'channels':{'tg-channel':-100}}
+        sent = self.run_preview(spec,{target:{} for target in spec['targets']},config)
+        self.assertEqual([call[0] for call in sent],['getChat','sendMessage'])
+        text = sent[-1][1]['text']
+        self.assertIn('Telegram-канал «Канал Романа», Threads\nSame',text)
+        self.assertIn('Instagram, пост\nOther',text)
+        self.assertNotIn('tg-channel',text)
+        self.assertNotIn('ig-post',text)
+        self.assertNotIn('item-',text)
+        self.assertIn('inline_keyboard',sent[-1][1]['reply_markup'])
+
+    def test_preview_splits_over_4096_and_buttons_go_on_the_last(self):
+        spec = {**self.spec,'targets':['tg-channel','threads'],'copy':{'tg-channel':'a' * 3000,'threads':'b' * 3000}}
+        sent = self.run_preview(spec,{target:{} for target in spec['targets']})
+        messages = [call[1] for call in sent if call[0] == 'sendMessage']
+        self.assertEqual(len(messages),2)
+        self.assertTrue(all(app.platforms.units(message['text']) <= 4096 for message in messages))
+        self.assertNotIn('reply_markup',messages[0])
+        self.assertIn('reply_markup',messages[1])
+
+    def test_preview_never_sends_a_slug_or_item_id(self):
+        spec = {**self.spec,'targets':['tg-channel','threads'],'copy':{'tg-channel':'One','threads':'Two'}}
+        sent = self.run_preview(spec,{target:{'image0.jpg':{'object':target,'sha256':target}} for target in spec['targets']})
+        for method,fields,files in sent:
+            for text in [fields.get('text',''),fields.get('caption','')] + [item['caption'] for item in fields.get('media',[])]:
+                self.assertNotIn('album',text)
+                self.assertNotIn('item-',text)
+
+    def test_edit_voice_is_transcribed_into_the_edit_before_drafting(self):
+        voice = {'message_id':46,'voice':{'file_id':'a','file_size':10},'note':'[голосовое сообщение 46]'}
+        self.store.put('items/item-1',{'status':'drafting','revision':2,'messages':[],'edits':['[голосовое сообщение 46]'],'edit_voices':[voice],'edit_prepared':{'audio':{'46.ogg':{'object':'x','audio':True,'duration':3}}}})
+        item = self.store.get('items/item-1')
+        attachment = {'name':'46.ogg','kind':'voice','path':self.root/'46.ogg','manifest':{}}
+        with patch.object(app.media,'intake',return_value=[attachment]), patch.object(app.media,'transcribe',return_value={'text':' Сделай короче ','words':[]}):
+            edits,shots = app.edit_media(self.config,self.store,None,{'item':'item-1','revision':2},item,self.root)
+        self.assertEqual((edits,shots),(['Сделай короче'],[]))
+        saved = self.store.get('items/item-1')
+        self.assertEqual((saved['edits'],saved['edit_voices']),(['Сделай короче'],[]))
+
+    def test_edit_voice_without_audio_starts_preparation(self):
+        voice = {'message_id':46,'voice':{'file_id':'a','file_size':10},'note':'[голосовое сообщение 46]'}
+        item = {'status':'drafting','revision':2,'messages':[],'edits':['[голосовое сообщение 46]'],'edit_voices':[voice]}
+        self.store.put('items/item-1',item)
+        attachment = {'name':'46.ogg','kind':'voice','path':self.root/'46.ogg','manifest':{'object':'o'}}
+        with patch.object(app.media,'intake',return_value=[attachment]), patch.object(app,'start_preparation') as start:
+            self.assertIsNone(app.edit_media(self.config,self.store,None,{'item':'item-1','revision':2},item,self.root))
+        self.assertEqual(start.call_args.args[-2:],([attachment],'edit'))
 
     def test_transaction_failure_rolls_back(self):
         def operation(tx):

@@ -15,8 +15,31 @@ def plural(count, forms):
     return forms[2]
 
 
-def batch_keyboard(item_id, token):
-    values = [{'text':label,'callback_data':verb + ':' + item_id + ':' + token} for verb,label in (('mont','Смонтировать'),('cncl','Отменить'))]
+COMMANDS = ('/post', '/upload')
+COMMANDS_HINT = 'Команды: /post — новый пост, /upload — загрузить большое видео.'
+POST_HINT = 'Чтобы начать пост, отправь /post.'
+MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
+
+
+def command(message):
+    text = message.get('text') or message.get('caption') or ''
+    entities = message.get('entities') or message.get('caption_entities') or []
+    if isinstance(entities, list) and any(isinstance(x, dict) and x.get('type') == 'bot_command' and x.get('offset') == 0 for x in entities):
+        return text.split(None, 1)[0].split('@')[0].lower()
+    return None
+
+
+def without_command(message):
+    key = 'text' if 'text' in message else 'caption'
+    rest = message.get(key, '').split(None, 1)
+    stripped = {k: v for k, v in message.items() if k not in ('entities', 'caption_entities', key)}
+    if len(rest) > 1:
+        stripped[key] = rest[1]
+    return stripped
+
+
+def collect_keyboard(item_id, token):
+    values = [{'text':label,'callback_data':verb + ':' + item_id + ':' + token} for verb,label in (('done','Готово'),('cncl','Отменить'))]
     if any(len(x['callback_data'].encode()) > 64 for x in values):
         raise StateError('Callback exceeds 64 bytes')
     return {'inline_keyboard':[values]}
@@ -27,7 +50,7 @@ def clips(item):
     return str(count) + ' ' + plural(count, ('клип', 'клипа', 'клипов'))
 
 
-def taken(item):
+def contents(item, genitive=False):
     messages = item['messages']
     photos = sum(1 for m in messages if m.get('photo'))
     videos = sum(1 for m in messages if m.get('video'))
@@ -38,13 +61,23 @@ def taken(item):
     if videos:
         parts.append(clips(item))
     if voices:
-        parts.append(str(voices) + ' ' + plural(voices, ('голосового', 'голосовых', 'голосовых')))
+        parts.append(str(voices) + ' ' + plural(voices, ('голосового' if genitive else 'голосовое', 'голосовых', 'голосовых')))
     if any(m.get('text') or m.get('caption') for m in messages):
-        parts.append('текста')
+        parts.append('текста' if genitive else 'текст')
+    return parts
+
+
+def taken(item):
+    parts = contents(item, True)
     if not parts:
         return 'Готовлю пост из материала. Превью пришлю сюда.'
     text = parts[0] if len(parts) == 1 else ', '.join(parts[:-1]) + ' и ' + parts[-1]
     return 'Готовлю пост из ' + text + titled(item) + '. Превью пришлю сюда.'
+
+
+def collected(item):
+    parts = contents(item)
+    return 'Добавил в пост' + titled(item) + (': ' + ', '.join(parts) if parts else '') + '.'
 
 
 class StateError(Exception):
@@ -58,6 +91,11 @@ def snippet(text):
 
 def named(saved, item=None):
     return (titled(item) if item else '') or snippet(next(iter((saved.get('spec') or {}).get('copy', {}).values()), ''))
+
+
+def feedback(saved, item, note):
+    note = ' '.join(note.split())
+    return 'Правлю черновик' + named(saved, item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
 
 
 def editing(saved, item):
@@ -140,8 +178,9 @@ class Store:
                 names = [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
                 quote = message.get('quote', {}).get('text')
                 note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + text
-                item = self.queue_edit(tx, replied['slug'], spec, note, identifier, session)
-                self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec.get('preview_message')}, 'unkey-' + identifier)
+                item = self.queue_edit(tx, replied['slug'], spec, note, None, identifier, session)
+                if spec.get('preview_message'):
+                    self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec['preview_message']}, 'unkey-' + identifier)
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
                 return editing(spec, item)
@@ -151,90 +190,108 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 self.queue_fix(tx, published[0], published[1], 'fix', text, identifier)
                 return fixing(published[1], item)
-            for key in ('video_batch', 'upload_item'):
+            for key, statuses in (('collecting', ('collecting',)), ('upload_item', ('queued', 'collecting'))):
                 current = self.get('items/' + session[key], tx) if session.get(key) else None
-                if not current or current.get('status') not in ('queued', 'collecting'):
+                if not current or current.get('status') not in statuses:
                     session.pop(key, None)
+            name = command(message)
+            if name not in COMMANDS:
+                name = None
             text = message.get('text', message.get('caption', ''))
+            note = text.strip()
+            photo = message.get('photo')
             waiting = session.get('awaiting')
-            if waiting and message.get('text') and text.strip() != '/upload':
+            if waiting and not name and (message.get('text') or waiting['kind'] == 'edit' and (photo or message.get('voice'))):
                 session.pop('awaiting')
                 target = self.get('specs/' + waiting['slug'], tx)
                 if waiting['kind'] == 'edit' and target and target['state'] == 'needs-edit':
-                    item = self.queue_edit(tx, waiting['slug'], target, message['text'], identifier, session)
+                    item = self.queue_edit(tx, waiting['slug'], target, *self.edit_note(message), identifier, session)
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
                     return editing(target, item)
-                if waiting['kind'] == 'fix' and self.fixable(target):
+                if waiting['kind'] == 'fix' and self.fixable(target) and message.get('text'):
                     item = self.get('items/' + target['item'], tx)
                     self.queue_fix(tx, waiting['slug'], target, 'fix', message['text'], identifier)
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
                     return fixing(target, item)
-            window = session.get('editing')
-            if window and (window['until'] <= time.time() or message.get('text') is None or reply_id or session.get('video_batch') or text.strip() == '/upload'):
-                if window['until'] <= time.time():
-                    session.pop('editing')
-                window = None
-            if window:
-                target = self.get('specs/' + window['slug'], tx)
-                if target and target['state'] == 'drafting' and not target.get('operation'):
-                    token = uuid.uuid4().hex[:8]
-                    markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + identifier + ':' + token}]]}
-                    if len(markup['inline_keyboard'][0][0]['callback_data'].encode()) > 64:
-                        raise StateError('Callback exceeds 64 bytes')
-                    item = self.queue_edit(tx, window['slug'], target, message['text'], identifier, session)
-                    self.put('followups/' + identifier, {'slug':window['slug'], 'item':target['item'], 'note':message['text'], 'message':message, 'token':token}, tx)
-                    self.put('sessions/inbox', session, tx)
-                    self.put(update_path, {'received':time.time()}, tx)
-                    return {'text':'Добавил к правке черновика' + named(target, item) + '.', 'reply_markup':markup}
-                session.pop('editing')
-            if text.strip() == '/upload' and session.get('upload_item'):
-                waiting = self.get('items/' + session['upload_item'], tx)
+            if name == '/upload':
+                waiting = self.get('items/' + session['upload_item'], tx) if session.get('upload_item') else None
                 self.put(update_path, {'received':time.time()}, tx)
-                if waiting and waiting.get('waiting_upload'):
+                if not waiting:
+                    return COMMANDS_HINT
+                if waiting.get('waiting_upload'):
                     self.job(tx, {'step':'upload-prompt','item':session['upload_item'],'revision':waiting['revision']}, 'upload-link-' + identifier)
                 return 'Готовлю ссылку на загрузку.'
-            video = message.get('video')
-            group = message.get('media_group_id')
-            attached = not video and bool(session.get('video_batch')) and bool(message.get('text') or message.get('voice') or message.get('audio'))
-            item_id = session.get('video_batch') if video or attached else None
-            item_id = item_id or ('album-' + str(group) if group else 'item-' + identifier)
-            item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'queued', 'created':time.time(), 'slug':item_id[:40]}
-            if item['status'] not in ('queued', 'collecting'):
+            opened = session.get('collecting')
+            if name == '/post' or opened:
+                item_id = opened or 'item-' + identifier
+                item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
+                body = without_command(message) if name == '/post' else message
+                filled = bool(body.get('text') or body.get('caption') or any(body.get(k) for k in MEDIA_KEYS))
+                sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [body] for k in ('video', 'voice')]
+                if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20):
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
+                group = message.get('media_group_id')
+                joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
+                if filled:
+                    item['messages'].append(body)
+                    item['revision'] += 1
+                    item['updated'] = time.time()
+                session['collecting'] = item_id
+                large = any(m.get('video', {}).get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + '.mp4' not in item.get('uploads', {}) for m in item['messages'])
+                if large:
+                    item['waiting_upload'] = True
+                    session['upload_item'] = item_id
+                    self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
                 self.put(update_path, {'received':time.time()}, tx)
-                return 'Материал уже обрабатывается. Пришли новый пакет.'
-            sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [message] for k in ('video', 'voice')]
-            if sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20:
+                self.put('items/' + item_id, item, tx)
+                self.put('sessions/inbox', session, tx)
+                if name == '/post' and not opened:
+                    reply = 'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.' if not filled else collected(item)
+                elif filled:
+                    reply = None if joined else collected(item)
+                else:
+                    reply = 'Пост' + titled(item) + ' уже собирается. Присылай материал и нажми «Готово».'
+                return {'item':item_id, 'revision':item['revision'], 'text':reply, 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
+            slug = session.get('current')
+            target = self.get('specs/' + slug, tx) if slug else None
+            if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice'):
                 self.put(update_path, {'received':time.time()}, tx)
-                return 'Пакет превышает лимит 1 ГБ или 20 файлов. Раздели материал.'
-            joined = item_id.startswith('album-') and bool(item['messages'])
-            item['messages'].append(message)
-            item['revision'] += 1
-            item['updated'] = time.time()
-            if video or attached:
-                item['status'] = 'collecting'
-                item.setdefault('batch_token', uuid.uuid4().hex[:8])
-                session['video_batch'] = item_id
-            else:
-                item['status'] = 'queued'
-                self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'draft-' + identifier, 10)
-            large = any(m.get('video', {}).get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + '.mp4' not in item.get('uploads', {}) for m in item['messages'])
-            if large:
-                item['waiting_upload'] = True
-                session['upload_item'] = item_id
-                self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
-            self.put(update_path, {'received':time.time()}, tx)
-            self.put('items/' + item_id, item, tx)
+                return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
+            edit, shot = self.edit_note(message)
+            label = note or ('голосовое' if message.get('voice') else 'скриншот')
+            token = uuid.uuid4().hex[:8]
+            markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + identifier + ':' + token}]]}
+            if len(markup['inline_keyboard'][0][0]['callback_data'].encode()) > 64:
+                raise StateError('Callback exceeds 64 bytes')
+            previewed = target['state'] == 'previewed'
+            item = self.queue_edit(tx, slug, target, edit, shot, identifier, session)
+            if previewed and target.get('preview_message'):
+                self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
+            self.put('followups/' + identifier, {'slug':slug, 'item':target['item'], 'note':edit, 'message':message, 'token':token}, tx)
             self.put('sessions/inbox', session, tx)
-            if item['status'] == 'collecting':
-                return {'item':item_id, 'revision':item['revision'], 'text':'Добавил к клипам' + snippet(message.get('text')) + '. Нажми «Смонтировать».' if attached else 'Клипы сохранены. Пришли ещё или нажми кнопку.', 'reply_markup':batch_keyboard(item_id, item['batch_token'])}
-            return {'item':item_id, 'revision':item['revision'], 'text':None if joined else taken(item)}
+            self.put(update_path, {'received':time.time()}, tx)
+            return {'text':feedback(target, item, label), 'reply_markup':markup}
         return self.atomic(apply)
 
-    def queue_edit(self, tx, slug, spec, note, identifier, session):
+    def edit_note(self, message):
+        note = (message.get('text') or message.get('caption') or '').strip()
+        photo = message.get('photo')
+        voice = message.get('voice')
+        if voice and not note:
+            placeholder = '[голосовое сообщение ' + str(message['message_id']) + ']'
+            return placeholder, {'message_id':message['message_id'], 'voice':voice, 'note':placeholder}
+        if not photo:
+            return note, None
+        return (note + ' [см. приложенный скриншот]' if note else 'Правка на приложенном скриншоте.'), {'message_id':message['message_id'], 'photo':photo[-1:]}
+
+    def queue_edit(self, tx, slug, spec, note, shot, identifier, session):
         item = self.get('items/' + spec['item'], tx)
         item.setdefault('edits', []).append(note)
+        if shot:
+            item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
         item['revision'] += 1
         spec['state'] = 'drafting'
@@ -243,7 +300,7 @@ class Store:
         self.put('items/' + spec['item'], item, tx)
         self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
         self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
-        session['editing'] = {'slug':slug, 'until':time.time() + 600}
+        session['current'] = slug
         return item
 
     def fixable(self, saved):
@@ -273,7 +330,7 @@ class Store:
             return None
         if verb == 'newp':
             return self.new_post_callback(tx, update_path, callback_path, slug, short_hash)
-        batch = verb in ('mont','cncl')
+        batch = verb in ('done','cncl')
         path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
         item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
@@ -282,7 +339,7 @@ class Store:
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if batch:
-            return self.batch_callback(tx, verb, slug, short_hash, saved, session, identifier)
+            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -321,29 +378,41 @@ class Store:
         item = self.get('items/' + followup['item'], tx) if valid else None
         spec = self.get('specs/' + followup['slug'], tx) if valid else None
         fresh = self.get('items/item-' + identifier, tx) if valid else None
+        session = self.get('sessions/inbox', tx) or {}
+        opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if not valid or fresh or not item or not spec or spec['state'] != 'drafting' or item.get('status') not in ('queued', 'drafting') or followup['note'] not in item.get('edits', []):
             return None
         edits = item['edits']
         edits.pop(len(edits) - 1 - edits[::-1].index(followup['note']))
+        for key in ('edit_photos', 'edit_voices'):
+            item[key] = [x for x in item.get(key, []) if x['message_id'] != followup['message']['message_id']]
         item['status'] = 'queued'
         item['revision'] += 1
         followup['moved'] = True
         step = 'montage' if item.get('montage') else 'draft'
         self.job(tx, {'item':followup['item'], 'step':step, 'revision':item['revision']}, 'unmove-' + identifier, 10)
-        created = {'messages':[followup['message']], 'revision':1, 'status':'queued', 'created':time.time(), 'updated':time.time(), 'slug':('item-' + identifier)[:40]}
-        self.job(tx, {'item':'item-' + identifier, 'step':'draft', 'revision':1}, 'draft-' + identifier, 10)
+        target = session['collecting'] if opened and opened.get('status') == 'collecting' else 'item-' + identifier
+        created = opened if target == session.get('collecting') else {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':target[:40], 'batch_token':uuid.uuid4().hex[:8]}
+        created['messages'].append(followup['message'])
+        created['revision'] += 1
+        created['updated'] = time.time()
+        session['collecting'] = target
+        self.job(tx, {'item':target, 'step':'collect-prompt', 'revision':created['revision']}, 'collect-' + identifier)
         self.put('items/' + followup['item'], item, tx)
-        self.put('items/item-' + identifier, created, tx)
+        self.put('items/' + target, created, tx)
+        self.put('sessions/inbox', session, tx)
         self.put('followups/' + identifier, followup, tx)
-        return taken(created)
+        return 'Новый пост открыт.'
 
-    def batch_callback(self, tx, verb, item_id, token, item, session, identifier):
+    def collect_callback(self, tx, verb, item_id, token, item, session, identifier):
         if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
             return None
-        if session.get('video_batch') == item_id:
-            session.pop('video_batch')
+        if verb == 'done' and not item['messages']:
+            return 'Пост пустой. Пришли текст, фото, видео или голос.'
+        if session.get('collecting') == item_id:
+            session.pop('collecting')
         item['revision'] += 1
         item['updated'] = time.time()
         if verb == 'cncl':
@@ -351,12 +420,13 @@ class Store:
             item['waiting_upload'] = False
             if session.get('upload_item') == item_id:
                 session.pop('upload_item')
-            result = 'Клипы отменены.'
+            result = 'Пост отменён.'
         else:
+            video = any(m.get('video') for m in item['messages'])
             item['status'] = 'queued'
-            item['montage'] = True
-            self.job(tx, {'item':item_id, 'step':'montage', 'revision':item['revision']}, 'draft-' + identifier)
-            result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.'
+            item['montage'] = video
+            self.job(tx, {'item':item_id, 'step':'montage' if video else 'draft', 'revision':item['revision']}, 'draft-' + identifier)
+            result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.' if video else taken(item)
         self.put('items/' + item_id, item, tx)
         self.put('sessions/inbox', session, tx)
         return result

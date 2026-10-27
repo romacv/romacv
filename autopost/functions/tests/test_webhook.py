@@ -53,32 +53,51 @@ class WebhookTests(unittest.TestCase):
         self.task.assert_not_called()
 
     def test_duplicate_update_only_enqueues_once(self):
+        self.store.put('sessions/inbox',{'current':'example'})
+        self.store.put('specs/example',{'state':'previewed','item':'item-1','spec':{'copy':{}}})
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[]})
         first = self.request(self.message())
         self.assertEqual(json.loads(first.get_data())['method'],'sendMessage')
         self.request(self.message())
         self.task.assert_called_once()
         self.assertIsNotNone(self.store.get('updates/42'))
 
-    def test_bot_command_creates_no_item_and_replies_with_usage(self):
+    def command(self,text,length):
         update = self.message()
-        update['message'].update({'text':'/start','entities':[{'type':'bot_command','offset':0,'length':6}]})
-        response = self.request(update)
-        reply = json.loads(response.get_data())
+        update['message'].update({'text':text,'entities':[{'type':'bot_command','offset':0,'length':length}]})
+        return update
+
+    def test_unknown_command_creates_no_item_and_replies_with_commands(self):
+        update = self.command('/start',6)
+        reply = json.loads(self.request(update).get_data())
         self.assertEqual(reply['method'],'sendMessage')
-        self.assertEqual(reply['text'],'Пришли текст, фото, видео или голос — подготовлю черновик поста.')
+        self.assertEqual(reply['text'],'Команды: /post — новый пост, /upload — загрузить большое видео.')
         self.assertIsNotNone(self.store.get('updates/42'))
         self.assertEqual([path for path in self.store.db.values if path.startswith('items/')],[])
         self.task.assert_not_called()
         self.assertEqual(json.loads(self.request(update).get_data()),{})
         self.task.assert_not_called()
 
-    def test_clip_ack_carries_inline_keyboard(self):
+    def test_post_command_opens_item_with_keyboard(self):
+        reply = json.loads(self.request(self.command('/post',5)).get_data())
+        self.assertEqual(reply['text'],'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.')
+        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Готово','Отменить'])
+        self.assertEqual(self.store.get('items/item-42')['status'],'collecting')
+
+    def test_text_without_post_or_draft_asks_for_post(self):
+        reply = json.loads(self.request(self.message()).get_data())
+        self.assertEqual(reply['text'],'Чтобы начать пост, отправь /post.')
+        self.assertEqual([path for path in self.store.db.values if path.startswith('items/')],[])
+
+    def test_clip_after_post_carries_collect_keyboard(self):
+        self.request(self.command('/post',5))
         update = self.message()
+        update['update_id'] = 43
         update['message'].update({'video':{'file_id':'v','file_size':100}})
         update['message'].pop('text')
         reply = json.loads(self.request(update).get_data())
-        self.assertEqual(reply['text'],'Клипы сохранены. Пришли ещё или нажми кнопку.')
-        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Смонтировать','Отменить'])
+        self.assertEqual(reply['text'],'Добавил в пост: 1 клип.')
+        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Готово','Отменить'])
 
     def test_callback_checks_user_private_chat_and_hash(self):
         self.store.put('specs/example',{'state':'previewed','hash':'abcdefgh1234'})

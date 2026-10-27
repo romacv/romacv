@@ -23,7 +23,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError, batch_keyboard, clips, named, titled
+from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, COMMANDS, COMMANDS_HINT
 import drafter
 import media
 import montage
@@ -34,6 +34,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 
 RENDER_SETTINGS = 'final-v1'
+SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
 
 def runtime():
@@ -128,15 +129,14 @@ def webhook(request):
         return https_fn.Response('{}',content_type='application/json')
     message = value.get('message')
     if isinstance(message,dict) and not any(message.get(key) for key in ('photo','video','voice','audio','document','animation','video_note','media_group_id')):
-        text = message.get('text')
-        entities = message.get('entities')
-        if isinstance(text,str) and text.strip() != '/upload' and isinstance(entities,list) and any(isinstance(entity,dict) and entity.get('type') == 'bot_command' and entity.get('offset') == 0 for entity in entities):
+        name = command(message)
+        if isinstance(message.get('text'),str) and name and name not in COMMANDS:
             def receive(saved):
                 if saved:
                     return False
                 saved['received'] = time.time()
                 return True
-            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':'Пришли текст, фото, видео или голос — подготовлю черновик поста.'} if store.change('updates/' + str(value['update_id']),receive) else {}
+            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':COMMANDS_HINT} if store.change('updates/' + str(value['update_id']),receive) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
     result = store.intake(value,config)
     store.flush(enqueue)
@@ -162,6 +162,29 @@ def buttons(slug, digest, retry=False, published=False):
     return {'inline_keyboard':[values]}
 
 
+NAMES = {'tg-channel':'Telegram-канал','tg-story':'История Telegram','ig-post':'Instagram, пост','ig-reel':'Instagram, Reels','ig-story':'Instagram, история','threads':'Threads','blog':'Блог resrom.com'}
+ROLES = {'tg-channel':('Пост','Telegram'),'threads':('Пост','Threads'),'ig-post':('Пост','Instagram'),'ig-reel':('Reels','Instagram'),'tg-story':('История','Telegram'),'ig-story':('История','Instagram'),'blog':('Блог','resrom.com')}
+
+
+def destinations(targets):
+    roles = {}
+    for target in targets:
+        roles.setdefault(ROLES[target][0],[]).append(ROLES[target][1])
+    return ' · '.join(role + ': ' + ', '.join(networks) for role,networks in roles.items())
+
+
+def pages(parts):
+    result, current = [], ''
+    for part in parts:
+        for piece in ([part] if platforms.units(part) <= 4096 else [part[i:i + 2000] for i in range(0,len(part),2000)]):
+            joined = current + '\n\n' + piece if current else piece
+            if platforms.units(joined) > 4096:
+                result.append(current)
+                joined = piece
+            current = joined
+    return result + [current]
+
+
 def preview(config, store, bucket, item_id, spec, assets, directory, basis=None):
     def send(method, fields, files=None):
         reply = platforms.telegram(method,fields,files)
@@ -170,10 +193,6 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None)
         return reply
     def say(text, **extra):
         return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
-    def end_window(value):
-        if value.get('editing',{}).get('slug') == spec['slug']:
-            value.pop('editing')
-    store.change('sessions/inbox',end_window)
     previous = store.get('specs/' + spec['slug']) or {}
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
@@ -183,40 +202,47 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None)
         saved['basis'] = basis
     store.put('specs/' + spec['slug'],saved)
     platforms.telegram_identity()
-    groups = {}
+    files, found = [], {}
     for target in spec['targets']:
-        target_assets = assets.get(target,{})
-        if target_assets:
-            groups.setdefault(json.dumps(target_assets,sort_keys=True),(target_assets,[]))[1].append(target)
-    for target_assets, names in groups.values():
-        media.materialize(bucket,target_assets,directory)
-        caption = ', '.join(names)
-        if 'video.mp4' in target_assets:
-            send('sendVideo',{'chat_id':config['roman_chat_id'],'caption':caption},{'video':directory/'video.mp4'})
-            if 'cover.jpg' in target_assets:
-                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':caption + ' cover'},{'photo':directory/'cover.jpg'})
-        elif len(target_assets) == 1:
-            send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':caption},{'photo':directory/next(iter(target_assets))})
+        for name, manifest in assets.get(target,{}).items():
+            entry = found.setdefault(manifest.get('sha256') or json.dumps(manifest,sort_keys=True),[name,manifest,[]])
+            if entry not in files:
+                files.append(entry)
+            if target not in entry[2]:
+                entry[2].append(target)
+    shown = []
+    for position, (name, manifest, targets) in enumerate(files):
+        unique = 'preview-' + str(position) + Path(name).suffix
+        media.materialize(bucket,{unique:manifest},directory)
+        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets)})
+    for start in range(0,len(shown),10):
+        chunk = shown[start:start + 10]
+        if len(chunk) == 1:
+            method, field = ('sendVideo','video') if chunk[0]['video'] else ('sendPhoto','photo')
+            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption']},{field:chunk[0]['path']})
         else:
-            photos = {'photo' + str(index):directory/name for index,name in enumerate(target_assets)}
-            group = [{'type':'photo','media':'attach://' + key} for key in photos]
-            group[0]['caption'] = caption
-            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},photos)
+            attached = {'file' + str(index):value['path'] for index,value in enumerate(chunk)}
+            group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),'caption':value['caption']} for index,value in enumerate(chunk)]
+            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},attached)
+    title = config.get('channel_title')
+    if not title and 'tg-channel' in spec['targets'] and config.get('channels',{}).get('tg-channel'):
+        try:
+            title = platforms.telegram('getChat',{'chat_id':config['channels']['tg-channel']}).get('title')
+        except Error:
+            title = None
+    blocks = {}
     for target in spec['targets']:
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
-        chunk = target + '\n'
-        for char in text:
-            if platforms.units(chunk + char) > 3500:
-                say(chunk)
-                chunk = ''
-            chunk += char
-        if chunk:
-            say(chunk)
-    note = ' готов (превью в низком качестве; финальное видео соберу после «Опубликовать»).' if basis is not None else ' готов.'
-    message = say('Черновик' + post_name(store,saved) + note + ' Опубликовать, править или отклонить?',reply_markup=buttons(spec['slug'],digest))
+        blocks.setdefault(text,[]).append(NAMES[target] + (' «' + title + '»' if target == 'tg-channel' and title else ''))
+    note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
+    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note] + [', '.join(names) + '\n' + text for text,names in blocks.items()])
+    for text in messages[:-1]:
+        say(text)
+    message = say(messages[-1],reply_markup=buttons(spec['slug'],digest))
     saved.update(state='previewed',preview_message=message['message_id'])
     store.put('specs/' + spec['slug'],saved)
     store.change('items/' + item_id,lambda value:value.update(status='previewed'))
+    store.change('sessions/inbox',lambda value:value.update(current=spec['slug']))
 
 
 def upload_prompt(config,store,bucket,payload):
@@ -270,8 +296,8 @@ def upload_complete(config,store,bucket,payload,directory):
             store.job(tx,{'item':payload['item'],'revision':saved['revision'],'step':'montage' if saved.get('montage') else 'draft'},'upload-ready-' + payload['item'] + '-' + str(saved['revision']))
     store.atomic(finish)
     store.flush(enqueue)
-    extra = {'reply_markup':batch_keyboard(payload['item'],item['batch_token'])} if item['status'] == 'collecting' else {}
-    tell(config,'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Смонтировать», когда все клипы отправлены.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
+    extra = {'reply_markup':collect_keyboard(payload['item'],item['batch_token'])} if item['status'] == 'collecting' else {}
+    tell(config,'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Готово», когда всё отправлено.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
 
 
 def draft(config,store,bucket,payload,directory):
@@ -300,9 +326,15 @@ def draft(config,store,bucket,payload,directory):
                 store.change('items/' + payload['item'],lambda value:value.update(transcripts=item['transcripts']))
             transcripts.append(transcript)
         else:
-            raise Error('Видео монтируется кнопкой «Смонтировать».')
-    source = {'slug':item['slug'],'messages':item['messages'],'edits':item.get('edits',[]),'transcripts':transcripts,'available_images':list(files)}
+            raise Error('Видео монтируется кнопкой «Готово».')
+    heard = edit_media(config,store,bucket,payload,item,directory)
+    if heard is None:
+        return
+    edits,shots = heard
+    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files)}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
+    if shots:
+        source['edit_screenshots'] = SCREENSHOTS % len(shots)
     def validate(value):
         errors = drafter.validate(value, prepared=False)
         if value.get('slug') != item['slug']:
@@ -313,7 +345,7 @@ def draft(config,store,bucket,payload,directory):
         except Error:
             errors.append('Invalid media path')
         return errors
-    spec = drafter.ask(config,source,images,validate)
+    spec = drafter.ask(config,source,images + shots,validate)
     if superseded(store,payload):
         return
     assets = {}
@@ -328,6 +360,34 @@ def draft(config,store,bucket,payload,directory):
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
     preview(config,store,bucket,payload['item'],spec,assets,directory)
+
+
+def edit_media(config,store,bucket,payload,item,directory):
+    shots = []
+    for attachment in media.intake(bucket,payload['item'],{'messages':item.get('edit_photos',[])},config,directory) if item.get('edit_photos') else []:
+        destination = directory / ('edit-' + attachment['name'])
+        media.clean_image(attachment['path'],destination)
+        shots.append(destination)
+    edits = list(item.get('edits',[]))
+    voices = item.get('edit_voices',[])
+    if not voices:
+        return edits,shots
+    attachments = media.intake(bucket,payload['item'],{'messages':voices},config,directory)
+    audio = item.get('edit_prepared',{}).get('audio',{})
+    missing = [a for a in attachments if a['name'] not in audio]
+    if missing:
+        start_preparation(config,store,bucket,payload,item,missing,'edit')
+        return None
+    spoken = {}
+    for attachment in attachments:
+        result = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],{**config,'prepared_audio':audio})
+        spoken[attachment['name']] = result['text'].strip() or 'Голосовое сообщение без распознанной речи.'
+    texts = {'[голосовое сообщение ' + str(voice['message_id']) + ']':spoken[str(voice['message_id']) + '.ogg'] for voice in voices}
+    def save(value):
+        value['edits'] = [texts.get(note,note) for note in value.get('edits',[])]
+        value['edit_voices'] = [voice for voice in value.get('edit_voices',[]) if voice['message_id'] not in {v['message_id'] for v in voices}]
+    store.change('items/' + payload['item'],save)
+    return [texts.get(note,note) for note in edits],shots
 
 
 def start_job(project,identifier):
@@ -361,11 +421,16 @@ def plan_montage(config,store,bucket,payload,directory):
         path = directory / ('sheet-' + str(index) + '.jpg')
         media.download(bucket,manifest,path)
         images.append(path)
+    heard = edit_media(config,store,bucket,payload,item,directory)
+    if heard is None:
+        return
+    edits,shots = heard
+    images += shots
     if not sources:
         raise Error('Нет клипов для монтажа.')
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
-    edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],'edits':item.get('edits',[]),'previous_edl':item.get('edl')},images,lambda value:montage.validate(value,sources),True)
+    edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources),True)
     if superseded(store,payload):
         return
     identifier = secrets.token_hex(16)
@@ -375,17 +440,16 @@ def plan_montage(config,store,bucket,payload,directory):
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
     start_job(project,identifier)
     name = item_name(item)
-    edits = item.get('edits',[])
     if edits and item.get('edl'):
         tell(config,'Перемонтирую' + name + ' с правкой: ' + edits[-1] + '. Рендерю черновик в низком качестве. Превью пришлю сюда.')
     else:
         tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 
 
-def start_preparation(config,store,bucket,payload,item,inputs):
+def start_preparation(config,store,bucket,payload,item,inputs,target=None):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
+    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
@@ -401,7 +465,11 @@ def prepared(config,store,bucket,payload):
             return
         if job.get('state') != 'done':
             raise Error('Подготовка медиа не завершена. Пришли материал заново.')
-        item.update(prepared=job['outputs'],status='queued')
+        if job.get('target') == 'edit':
+            item.setdefault('edit_prepared',{}).setdefault('audio',{}).update(job['outputs']['audio'])
+            item['status'] = 'queued'
+        else:
+            item.update(prepared=job['outputs'],status='queued')
         store.put('items/' + payload['item'],item,tx)
         store.job(tx,{'item':payload['item'],'revision':payload['revision'],'step':'montage' if item.get('montage') else 'draft'},'prepared-' + payload['render'])
     store.atomic(finish)
@@ -805,6 +873,10 @@ def handle_worker(request):
                 remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved)
                 if step == 'edit-prompt' and saved['state'] == 'needs-edit':
                     tell(config,'Напиши, что поправить.')
+            elif step == 'collect-prompt':
+                collecting = store.get('items/' + payload['item'])
+                if collecting and collecting.get('status') == 'collecting':
+                    tell(config,collected(collecting),reply_markup=collect_keyboard(payload['item'],collecting['batch_token']))
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить.')
             store.flush(enqueue)
