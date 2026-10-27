@@ -166,6 +166,7 @@ class PublishedTests(unittest.TestCase):
 
     def test_delete_removes_each_target_once_and_partial_keeps_keyboard(self):
         saved = self.prepare('delete')
+        self.assertEqual(self.delete_tap(99),'Удаление уже готовится.')
         self.approve(saved,'del')
         def change(target,*args):
             if target == 'threads':

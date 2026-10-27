@@ -471,6 +471,7 @@ class Store:
         saved = self.get(path, tx)
         item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
         session = self.get('sessions/inbox', tx) or {}
+        pending = self.get('specs/' + saved['deleting'], tx) if verb == 'pdel' and not batch and saved and saved.get('deleting') else None
         identifier = update_path.split('/', 1)[1]
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
@@ -496,7 +497,6 @@ class Store:
             self.put('sessions/inbox', session, tx)
             line = 'Жду правку.'
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
-            pending = self.get('specs/' + saved['deleting'], tx) if saved.get('deleting') else None
             if pending and pending.get('state') in ('drafting', 'previewed', 'approved', 'running'):
                 return 'Удаление уже готовится.'
             saved['deleting'] = 'fix-' + identifier
