@@ -34,7 +34,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 
 RENDER_SETTINGS = 'final-v1'
-FINAL_DEADLINE = 1800
+FINAL_DEADLINE = 2400
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
 
@@ -375,7 +375,7 @@ def draft(config,store,bucket,payload,directory):
         for index,image in enumerate(spec.get('media',{}).get('images',[])):
             path = directory/image['path']
             overlay = spec.get('overlay',{}).get(target)
-            if overlay and target in ('ig-story','tg-story'):
+            if overlay and target in ('ig-story','tg-story') and index == 0:
                 key = (json.dumps(overlay,sort_keys=True),index)
                 if key not in composed:
                     cleaned = directory/(target + '-overlay-source-' + str(index) + '.jpg')

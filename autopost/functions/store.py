@@ -262,8 +262,6 @@ class Store:
             target = self.get('specs/' + slug, tx) if slug else None
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
-                if slug and not target:
-                    return 'Черновик ещё готовится. Правку пришли, когда придёт превью.'
                 return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
             label = note or ('голосовое' if message.get('voice') else 'скриншот')

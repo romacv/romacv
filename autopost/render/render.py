@@ -46,7 +46,7 @@ def title_shadow(layer, radius, alpha):
 
 def title_image(text, path):
     from PIL import Image, ImageDraw, ImageFont
-    semibold = '/usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf'
+    semibold = str(Path(__file__).parent / 'fonts' / 'InterDisplay-SemiBold.otf')
     pin = title_pin(34,(235,64,52,255),(255,255,255,255))
     padding, gap, height = 30, 14, 92
     width = ImageFont.truetype(semibold,50).getlength(text)

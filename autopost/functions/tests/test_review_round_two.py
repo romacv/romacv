@@ -151,7 +151,7 @@ class RoundTwoTests(unittest.TestCase):
         self.tap('done','item-10',self.store.get('items/item-10')['batch_token'],12)
         self.assertEqual(self.store.get('sessions/inbox')['current'],'item-10')
         reply = self.message(13,text='правка')
-        self.assertEqual(reply,'Черновик ещё готовится. Правку пришли, когда придёт превью.')
+        self.assertEqual(reply,'Чтобы начать пост, отправь /post.')
         self.assertNotIn('edits',self.store.get('items/item-1'))
         self.assertEqual(self.store.get('specs/example')['state'],'previewed')
 
@@ -268,6 +268,20 @@ class RoundTwoTests(unittest.TestCase):
         self.assertEqual(len(composed),1)
         self.assertEqual(Image.open(composed[0]).size,(1080,1920))
         self.assertNotEqual(previewed['tg-story']['image0.jpg']['path'],previewed['tg-channel']['image0.jpg']['path'])
+
+    def test_story_overlay_composes_only_the_first_image(self):
+        from PIL import Image
+        for name in ('p.jpg','q.jpg'):
+            Image.new('RGB',(800,600),(40,90,160)).save(self.root/name)
+        spec = {'slug':'album','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-story'],'copy':{},'media':{'images':[{'path':'p.jpg'},{'path':'q.jpg'}]},'overlay':{'tg-story':{'text':'Бали','place':'Бали','anchor':[0.5,0.8],'align':'center'}},'approval':{}}
+        composed = []
+        def compose(source,destination,overlay):
+            Image.new('RGB',(1080,1920),(1,2,3)).save(destination)
+            composed.append(Path(destination))
+        self.store.change('items/item-1',lambda value:value.update(status='queued'))
+        with patch.object(app,'superseded',return_value=False), patch.object(app.drafter,'ask',return_value=spec), patch.object(app.media,'compose_story',side_effect=compose), patch.object(app.media,'upload',side_effect=lambda bucket,path,name:{'path':str(path)}), patch.object(app,'preview'), patch.object(app.media,'intake',return_value=[]), patch.object(app.platforms,'request',return_value={}):
+            app.draft(self.config,self.store,None,{'item':'item-1','revision':1},self.root)
+        self.assertEqual([path.name for path in composed],['tg-story-overlay-0.jpg'])
 
 
 if __name__ == '__main__':
