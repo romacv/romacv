@@ -82,7 +82,7 @@ def policies():
         files = {
             'lifecycle.json': {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 2}}]},
             'cors.json': [{'origin': ['https://www.resrom.com'], 'method': ['PUT'], 'responseHeader': ['Content-Type', 'x-goog-if-generation-match'], 'maxAgeSeconds': 3600}],
-            'cleanup.json': [{'name': 'autopost-delete-after-day', 'action': {'type': 'Delete'}, 'condition': {'tagState': 'any', 'olderThan': '86400s'}}],
+            'cleanup.json': [{'name': 'autopost-keep-latest', 'action': {'type': 'Keep'}, 'mostRecentVersions': {'keepCount': 1}}, {'name': 'autopost-delete-old', 'action': {'type': 'Delete'}, 'condition': {'tagState': 'any', 'olderThan': '3600s'}}],
         }
         for name, value in files.items():
             (root / name).write_text(json.dumps(value))
@@ -90,8 +90,9 @@ def policies():
         cloud('storage', 'buckets', 'update', BUCKET, '--uniform-bucket-level-access', '--public-access-prevention', '--soft-delete-duration=0', '--lifecycle-file=' + str(root / 'lifecycle.json'), '--cors-file=' + str(root / 'cors.json'))
         for repo in ('gcf-artifacts', 'cloud-run-source-deploy'):
             ensure(('artifacts', 'repositories', 'describe', repo, '--location=' + REGION), ('artifacts', 'repositories', 'create', repo, '--location=' + REGION, '--repository-format=docker'))
-            say('Set active one-day image cleanup on ' + repo)
+            say('Keep only the newest image on ' + repo)
             cloud('artifacts', 'repositories', 'set-cleanup-policies', repo, '--location=' + REGION, '--policy=' + str(root / 'cleanup.json'))
+            cloud('artifacts', 'repositories', 'delete-cleanup-policies', repo, '--location=' + REGION, '--policynames=autopost-delete-after-day', missing=True)
 
 
 def apis():
