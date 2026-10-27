@@ -67,6 +67,10 @@ def title_origin(image_size, frame):
     return (frame[0]-image_size[0])//2, round(590*frame[0]/1080)
 
 
+def title_position(image_size, draft):
+    return title_origin(image_size,frame_size(draft))
+
+
 def digest_file(path):
     digest = hashlib.sha256()
     with path.open('rb') as source:
@@ -223,8 +227,8 @@ def render(bucket, job, root):
         lines = []
         for cue in timeline['subtitles']:
             text = '\\N'.join(cue['lines'])
-            width = max(font.getlength(line) for line in cue['lines'])
-            size = min(44,int(44*780/max(1,width)))
+            text_width = max(font.getlength(line) for line in cue['lines'])
+            size = min(44,int(44*780/max(1,text_width)))
             if size < 20:
                 raise RuntimeError('Subtitle cannot fit safe width')
             lines.append(f"Dialogue: 0,{ass_time(cue['start']+1/30)},{ass_time(cue['end']+1/30)},Default,,0,0,0,,{{\\pos(540,1050)\\fs{size}}}{text}\n")
@@ -239,7 +243,7 @@ def render(bucket, job, root):
                 with Image.open(image) as full:
                     full.resize((full.width//2,full.height//2)).save(image)
             with Image.open(image) as placed:
-                x, y = title_origin(placed.size,(width,height))
+                x, y = title_position(placed.size,draft)
             title_inputs += ['-i',image]
             video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x={x}:y={y}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story' and not draft:

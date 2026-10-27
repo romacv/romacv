@@ -51,6 +51,10 @@ class TitlePlacementTests(unittest.TestCase):
     def test_draft_title_is_proportional(self):
         self.assertEqual(render.title_origin((300,46),(540,960)),(120,295))
 
+    def test_title_position_follows_frame_size(self):
+        self.assertEqual(render.title_position((600,92),False),(240,590))
+        self.assertEqual(render.title_position((300,46),True),(120,295))
+
 
 class FinalRenderTests(unittest.TestCase):
     def setUp(self):
