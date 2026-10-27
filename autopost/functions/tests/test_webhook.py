@@ -52,7 +52,7 @@ class WebhookTests(unittest.TestCase):
 
     def test_duplicate_update_only_enqueues_once(self):
         self.store.put('sessions/inbox',{'current':'example'})
-        self.store.put('specs/example',{'state':'previewed','item':'item-1','spec':{'copy':{}}})
+        self.store.put('specs/example',{'state':'done','item':'item-1','spec':{'copy':{}},'results':{},'errors':{}})
         self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[]})
         first = self.request(self.message())
         self.assertEqual(json.loads(first.get_data())['method'],'sendMessage')

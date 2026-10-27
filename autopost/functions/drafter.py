@@ -9,6 +9,10 @@ from zoneinfo import ZoneInfo
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
 HISTORY_BYTES = 200_000
+MODEL = 'claude-sonnet-5-5'
+SEARCH = {'type':'web_search_20250305','name':'web_search','max_uses':4}
+PAUSES = 1
+SEARCHES = 6
 
 
 NOTE_TERMS = re.compile(r'schema|render|json|overlay|field|slug|api\b|\b(?:ig|tg)-[a-z]+|threads_tag|crop|validat', re.I)
@@ -250,6 +254,39 @@ def wire(turns, pool):
     return messages
 
 
+def final_text(content):
+    parts = []
+    for block in content:
+        if block.type in ('server_tool_use', 'web_search_tool_result'):
+            parts = []
+        elif block.type == 'text':
+            parts.append(block.text)
+    return ''.join(parts).strip()
+
+
+def create(client, system, messages):
+    import anthropic
+    tools, used = [SEARCH], 0
+    for attempt in range(PAUSES + 2):
+        if attempt > PAUSES:
+            tools = [{**SEARCH,'max_uses':1}]
+        elif attempt:
+            tools = [{**SEARCH,'max_uses':SEARCHES - used}] if used < SEARCHES else []
+        try:
+            response = client.messages.create(model=MODEL, max_tokens=12000, thinking={'type':'adaptive'}, system=system, tools=tools, messages=messages)
+        except anthropic.BadRequestError as failure:
+            if attempt or not any(word in str(failure) for word in ('web_search','tool')):
+                raise
+            logging.warning('web_search rejected by the API (400); retrying without tools')
+            tools = []
+            response = client.messages.create(model=MODEL, max_tokens=12000, thinking={'type':'adaptive'}, system=system, tools=tools, messages=messages)
+        if response.stop_reason != 'pause_turn':
+            break
+        used += sum(1 for block in response.content if block.type == 'server_tool_use')
+        messages = messages + [{'role':'assistant','content':response.content}]
+    return response
+
+
 def ask(config, payload, images, validator, montage=False, thread=None, follow=None):
     import anthropic
     client = anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
@@ -270,15 +307,15 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
     mark = base
     known = {name for turn in turns for name in turn.get('images', [])}
     turns.append({'role':'user','text':json.dumps({**(follow if turns else payload),**stamp},ensure_ascii=False),'images':[name for name in pool if name not in known]})
-    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text(),'cache_control':{'type':'ephemeral'}}]
+    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text() + '\nYou run as Claude Sonnet 5.5 by Anthropic, model id ' + MODEL + '.','cache_control':{'type':'ephemeral'}}]
     for attempt in range(2):
         try:
-            response = client.messages.create(model='claude-sonnet-5-5', max_tokens=12000, thinking={'type':'adaptive'}, system=system, messages=wire(turns, pool))
+            response = create(client, system, wire(turns, pool))
         except anthropic.APIStatusError as failure:
             if failure.status_code == 402:
                 raise Error('черновик не готов: баланс Anthropic') from None
             raise Error('Draft provider rejected request: ' + str(failure.status_code)) from None
-        raw = ''.join(block.text for block in response.content if block.type == 'text').strip()
+        raw = final_text(response.content)
         turns.append({'role':'assistant','text':raw})
         try:
             value = json.loads(re.sub(r'^```(?:json)?\s*|\s*```$', '', raw))

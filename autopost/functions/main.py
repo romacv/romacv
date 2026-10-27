@@ -25,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import media
 import montage
@@ -73,7 +73,7 @@ def superseded(store, payload):
     return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
 
 
-ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo'}
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document'}
 
 
 def activity(config, kind, stop):
@@ -385,6 +385,15 @@ def asset_hash(spec, assets):
     return hashlib.sha256(json.dumps({'spec':spec,'assets':assets},sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
 
 
+def newp_markup(store, item_id):
+    item = store.get('items/' + item_id) or {}
+    key = item.get('followup')
+    followup = store.get('followups/' + key) if key else None
+    if not followup or followup.get('moved') or followup.get('item') != item_id:
+        return []
+    return [{'text':'Это новый пост','callback_data':'newp:' + key + ':' + followup['token']}]
+
+
 def buttons(slug, digest, retry=False, published=False):
     actions = ([('retry','Повторить')] if retry else []) + [('pfix','Править'),('pdel','Удалить')] if published else [('retry','Повторить')] if retry else [('pub','Опубликовать'),('edit','Править'),('rej','Отклонить')]
     values = [{'text':label,'callback_data':verb + ':' + slug + ':' + digest[:8]} for verb,label in actions]
@@ -677,6 +686,9 @@ def draft(config,store,bucket,payload,directory):
     if drafter.answered(spec):
         answer_edit(config,store,payload,item,spec['answer'])
         return
+    if fresh:
+        markup = newp_markup(store,payload['item'])
+        tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
     assets = {}
     composed = {}
     for target in spec['targets']:
@@ -753,13 +765,23 @@ def answer_edit(config,store,payload,item,answer):
     if saved.get('state') != 'drafting':
         return
     digest = asset_hash(saved['spec'],saved['basis'] if 'basis' in saved else saved['assets'])
-    message = tell(config,answer,reply_markup=buttons(slug,digest))
+    keyboard = buttons(slug,digest)
+    newp = newp_markup(store,payload['item'])
+    if newp:
+        keyboard['inline_keyboard'].append(newp)
+    message = tell(config,answer,reply_markup=keyboard)
     def restore(tx):
         saved = store.get('specs/' + slug,tx)
         current = store.get('items/' + payload['item'],tx)
         if not saved or not current or saved.get('state') != 'drafting' or current.get('revision') != payload['revision'] or current.get('status') != 'drafting':
             return False
         saved.update(state='previewed',hash=digest,preview_message=message['message_id'])
+        if newp:
+            key = current.get('followup')
+            followup = store.get('followups/' + key,tx) if key else None
+            if followup:
+                followup['answered'] = True
+                store.put('followups/' + key,followup,tx)
         current.update(status='previewed',edits_applied=len(current.get('edits',[])),photos_applied=len(current.get('edit_photos',[])))
         current.pop('status_message',None)
         store.put('specs/' + slug,saved,tx)
@@ -882,7 +904,8 @@ def plan_montage(config,store,bucket,payload,directory):
     start_job(project,identifier)
     name = item_name(item)
     if edits and item.get('edl'):
-        tell(config,'Перемонтирую' + name + ' с правкой: ' + (' '.join(edits[-1].split())[:200] + '…' if len(' '.join(edits[-1].split())) > 200 else edits[-1]) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.')
+        markup = newp_markup(store,payload['item']) if fresh else []
+        tell(config,'Перемонтирую' + name + ' с правкой: ' + (lambda note:note[:200] + '…' if len(note) > 200 else note)(' '.join('; '.join(fresh or edits[-1:]).split())) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.',**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
     else:
         tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 

@@ -162,6 +162,9 @@ class DraftCorrectionTests(unittest.TestCase):
             self.assertEqual(drafter.ask({'anthropic_key':'unused'}, {'text':'input'}, [], validator),{})
         self.assertEqual(client.messages.create.call_count,2)
         self.assertIn('EDL JSON schema',client.messages.create.call_args.kwargs['system'][0]['text'])
+        tool = client.messages.create.call_args.kwargs['tools'][0]
+        self.assertEqual((tool['type'],tool['name']),('web_search_20250305','web_search'))
+        self.assertGreater(tool['max_uses'],0)
         client.reset_mock()
         with patch.object(anthropic,'Anthropic',return_value=client):
             with self.assertRaises(p.Error):

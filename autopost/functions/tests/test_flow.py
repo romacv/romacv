@@ -60,7 +60,7 @@ class EditFlowTests(unittest.TestCase):
         self.callback('edit')
         self.assertEqual(self.store.get('sessions/inbox')['awaiting'],{'kind':'edit','slug':'example'})
         result = self.store.intake({'update_id':42,'message':{'message_id':10,'text':'Make shorter'}},self.config)
-        self.assertTrue(result)
+        self.assertIsNone(result)
         self.assertNotIn('awaiting',self.store.get('sessions/inbox'))
         saved = self.store.get('specs/example')
         self.assertEqual((saved['state'],saved['hash']),('drafting',''))
@@ -126,11 +126,48 @@ class AlbumWithoutPostTests(unittest.TestCase):
     def test_one_tap_moves_every_photo_of_an_album_sent_to_a_draft(self):
         self.store.put('specs/album',{'state':'previewed','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
         replies = self.album(10)
-        self.assertEqual(replies[1:],[None,None])
-        data = replies[0]['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        self.assertEqual(replies,[None,None,None])
+        data = app.newp_markup(self.store,'item-1')[0]['callback_data']
         self.store.intake({'update_id':99,'callback_query':{'id':'99','data':data}},self.config)
         self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
         self.assertEqual([m['message_id'] for m in self.store.get('items/item-gg1')['messages']],[10,11,12])
+
+
+class QuestionToDraftTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1}
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album'})
+        self.store.put('sessions/inbox',{'current':'album'})
+        self.store.put('specs/album',{'state':'previewed','item':'item-1','spec':{'slug':'album','targets':['tg-channel'],'copy':{'tg-channel':'x'}},'assets':{},'preview_message':5,'hash':'abcdefgh'})
+
+    def ask(self, text):
+        return self.store.intake({'update_id':20,'message':{'message_id':20,'text':text}},self.config)
+
+    def test_question_gets_exactly_one_message_the_answer_with_the_new_post_button(self):
+        self.assertIsNone(self.ask('какая модель?'))
+        self.store.change('items/item-1',lambda value:value.update(status='drafting'))
+        item = self.store.get('items/item-1')
+        payload = {'item':'item-1','revision':item['revision']}
+        sent = []
+        with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append((text,extra)) or {'message_id':50}), patch.object(app,'asset_hash',return_value='abcdefgh'):
+            app.answer_edit(self.config,self.store,payload,item,'Claude Sonnet 5.5')
+        self.assertEqual([text for text,_ in sent],['Claude Sonnet 5.5'])
+        self.assertEqual(sent[0][1]['reply_markup']['inline_keyboard'][-1][0]['text'],'Это новый пост')
+        self.assertEqual(self.store.get('specs/album')['state'],'previewed')
+        self.store.put('conversations/item-1',{'edits':1,'turns':[]})
+        data = sent[0][1]['reply_markup']['inline_keyboard'][-1][0]['callback_data']
+        self.store.intake({'update_id':21,'callback_query':{'id':'21','data':data}},self.config)
+        item = self.store.get('items/item-1')
+        self.assertEqual((item['status'],item['edits'],item['edits_applied']),('previewed',[],0))
+        self.assertEqual(self.store.get('conversations/item-1')['edits'],0)
+        self.assertEqual(self.store.get('items/item-20')['messages'][0]['message_id'],20)
+
+    def test_edit_line_carries_the_new_post_button(self):
+        self.assertIsNone(self.ask('локация джакарта'))
+        item = self.store.get('items/item-1')
+        self.assertEqual(app.newp_markup(self.store,'item-1')[0]['text'],'Это новый пост')
+        self.assertTrue(app.feedback(self.store.get('specs/album'),item,item['edits'][-1]).startswith('Правлю'))
 
 
 class FixAnswerTests(unittest.TestCase):

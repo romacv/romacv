@@ -145,11 +145,7 @@ def named(saved, item=None):
 
 def feedback(saved, item, note):
     note = ' '.join(note.split())
-    return 'Правлю черновик' + named(saved, item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
-
-
-def editing(saved, item):
-    return 'Правлю черновик' + named(saved, item) + '. Новое превью пришлю сюда.'
+    return 'Правлю' + named(saved, item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
 
 
 def asking(saved, item):
@@ -186,11 +182,6 @@ def progress(item, job, now):
         return name + titled(item) + ' идёт: ' + ('составляю план.' if item.get('montage') else 'готовлю превью.') + hint
     seconds = int(now - stage['since'])
     return name + titled(item) + ' идёт: ' + stage['label'].lower() + ', ' + str(seconds // 60) + ':' + format(seconds % 60, '02') + '.' + hint
-
-
-def added(item, note):
-    note = ' '.join(note.split())
-    return 'Добавил к черновику' + titled(item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
 
 
 def located(message):
@@ -316,7 +307,7 @@ class Store:
                     self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec['preview_message']}, 'unkey-' + identifier)
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
-                return editing(spec, item)
+                return None
             published = self.published_match(reply_id, tx) if text and reply_id and name != '/post' else None
             if published:
                 item = self.get('items/' + published[1]['item'], tx)
@@ -341,7 +332,7 @@ class Store:
                     item = self.queue_edit(tx, waiting['slug'], target, *self.edit_note(message), identifier, session)
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
-                    return editing(target, item)
+                    return None
                 if waiting['kind'] == 'fix' and self.fixable(target) and message.get('text'):
                     item = self.get('items/' + target['item'], tx)
                     self.queue_fix(tx, waiting['slug'], target, 'fix', message['text'], identifier)
@@ -417,11 +408,22 @@ class Store:
                     self.put(update_path, {'received':time.time()}, tx)
                     return None if once() else progress(pending, job, time.time())
                 edit, shot = self.edit_note(message)
-                silent = once(False)
+                key = 'g' + group if group else identifier
+                followup = self.get('followups/' + key, tx) if group else None
+                if not followup or followup.get('moved') or followup.get('slug') != slug:
+                    followup = {'slug':slug, 'item':slug, 'notes':[], 'messages':[], 'token':uuid.uuid4().hex[:8]}
+                if len(('newp:' + key + ':' + followup['token']).encode()) > 64:
+                    raise StateError('Callback exceeds 64 bytes')
+                once(False)
                 self.add_edit(tx, pending, slug, edit, shot, identifier)
+                pending['followup'] = key
+                self.put('items/' + slug, pending, tx)
+                followup['notes'].append(edit)
+                followup['messages'].append(message)
+                self.put('followups/' + key, followup, tx)
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
-                return None if silent else added(pending, edit)
+                return None
             if target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering', 'done', 'partial'):
                 held = self.get('items/' + target['item'], tx) if target.get('item') else None
                 self.put(update_path, {'received':time.time()}, tx)
@@ -435,18 +437,17 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 return None if once() else 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
-            label = note or ('голосовое' if message.get('voice') else 'скриншот')
             key = 'g' + group if group else identifier
             followup = self.get('followups/' + key, tx) if group else None
             if not followup or followup.get('moved') or followup.get('slug') != slug:
                 followup = {'slug':slug, 'item':target['item'], 'notes':[], 'messages':[], 'token':uuid.uuid4().hex[:8]}
-            token = followup['token']
-            markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + key + ':' + token}]]}
-            if len(markup['inline_keyboard'][0][0]['callback_data'].encode()) > 64:
+            if len(('newp:' + key + ':' + followup['token']).encode()) > 64:
                 raise StateError('Callback exceeds 64 bytes')
-            silent = once(False)
+            once(False)
             previewed = target['state'] == 'previewed'
             item = self.queue_edit(tx, slug, target, edit, shot, identifier, session)
+            item['followup'] = key
+            self.put('items/' + target['item'], item, tx)
             if previewed and target.get('preview_message'):
                 self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
             followup['notes'].append(edit)
@@ -454,7 +455,7 @@ class Store:
             self.put('followups/' + key, followup, tx)
             self.put('sessions/inbox', session, tx)
             self.put(update_path, {'received':time.time()}, tx)
-            return None if silent else {'text':feedback(target, item, label), 'reply_markup':markup}
+            return None
         return self.atomic(apply)
 
     def draft_ids(self):
@@ -527,6 +528,7 @@ class Store:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
         item['revision'] += 1
+        item.pop('followup', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
 
@@ -655,22 +657,37 @@ class Store:
         fresh = self.get('items/item-' + identifier, tx) if valid else None
         session = self.get('sessions/inbox', tx) or {}
         opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
+        answered = valid and bool(followup.get('answered'))
+        thread_path = 'conversations/' + followup['item'] + ('-montage' if item and item.get('montage') else '') if valid else None
+        thread = self.get(thread_path, tx) if answered and item else None
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
-        if not valid or fresh or not item or not spec or spec['state'] != 'drafting' or item.get('status') not in ('queued', 'drafting'):
+        if answered:
+            live = bool(item and spec) and spec['state'] == 'previewed' and item.get('status') == 'previewed'
+        else:
+            live = bool(item) and item.get('status') in ('queued', 'drafting') and (not spec or spec['state'] == 'drafting')
+        if not valid or fresh or not live:
             return None
         edits = item.get('edits', [])
+        removed = 0
         for note in followup.get('notes') or [followup['note']]:
             if note in edits:
                 edits.pop(len(edits) - 1 - edits[::-1].index(note))
+                removed += 1
         moved = {m['message_id'] for m in followup.get('messages') or [followup['message']]}
         for key in ('edit_photos', 'edit_voices'):
             item[key] = [x for x in item.get(key, []) if x['message_id'] not in moved]
-        item['status'] = 'queued'
-        item['revision'] += 1
         followup['moved'] = True
-        step = 'montage' if item.get('montage') else 'draft'
-        self.job(tx, {'item':followup['item'], 'step':step, 'revision':item['revision']}, 'unmove-' + identifier, 10)
+        if answered:
+            item['edits_applied'] = len(edits)
+            item['photos_applied'] = len(item.get('edit_photos', []))
+            if thread:
+                thread['edits'] = max(0, thread.get('edits', 0) - removed)
+                self.put(thread_path, thread, tx)
+        else:
+            item['status'] = 'queued'
+            item['revision'] += 1
+            self.job(tx, {'item':followup['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'unmove-' + identifier, 10)
         target = session['collecting'] if opened and opened.get('status') == 'collecting' else 'item-' + identifier
         created = opened if target == session.get('collecting') else {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':target[:40], 'batch_token':uuid.uuid4().hex[:8]}
         created['messages'].extend(followup.get('messages') or [followup['message']])
