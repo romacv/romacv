@@ -13,6 +13,10 @@ header{display:flex;justify-content:space-between;align-items:center}
 h1{margin:0;font-size:22px}
 #refresh{font:inherit;font-size:15px;border:0;background:none;padding:4px 0;color:var(--tg-theme-link-color,#2481cc)}
 #refresh:active{opacity:.5}
+.switch{display:flex;gap:8px;margin-top:12px}
+.switch button{flex:1;min-height:44px;border:0;border-radius:12px;font:inherit;font-weight:600;background:var(--tg-theme-secondary-bg-color,#f1f1f4);color:var(--tg-theme-text-color,#000);-webkit-tap-highlight-color:transparent}
+.switch button[aria-pressed=true]{background:var(--tg-theme-button-color,#2481cc);color:var(--tg-theme-button-text-color,#fff)}
+.switch button:active{opacity:.7}
 h2{margin:24px 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--tg-theme-section-header-text-color,var(--tg-theme-hint-color,#6d6d72))}
 section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px;overflow:hidden}
 .row{padding:12px 16px;border-top:1px solid var(--tg-theme-section-separator-color,rgba(128,128,128,.25));cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
@@ -45,6 +49,7 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 </head>
 <body>
 <header><h1 id="heading">Прогресс</h1><button id="refresh" type="button">Обновить</button></header>
+<div class="switch" role="group" aria-label="Раздел"><button type="button" id="tab-progress" aria-pressed="false">Прогресс</button><button type="button" id="tab-costs" aria-pressed="false">Расходы</button></div>
 <div id="active"></div>
 <div id="waiting"></div>
 <div id="published"></div>
@@ -53,8 +58,13 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 'use strict';
-const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), view=new URLSearchParams(location.search).get('view')==='costs'?'costs':'progress';
-document.title=document.getElementById('heading').textContent=view==='costs'?'Расходы':'Прогресс';
+const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), views={progress:'Прогресс',costs:'Расходы'};
+let view=new URLSearchParams(location.search).get('view')==='costs'?'costs':'progress';
+function mark(){
+  document.title=document.getElementById('heading').textContent=views[view];
+  Object.keys(views).forEach(k=>document.getElementById('tab-'+k).setAttribute('aria-pressed',String(k===view)));
+}
+mark();
 let data=null, offset=0, busy=false, open=null, balanceOpen=false;
 if(app){app.ready();app.expand()}
 const number=n=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1});
@@ -211,19 +221,33 @@ function tick(){
 async function load(){
   if(busy||!app||!app.initData)return;
   busy=true;
+  const asked=view;
   try{
     const response=await fetch(endpoint+(view==='costs'?'?view=costs':''),{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
     if(!response.ok)throw Error(response.status);
-    data=await response.json();
+    const body=await response.json();
+    if(asked!==view)return;
+    data=body;
     offset=data.now-Date.now()/1000;
     state.textContent=view==='costs'||data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
     render();
   }catch(e){
+    if(asked!==view)return;
     const code=e.message;
     state.textContent=code==='401'?'Открой заново из бота.':code==='403'?'Нет доступа.':code==='503'?'Сервер недоступен.':'Нет связи. Нажми «Обновить».';
-  }finally{busy=false}
+  }finally{busy=false;if(asked!==view)load()}
+}
+function switchView(next){
+  if(next===view)return;
+  haptic();
+  view=next;data=null;
+  const url=new URL(location.href);url.searchParams.set('view',view);history.replaceState(null,'',url);
+  ['active','waiting','published','limits'].forEach(id=>document.getElementById(id).replaceChildren());
+  state.textContent=app&&app.initData?'Загрузка…':'Открой страницу из бота.';
+  mark();load();
 }
 if(!app||!app.initData)state.textContent='Открой страницу из бота.';
+Object.keys(views).forEach(k=>document.getElementById('tab-'+k).addEventListener('click',()=>switchView(k)));
 document.getElementById('refresh').addEventListener('click',()=>{haptic();load()});
 setInterval(tick,1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)load()});
