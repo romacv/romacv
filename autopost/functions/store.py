@@ -497,7 +497,7 @@ class Store:
             line = 'Жду правку.'
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
             pending = self.get('specs/' + saved['deleting'], tx) if saved.get('deleting') else None
-            if pending and pending.get('state') in ('drafting', 'previewed', 'approved'):
+            if pending and pending.get('state') in ('drafting', 'previewed', 'approved', 'running'):
                 return 'Удаление уже готовится.'
             saved['deleting'] = 'fix-' + identifier
             self.put(path, saved, tx)
