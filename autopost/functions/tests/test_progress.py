@@ -103,6 +103,8 @@ class ProgressTests(unittest.TestCase):
         self.store.put('usage/anthropic-2026-11',{'usd':2.25})
         balance = app.anthropic_of(self.store,1793113080 + 40 * 86400)['balance']
         self.assertEqual((balance['spent'],balance['left']),(3.75,211.06))
+        self.assertEqual((balance['limit'],balance['month_spent'],balance['auto_reload']),(97,5.28,False))
+        self.assertEqual([(c['kind'],c['left'],c['expires']) for c in balance['credits']],[('purchased',2.74,None),('promo',96.97,'2026-11-19'),('promo',115.08,'2026-11-24')])
 
     def test_monitoring_failure_degrades(self):
         self.store.put('sessions/budget',{'costAmount':0.1,'budgetAmount':1,'at':1})
