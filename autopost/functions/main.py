@@ -23,7 +23,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError
+from store import Store, StateError, batch_keyboard
 import drafter
 import media
 import montage
@@ -123,9 +123,11 @@ def webhook(request):
     store.flush(enqueue)
     query = value.get('callback_query')
     if query:
-        return https_fn.Response(json.dumps({'method':'answerCallbackQuery','callback_query_id':query['id'],'text':'Принято' if result else 'Кнопка устарела или уже обработана'}),content_type='application/json')
+        return https_fn.Response(json.dumps({'method':'answerCallbackQuery','callback_query_id':query['id'],'text':result if isinstance(result,str) else 'Принято' if result else 'Кнопка устарела или уже обработана'}),content_type='application/json')
     text = result.get('text') if isinstance(result,dict) else result
     reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':text} if text else {}
+    if text and isinstance(result,dict) and result.get('reply_markup'):
+        reply['reply_markup'] = result['reply_markup']
     return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
 
 
@@ -133,8 +135,8 @@ def asset_hash(spec, assets):
     return hashlib.sha256(json.dumps({'spec':spec,'assets':assets},sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
 
 
-def buttons(slug, digest, retry=False):
-    actions = [('retry','Повторить')] if retry else [('pub','Опубликовать'),('edit','Править'),('rej','Отклонить')]
+def buttons(slug, digest, retry=False, published=False):
+    actions = ([('retry','Повторить')] if retry else []) + [('pfix','Править'),('pdel','Удалить')] if published else [('retry','Повторить')] if retry else [('pub','Опубликовать'),('edit','Править'),('rej','Отклонить')]
     values = [{'text':label,'callback_data':verb + ':' + slug + ':' + digest[:8]} for verb,label in actions]
     if any(len(x['callback_data'].encode()) > 64 for x in values):
         raise Error('Callback exceeds 64 bytes')
@@ -242,7 +244,8 @@ def upload_complete(config,store,bucket,payload,directory):
             store.job(tx,{'item':payload['item'],'revision':saved['revision'],'step':'montage' if saved.get('montage') else 'draft'},'upload-ready-' + payload['item'] + '-' + str(saved['revision']))
     store.atomic(finish)
     store.flush(enqueue)
-    tell(config,'Загрузка завершена.' + (' Напиши «монтаж», когда все клипы отправлены.' if item['status'] == 'collecting' else ' Готовлю черновик.'))
+    extra = {'reply_markup':batch_keyboard(payload['item'],item['batch_token'])} if item['status'] == 'collecting' else {}
+    tell(config,'Загрузка завершена.' + (' Нажми «Смонтировать», когда все клипы отправлены.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
 
 
 def draft(config,store,bucket,payload,directory):
@@ -271,7 +274,7 @@ def draft(config,store,bucket,payload,directory):
                 store.change('items/' + payload['item'],lambda value:value.update(transcripts=item['transcripts']))
             transcripts.append(transcript)
         else:
-            raise Error('Пришли «монтаж» для обработки видео.')
+            raise Error('Видео монтируется кнопкой «Смонтировать».')
     source = {'slug':item['slug'],'messages':item['messages'],'edits':item.get('edits',[]),'transcripts':transcripts,'available_images':list(files)}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     def validate(value):
@@ -482,8 +485,7 @@ def run(config,store,bucket,slug,directory):
         lines.append(f'{index}. {target}: {text}')
     if any(target.startswith('ig-') for target in spec['targets']):
         lines.append('Facebook: поделиться вручную из Instagram, если автоматическая публикация не появилась.')
-    extra = {'reply_markup':buttons(slug,saved['hash'],True)} if state == 'partial' else {}
-    message = tell(config,'\n'.join(lines),**extra)
+    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial',True))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
 
 
@@ -721,10 +723,9 @@ def handle_worker(request):
                 saved = store.get('specs/' + payload['slug'])
                 remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved)
                 if step == 'edit-prompt' and saved['state'] == 'needs-edit':
-                    message = tell(config,'Что поправить? Ответь на это сообщение.',reply_markup={'force_reply':True,'selective':True})
-                    reply_id = str(message['message_id'])
-                    store.put('edits/' + reply_id,{'slug':payload['slug']})
-                    store.change('specs/' + payload['slug'],lambda value:value.update(edit_prompt=reply_id))
+                    tell(config,'Напиши, что поправить.')
+            elif step == 'fix-prompt':
+                tell(config,'Напиши, что поправить.')
             store.flush(enqueue)
         except Exception as failure:
             logging.error(json.dumps({'code':'worker_failed','step':payload.get('step')}))
@@ -787,6 +788,10 @@ def maintenance(config,store,bucket):
             for prefix in ('inbox/' + saved['item'] + '/','media/' + snapshot.id + '/'):
                 for blob in bucket.list_blobs(prefix=prefix):
                     blob.delete(if_generation_match=blob.generation)
+    for snapshot in store.db.collection('items').stream():
+        if snapshot.to_dict().get('status') == 'rejected':
+            for blob in bucket.list_blobs(prefix='inbox/' + snapshot.id + '/'):
+                blob.delete(if_generation_match=blob.generation)
     store.flush(enqueue)
 
 

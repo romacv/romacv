@@ -72,6 +72,14 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(json.loads(self.request(update).get_data()),{})
         self.task.assert_not_called()
 
+    def test_clip_ack_carries_inline_keyboard(self):
+        update = self.message()
+        update['message'].update({'video':{'file_id':'v','file_size':100}})
+        update['message'].pop('text')
+        reply = json.loads(self.request(update).get_data())
+        self.assertEqual(reply['text'],'Клипы сохранены. Пришли ещё или нажми кнопку.')
+        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Смонтировать','Отменить'])
+
     def test_callback_checks_user_private_chat_and_hash(self):
         self.store.put('specs/example',{'state':'previewed','hash':'abcdefgh1234'})
         update = {'update_id':50,'callback_query':{'id':'callback','from':{'id':2},'message':{'chat':{'id':1,'type':'private'}},'data':'pub:example:abcdefgh'}}

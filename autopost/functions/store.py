@@ -1,18 +1,79 @@
 import copy
 import hashlib
 import json
-import re
 import time
 import uuid
 from datetime import datetime, timezone
 
 
-MONTAGE = re.compile(r'монтаж|\bmontage\b', re.I)
-DELETE_WORD = re.compile(r'\s*(отклони(?:ть)?|удали(?:ть)?|delete|remove)\W*', re.I)
+
+def plural(count, forms):
+    if count % 10 == 1 and count % 100 != 11:
+        return forms[0]
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return forms[1]
+    return forms[2]
+
+
+def batch_keyboard(item_id, token):
+    values = [{'text':label,'callback_data':verb + ':' + item_id + ':' + token} for verb,label in (('mont','Смонтировать'),('cncl','Отменить'))]
+    if any(len(x['callback_data'].encode()) > 64 for x in values):
+        raise StateError('Callback exceeds 64 bytes')
+    return {'inline_keyboard':[values]}
+
+
+def clips(item):
+    count = sum(1 for m in item['messages'] if m.get('video'))
+    return str(count) + ' ' + plural(count, ('клип', 'клипа', 'клипов'))
+
+
+def taken(item):
+    messages = item['messages']
+    photos = sum(1 for m in messages if m.get('photo'))
+    videos = sum(1 for m in messages if m.get('video'))
+    voices = sum(1 for m in messages if m.get('voice') or m.get('audio'))
+    parts = []
+    if photos:
+        parts.append(str(photos) + ' фото')
+    if videos:
+        parts.append(clips(item))
+    if voices:
+        parts.append(str(voices) + ' ' + plural(voices, ('голосового', 'голосовых', 'голосовых')))
+    if any(m.get('text') or m.get('caption') for m in messages):
+        parts.append('текста')
+    if not parts:
+        return 'Готовлю пост из материала. Превью пришлю сюда.'
+    text = parts[0] if len(parts) == 1 else ', '.join(parts[:-1]) + ' и ' + parts[-1]
+    return 'Готовлю пост из ' + text + titled(item) + '. Превью пришлю сюда.'
 
 
 class StateError(Exception):
     pass
+
+
+def snippet(text):
+    text = ' '.join((text or '').split())
+    return ' «' + (text[:40] + '…' if len(text) > 40 else text) + '»' if text else ''
+
+
+def named(saved):
+    return snippet(next(iter((saved.get('spec') or {}).get('copy', {}).values()), ''))
+
+
+def editing(saved):
+    return 'Правлю черновик' + named(saved) + '. Новое превью пришлю сюда.'
+
+
+def fixing(saved):
+    return 'Правлю опубликованный пост' + named(saved) + '. Превью изменений пришлю сюда.'
+
+
+def deleting(saved):
+    return 'Готовлю удаление поста' + named(saved) + '. Превью пришлю сюда.'
+
+
+def titled(item):
+    return snippet(next((m.get('text') or m.get('caption') for m in item['messages'] if m.get('text') or m.get('caption')), ''))
 
 
 class Store:
@@ -70,15 +131,6 @@ class Store:
                 self.put('tokens/business', {'business_connection_id':connection['id']}, tx)
                 return 'Подключение Business сохранено; права проверяются перед публикацией.'
             reply_id = str(message.get('reply_to_message', {}).get('message_id', ''))
-            edit = self.get('edits/' + reply_id, tx) if reply_id else None
-            if edit and message.get('text'):
-                path = 'specs/' + edit['slug']
-                spec = self.get(path, tx)
-                accepted = bool(spec and spec['state'] == 'needs-edit' and spec.get('edit_prompt') == reply_id)
-                if accepted:
-                    self.queue_edit(tx, edit['slug'], spec, message['text'], identifier)
-                self.put(update_path, {'received':time.time()}, tx)
-                return 'Правки приняты.' if accepted else 'Кнопка устарела'
             text = message.get('text', '')
             replied = self.get('published-messages/' + reply_id, tx) if reply_id and text else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
@@ -90,28 +142,32 @@ class Store:
                 self.queue_edit(tx, replied['slug'], spec, note, identifier)
                 self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec.get('preview_message')}, 'unkey-' + identifier)
                 self.put(update_path, {'received':time.time()}, tx)
-                return 'Правки приняты.'
-            command = re.match(r'^\s*(поправь|исправь|отредактируй|удали|fix|delete)\b', text, re.I)
-            bare = DELETE_WORD.fullmatch(text)
-            published = self.published_match(message, tx, bool(command or bare or (text and reply_id)))
-            if text and (command or bare or published):
+                return editing(spec)
+            published = self.published_match(reply_id, tx) if text and reply_id else None
+            if published:
                 self.put(update_path, {'received':time.time()}, tx)
-                if not published:
-                    if bare:
-                        return 'Не понял, к какому посту это. Ответь на сообщение поста или пришли материал.'
-                    return 'Какой пост? Ответь на его превью или отчёт либо пришли ссылку.'
-                slug, source = published
-                operation = 'delete' if bare or (command and command.group(1).lower() in ('удали','delete')) else 'fix'
-                name = 'fix-' + identifier
-                self.put('specs/' + name, {'operation':operation,'source':slug,'item':source['item'], 'instruction':text,'state':'drafting','results':{},'errors':{},'hash':''}, tx)
-                self.job(tx, {'step':'fix','slug':name}, 'fix-' + identifier)
-                return 'Готовлю превью удаления.' if operation == 'delete' else 'Готовлю превью правки.'
+                self.queue_fix(tx, published[0], published[1], 'fix', text, identifier)
+                return fixing(published[1])
             session = self.get('sessions/inbox', tx) or {}
             for key in ('video_batch', 'upload_item'):
                 current = self.get('items/' + session[key], tx) if session.get(key) else None
                 if not current or current.get('status') not in ('queued', 'collecting'):
                     session.pop(key, None)
             text = message.get('text', message.get('caption', ''))
+            waiting = session.get('awaiting')
+            if waiting and message.get('text') and text.strip() != '/upload':
+                session.pop('awaiting')
+                target = self.get('specs/' + waiting['slug'], tx)
+                if waiting['kind'] == 'edit' and target and target['state'] == 'needs-edit':
+                    self.queue_edit(tx, waiting['slug'], target, message['text'], identifier)
+                    self.put('sessions/inbox', session, tx)
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return editing(target)
+                if waiting['kind'] == 'fix' and self.fixable(target):
+                    self.queue_fix(tx, waiting['slug'], target, 'fix', message['text'], identifier)
+                    self.put('sessions/inbox', session, tx)
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return fixing(target)
             if text.strip() == '/upload' and session.get('upload_item'):
                 waiting = self.get('items/' + session['upload_item'], tx)
                 self.put(update_path, {'received':time.time()}, tx)
@@ -119,12 +175,9 @@ class Store:
                     self.job(tx, {'step':'upload-prompt','item':session['upload_item'],'revision':waiting['revision']}, 'upload-link-' + identifier)
                 return 'Готовлю ссылку на загрузку.'
             video = message.get('video')
-            montage = bool(MONTAGE.search(text))
-            if montage and message.get('text') and not session.get('video_batch') and MONTAGE.fullmatch(message['text'].strip()):
-                self.put(update_path, {'received':time.time()}, tx)
-                return 'Нет клипов для монтажа. Пришли видео, потом напиши «монтаж».'
             group = message.get('media_group_id')
-            item_id = session.get('video_batch') if (video or montage) else None
+            attached = not video and bool(session.get('video_batch')) and bool(message.get('text') or message.get('voice') or message.get('audio'))
+            item_id = session.get('video_batch') if video or attached else None
             item_id = item_id or ('album-' + str(group) if group else 'item-' + identifier)
             item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'queued', 'created':time.time(), 'slug':item_id[:40]}
             if item['status'] not in ('queued', 'collecting'):
@@ -138,15 +191,13 @@ class Store:
             item['messages'].append(message)
             item['revision'] += 1
             item['updated'] = time.time()
-            item['montage'] = item.get('montage', False) or montage
-            if video and not montage:
+            if video or attached:
                 item['status'] = 'collecting'
+                item.setdefault('batch_token', uuid.uuid4().hex[:8])
                 session['video_batch'] = item_id
             else:
                 item['status'] = 'queued'
-                if montage:
-                    session.pop('video_batch', None)
-                self.job(tx, {'item':item_id, 'step':'montage' if item['montage'] else 'draft', 'revision':item['revision']}, 'draft-' + identifier, 10)
+                self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'draft-' + identifier, 10)
             large = any(m.get('video', {}).get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + '.mp4' not in item.get('uploads', {}) for m in item['messages'])
             if large:
                 item['waiting_upload'] = True
@@ -155,7 +206,9 @@ class Store:
             self.put(update_path, {'received':time.time()}, tx)
             self.put('items/' + item_id, item, tx)
             self.put('sessions/inbox', session, tx)
-            return {'item':item_id, 'revision':item['revision'], 'text':'Клипы сохранены. Пришли ещё или напиши «монтаж».' if item['status'] == 'collecting' else None if joined else 'Принял, готовлю черновик.'}
+            if item['status'] == 'collecting':
+                return {'item':item_id, 'revision':item['revision'], 'text':'Добавил к клипам' + snippet(message.get('text')) + '. Нажми «Смонтировать».' if attached else 'Клипы сохранены. Пришли ещё или нажми кнопку.', 'reply_markup':batch_keyboard(item_id, item['batch_token'])}
+            return {'item':item_id, 'revision':item['revision'], 'text':None if joined else taken(item)}
         return self.atomic(apply)
 
     def queue_edit(self, tx, slug, spec, note, identifier):
@@ -170,28 +223,20 @@ class Store:
         self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
         self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier)
 
-    def published_match(self, message, tx, command=False):
-        text = message.get('text', '')
-        reply = str(message.get('reply_to_message', {}).get('message_id', ''))
-        urls = re.findall(r'(?:https?://|tg://|www\.)[^\s<>]+', text)
-        if not command or not (reply or urls):
+    def fixable(self, saved):
+        return bool(saved and saved.get('state') in ('done','partial') and not saved.get('deleted'))
+
+    def queue_fix(self, tx, slug, source, operation, text, identifier):
+        name = 'fix-' + identifier
+        self.put('specs/' + name, {'operation':operation,'source':slug,'item':source['item'], 'instruction':text,'state':'drafting','results':{},'errors':{},'hash':''}, tx)
+        self.job(tx, {'step':'fix','slug':name}, 'fix-' + identifier)
+
+    def published_match(self, reply, tx):
+        linked = self.get('published-messages/' + reply, tx)
+        if not linked:
             return None
-        linked = self.get('published-messages/' + reply, tx) if reply else None
-        if linked:
-            saved = self.get('specs/' + linked['slug'], tx)
-            if saved and saved.get('state') in ('done','partial') and not saved.get('deleted'):
-                return linked['slug'], saved
-            return None
-        matches = []
-        for snapshot in self.db.collection('specs').stream():
-            saved = snapshot.to_dict()
-            if saved.get('operation') or saved.get('state') not in ('done','partial') or saved.get('deleted'):
-                continue
-            published = {**saved.get('results',{}),**saved.get('published',{})}
-            known = {x.get('url','').rstrip('/') for x in published.values() if not x.get('deleted')}
-            if (reply and reply == str(saved.get('preview_message',''))) or any(u.rstrip('/.,)') in known for u in urls):
-                matches.append((snapshot.id,saved))
-        return matches[0] if len(matches) == 1 else None
+        saved = self.get('specs/' + linked['slug'], tx)
+        return (linked['slug'], saved) if self.fixable(saved) else None
 
     def callback(self, tx, update_path, query):
         callback_path = 'callbacks/' + query['id']
@@ -203,10 +248,15 @@ class Store:
         verb, slug, short_hash = parts
         if not slug or '/' in slug:
             return None
-        path = 'specs/' + slug
+        batch = verb in ('mont','cncl')
+        path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
+        session = self.get('sessions/inbox', tx) or {}
+        identifier = update_path.split('/', 1)[1]
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
+        if batch:
+            return self.batch_callback(tx, verb, slug, short_hash, saved, session, identifier)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -219,6 +269,15 @@ class Store:
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'needs-edit'
             payload['step'] = 'edit-prompt'
+            session['awaiting'] = {'kind':'edit','slug':slug}
+            self.put('sessions/inbox', session, tx)
+        elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
+            self.queue_fix(tx, slug, saved, 'delete', 'delete', identifier)
+            return deleting(saved)
+        elif verb == 'pfix' and not saved.get('operation') and self.fixable(saved):
+            session['awaiting'] = {'kind':'fix','slug':slug}
+            self.put('sessions/inbox', session, tx)
+            payload['step'] = 'fix-prompt'
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             payload['step'] = 'remove-keyboard'
@@ -229,6 +288,28 @@ class Store:
         self.put(path, saved, tx)
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
         return True
+
+    def batch_callback(self, tx, verb, item_id, token, item, session, identifier):
+        if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
+            return None
+        if session.get('video_batch') == item_id:
+            session.pop('video_batch')
+        item['revision'] += 1
+        item['updated'] = time.time()
+        if verb == 'cncl':
+            item['status'] = 'rejected'
+            item['waiting_upload'] = False
+            if session.get('upload_item') == item_id:
+                session.pop('upload_item')
+            result = 'Клипы отменены.'
+        else:
+            item['status'] = 'queued'
+            item['montage'] = True
+            self.job(tx, {'item':item_id, 'step':'montage', 'revision':item['revision']}, 'draft-' + identifier)
+            result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.'
+        self.put('items/' + item_id, item, tx)
+        self.put('sessions/inbox', session, tx)
+        return result
 
     def claim_item(self, identifier, revision):
         def claim(value):

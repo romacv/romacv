@@ -198,13 +198,21 @@ class PublisherTests(unittest.TestCase):
 
     def test_edit_invalidates_approval_and_queues_revision(self):
         self.callback('edit')
-        self.store.put('edits/9',{'slug':'example'})
-        self.store.change('specs/example',lambda value:value.update(edit_prompt='9'))
-        self.store.intake({'update_id':42,'message':{'message_id':10,'text':'Make shorter','reply_to_message':{'message_id':9}}},self.config)
+        self.assertEqual(self.store.get('sessions/inbox')['awaiting'],{'kind':'edit','slug':'example'})
+        result = self.store.intake({'update_id':42,'message':{'message_id':10,'text':'Make shorter'}},self.config)
+        self.assertTrue(result.startswith('Правлю черновик') and result.endswith('Новое превью пришлю сюда.'))
+        self.assertNotIn('awaiting',self.store.get('sessions/inbox'))
         saved = self.store.get('specs/example')
         self.assertEqual((saved['state'],saved['hash']),('drafting',''))
         self.assertEqual(self.store.get('items/item-1')['edits'],['Make shorter'])
         self.assertIsNotNone(self.store.get('outbox/edit-42'))
+
+    def test_text_after_edit_tap_without_reply_is_the_edit_and_stale_tap_is_material(self):
+        self.callback('edit')
+        self.store.change('specs/example',lambda value:value.update(state='previewed'))
+        result = self.store.intake({'update_id':43,'message':{'message_id':10,'text':'Make shorter'}},self.config)
+        self.assertEqual(result['item'],'item-43')
+        self.assertEqual(self.store.get('items/item-1').get('edits'),None)
 
     def test_quoted_reply_to_preview_copy_queues_edit_with_target(self):
         self.store.put('published-messages/7',{'slug':'example'})
@@ -224,7 +232,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_reply_to_unknown_message_stays_new_material(self):
         result = self.store.intake({'update_id':52,'message':{'message_id':13,'text':'идея','reply_to_message':{'message_id':99,'text':'x'}}},self.config)
-        self.assertEqual(result['text'],'Принял, готовлю черновик.')
+        self.assertEqual(result['text'],'Готовлю пост из текста «идея». Превью пришлю сюда.')
 
     def test_album_revision_and_speech_limit(self):
         for identifier in (10,11):
@@ -239,7 +247,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_album_acknowledged_once(self):
         replies = [self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config) for identifier in (10,11)]
-        self.assertEqual(replies[0]['text'],'Принял, готовлю черновик.')
+        self.assertEqual(replies[0]['text'],'Готовлю пост из 1 фото. Превью пришлю сюда.')
         self.assertIsNone(replies[1]['text'])
         self.assertEqual(self.store.get('items/album-123')['revision'],2)
         self.assertIsNotNone(self.store.get('outbox/draft-11'))

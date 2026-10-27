@@ -30,8 +30,9 @@ class PublishedTests(unittest.TestCase):
         self.addCleanup(keyboard.stop)
         self.spec = {'slug':'article','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-channel','threads','ig-post'],'media':{},'copy':{'tg-channel':'Здесь ошибка в тексте.','threads':'A concrete fact.\nWhat next?','ig-post':'A concrete fact. #tools #coding #software'},'approval':{}}
         self.results = {'tg-channel':{'url':'https://t.me/example/10','chat_id':-100123,'message_ids':[10,11],'caption':True,'copy':self.spec['copy']['tg-channel']},'threads':{'url':'https://www.threads.com/@romacv777/post/Abc','id':'123','copy':self.spec['copy']['threads']},'ig-post':{'url':'https://www.instagram.com/p/Abc/','id':'456','copy':self.spec['copy']['ig-post']}}
-        self.source = {'item':'item-1','state':'done','spec':self.spec,'results':self.results,'preview_message':20,'published_at':1}
+        self.source = {'item':'item-1','state':'done','spec':self.spec,'results':self.results,'preview_message':20,'published_at':1,'hash':'abcdefgh1234'}
         self.store.put('specs/article',self.source)
+        self.store.put('published-messages/20',{'slug':'article'})
         self.store.put('items/item-1',{'status':'previewed','revision':1})
 
     def intake(self, text, reply=None, identifier=100):
@@ -40,8 +41,12 @@ class PublishedTests(unittest.TestCase):
             message['reply_to_message'] = {'message_id':reply}
         return self.store.intake({'update_id':identifier,'message':message},self.config)
 
+    def delete_tap(self, identifier=100, digest=None):
+        digest = digest or self.store.get('specs/article')['hash'][:8]
+        return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':'pdel:article:' + digest}},self.config)
+
     def prepare(self, operation='fix'):
-        self.intake('удали пост' if operation == 'delete' else 'поправь ошибку в посте',20)
+        self.delete_tap() if operation == 'delete' else self.intake('ошибка в посте',20)
         corrected = {'copy':{**self.spec['copy'],'tg-channel':'Здесь исправленный текст.'},'blog':None}
         with patch.object(app,'tell',return_value={'message_id':30}), patch.object(drafter,'ask',return_value=corrected):
             app.fix(self.config,self.store,'fix-100')
@@ -50,53 +55,51 @@ class PublishedTests(unittest.TestCase):
     def approve(self, saved, verb='fix', identifier=101, digest=None):
         return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':verb + ':fix-100:' + (digest or saved['hash'][:8])}},self.config)
 
-    def test_matching_reply_report_preview_and_link(self):
+    def test_text_reply_to_preview_or_report_starts_fix(self):
         self.store.put('published-messages/21',{'slug':'article'})
-        for identifier, reply, text in [(100,20,'поправь ошибку'),(101,21,'исправь слово'),(102,None,'поправь https://t.me/example/10')]:
+        for identifier, reply, text in [(100,20,'ошибка в тексте'),(101,21,'исправь слово')]:
             self.intake(text,reply,identifier)
             self.assertEqual(self.store.get('specs/fix-' + str(identifier))['source'],'article')
         self.assertIsNotNone(self.store.get('outbox/fix-100'))
 
-    def test_unknown_post_never_falls_back_and_new_material_stays_new(self):
-        for identifier,text in enumerate(['исправь https://t.me/other/99','удали пост про поездку','поправь пост «другая статья»'],200):
-            self.assertIn('Какой пост',self.intake(text,identifier=identifier))
+    def test_words_without_reply_are_plain_material(self):
+        for identifier,text in enumerate(['поправь https://t.me/example/10','удали пост','Отклонить','delete','Montage','монтаж'],200):
+            result = self.intake(text,identifier=identifier)
+            self.assertEqual(result['item'],'item-' + str(identifier))
             self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
-        result = self.intake('Новый материал для публикации',identifier=250)
-        self.assertEqual(result['item'],'item-250')
 
-    def test_command_requires_explicit_reference(self):
-        self.assertIn('Какой пост',self.intake('удали пост'))
-        self.assertIsNone(self.store.get('specs/fix-100'))
-        self.assertIsNone(self.intake('удали пост'))
-
-    def test_false_positive_material_never_starts_fix(self):
-        for identifier,text in enumerate(['Удалось','исправил баг','справка','fixed','поправь удалённое слово'],300):
-            self.intake(text,identifier=identifier)
-            self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
-        self.intake('поправь удалённое слово',20,305)
-        self.assertEqual(self.store.get('specs/fix-305')['operation'],'fix')
-
-    def test_bare_reject_reply_to_published_post_starts_delete(self):
+    def test_typed_delete_words_in_reply_are_fix_instructions(self):
         self.store.put('published-messages/21',{'slug':'article'})
-        for identifier,reply,text in [(310,21,'Отклонить'),(311,20,'отклони'),(312,21,'delete'),(313,21,'Remove.')]:
-            self.assertEqual(self.intake(text,reply,identifier),'Готовлю превью удаления.')
+        for identifier,reply,text in [(310,21,'Отклонить'),(311,20,'удали'),(312,21,'delete')]:
+            self.assertIn('Правлю опубликованный пост',self.intake(text,reply,identifier))
             saved = self.store.get('specs/fix-' + str(identifier))
-            self.assertEqual((saved['operation'],saved['source']),('delete','article'))
-            self.assertIsNotNone(self.store.get('outbox/fix-' + str(identifier)))
+            self.assertEqual((saved['operation'],saved['source']),('fix','article'))
 
     def test_plain_reply_to_published_post_starts_fix(self):
         self.store.put('published-messages/21',{'slug':'article'})
-        self.assertEqual(self.intake('Здесь опечатка в первом слове',21,320),'Готовлю превью правки.')
+        self.assertEqual(self.intake('Здесь опечатка в первом слове',21,320),'Правлю опубликованный пост «Здесь ошибка в тексте.». Превью изменений пришлю сюда.')
         self.assertEqual(self.store.get('specs/fix-320')['operation'],'fix')
         self.assertIsNone(self.store.get('items/item-320'))
 
-    def test_bare_command_word_without_target_explains(self):
-        for identifier,text in enumerate(['Отклонить','удали','Remove'],330):
-            self.assertIn('к какому посту',self.intake(text,identifier=identifier))
-            self.assertIsNone(self.store.get('items/item-' + str(identifier)))
-            self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
-        self.assertIn('к какому посту',self.intake('Отклонить',99,340))
-        self.assertIsNone(self.store.get('items/item-340'))
+    def test_report_delete_button_creates_delete_spec(self):
+        result = self.delete_tap(330)
+        self.assertIn('Готовлю удаление поста',result)
+        saved = self.store.get('specs/fix-330')
+        self.assertEqual((saved['operation'],saved['source'],saved['state']),('delete','article','drafting'))
+        self.assertEqual(self.store.get('outbox/fix-330')['payload'],{'step':'fix','slug':'fix-330'})
+        self.assertIsNone(self.delete_tap(331,'wrongsha'))
+        self.store.change('specs/article',lambda value:value.update(deleted=True))
+        self.assertIsNone(self.delete_tap(332))
+        self.assertIsNone(self.store.get('specs/fix-332'))
+
+    def test_report_fix_button_makes_next_text_the_instruction(self):
+        self.assertTrue(self.store.intake({'update_id':340,'callback_query':{'id':'340','data':'pfix:article:abcdefgh'}},self.config))
+        self.assertEqual(self.store.get('outbox/callback-' + hashlib.sha256(b'340').hexdigest())['payload']['step'],'fix-prompt')
+        self.assertIsNone(self.store.get('specs/fix-341'))
+        self.assertIn('Правлю опубликованный пост',self.intake('Опечатка в первом слове',identifier=341))
+        saved = self.store.get('specs/fix-341')
+        self.assertEqual((saved['operation'],saved['source'],saved['instruction']),('fix','article','Опечатка в первом слове'))
+        self.assertEqual(self.intake('Ещё текст',identifier=342)['item'],'item-342')
 
     def test_plain_message_does_not_scan_specs(self):
         with patch.object(self.store.db,'collection',side_effect=AssertionError('scan')):
@@ -121,7 +124,7 @@ class PublishedTests(unittest.TestCase):
         self.source['spec'] = self.spec
         self.source['results']['tg-channel']['copy'] = self.spec['copy']['tg-channel']
         self.store.put('specs/article',self.source)
-        self.intake('поправь ошибку',20)
+        self.intake('ошибка в тексте',20)
         def ask(config,payload,images,validator):
             self.assertEqual(payload['mode'],'fix')
             self.assertEqual(validator(corrected),[])
@@ -206,7 +209,7 @@ class PublishedTests(unittest.TestCase):
             self.assertEqual(request.call_args.args,('DELETE','https://graph.threads.net/v1.0/123'))
 
     def test_threads_replacement_warns_resumes_and_saves_new_identity(self):
-        self.intake('поправь ошибку',20)
+        self.intake('ошибка в тексте',20)
         corrected = {'copy':{**self.spec['copy'],'threads':'A corrected fact. What next?'},'blog':None}
         with patch.object(drafter,'ask',return_value=corrected), patch.object(app,'tell',return_value={'message_id':30}) as tell:
             app.fix(self.config,self.store,'fix-100')
@@ -282,7 +285,7 @@ class PublishedTests(unittest.TestCase):
     def test_preview_manual_missing_id_and_registered_chunks(self):
         self.source['results']['tg-channel'].pop('message_ids')
         self.store.put('specs/article',self.source)
-        self.intake('удали пост',20)
+        self.delete_tap()
         with patch.object(app,'tell',side_effect=[{'message_id':29},{'message_id':30}]) as tell:
             app.fix(self.config,self.store,'fix-100')
         self.assertIn('tg-channel: удали вручную: ID не сохранён',tell.call_args_list[0].args[1])
@@ -295,7 +298,7 @@ class PublishedTests(unittest.TestCase):
         self.source['spec']['blog'] = blog
         self.source['results']['blog'] = {'url':'https://www.resrom.com/blog/article','path':'blog/article.html','blog':blog}
         self.store.put('specs/article',self.source)
-        self.intake('поправь ошибку',20)
+        self.intake('ошибка в тексте',20)
         corrected = {'copy':self.spec['copy'],'blog':None}
         def ask(config,payload,images,validator):
             self.assertEqual(validator(corrected),[])
@@ -309,7 +312,7 @@ class PublishedTests(unittest.TestCase):
         assets = {'image0.jpg':{'object':'photo','generation':1,'content_type':'image/jpeg'}}
         self.source['results']['threads']['assets'] = assets
         self.store.put('specs/article',self.source)
-        self.intake('поправь ошибку',20)
+        self.intake('ошибка в тексте',20)
         corrected = {'copy':{**self.spec['copy'],'threads':'A corrected fact. What next?'},'blog':None}
         with patch.object(drafter,'ask',return_value=corrected), patch.object(app,'tell',return_value={'message_id':30}):
             app.fix(self.config,self.store,'fix-100')
@@ -321,8 +324,7 @@ class PublishedTests(unittest.TestCase):
         report = tell.call_args.args[1]
         self.assertIn('ожидает повторной публикации',report)
         self.assertNotIn(self.results['threads']['url'],report)
-        self.assertIsNone(self.store.published_match({'text':'удали ' + self.results['threads']['url']},None,True))
-        self.intake('удали пост',20,103)
+        self.delete_tap(103)
         with patch.object(app,'tell',return_value={'message_id':32}):
             app.fix(self.config,self.store,'fix-103')
         self.assertNotIn('threads',self.store.get('specs/fix-103')['spec']['targets'])
@@ -373,7 +375,7 @@ class PublishedTests(unittest.TestCase):
             app.run(self.config,self.store,None,'article',self.root)
         self.assertEqual(self.store.get('items/item-1')['published']['threads']['id'],'123')
         original_results = copy.deepcopy(self.store.get('specs/article')['results'])
-        self.intake('удали пост',20)
+        self.delete_tap()
         with patch.object(app,'tell',return_value={'message_id':32}):
             app.fix(self.config,self.store,'fix-100')
         self.assertEqual(self.store.get('specs/fix-100')['before']['threads']['id'],'123')

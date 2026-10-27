@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fake_firestore import FakeFirestore
-from store import Store, StateError
+from store import Store, StateError, batch_keyboard
 import main as app
 import platforms
 
@@ -104,22 +104,78 @@ class ReviewFixTests(unittest.TestCase):
                 self.assertEqual(result['item'],'item-10')
                 self.assertEqual(store.get('sessions/inbox'),{'video_batch':'item-10'})
 
-    def test_english_montage_caption_and_text_close_batch(self):
-        store = Store(FakeFirestore())
-        result = store.intake({'update_id':10,'message':{'message_id':10,'video':{'file_id':'v','file_size':100},'caption':'Montage reels about Jakarta Chinatown'}},self.config)
-        self.assertEqual(store.get('items/' + result['item'])['montage'],True)
-        self.assertEqual(store.get('items/' + result['item'])['status'],'queued')
-        store.intake({'update_id':11,'message':{'message_id':11,'video':{'file_id':'v','file_size':100}}},self.config)
-        result = store.intake({'update_id':12,'message':{'message_id':12,'text':'Montage','reply_to_message':{'message_id':11}}},self.config)
-        item = store.get('items/item-11')
-        self.assertEqual((result['item'],item['montage'],item['status'],len(item['messages'])),('item-11',True,'queued',2))
-        self.assertEqual(store.get('outbox/draft-12')['payload']['step'],'montage')
+    def video(self, store, identifier, caption=None):
+        message = {'message_id':identifier,'video':{'file_id':'v','file_size':100}}
+        if caption:
+            message['caption'] = caption
+        return store.intake({'update_id':identifier,'message':message},self.config)
 
-    def test_montage_word_without_batch_explains(self):
+    def tap(self, store, verb, item, token, identifier):
+        return store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':verb + ':' + item + ':' + token}},self.config)
+
+    def test_clip_ack_has_buttons_and_montage_tap_queues_montage(self):
         store = Store(FakeFirestore())
-        result = store.intake({'update_id':10,'message':{'message_id':10,'text':'Montage'}},self.config)
-        self.assertIn('Нет клипов',result)
-        self.assertIsNone(store.get('items/item-10'))
+        result = self.video(store,10,'Montage reels about Jakarta Chinatown')
+        self.assertEqual(result['text'],'Клипы сохранены. Пришли ещё или нажми кнопку.')
+        self.assertEqual(store.get('items/item-10')['status'],'collecting')
+        self.assertFalse(store.get('items/item-10').get('montage'))
+        token = store.get('items/item-10')['batch_token']
+        self.assertEqual([(b['text'],b['callback_data']) for b in result['reply_markup']['inline_keyboard'][0]],[('Смонтировать','mont:item-10:' + token),('Отменить','cncl:item-10:' + token)])
+        second = self.video(store,11)
+        self.assertEqual(second['reply_markup'],result['reply_markup'])
+        answer = self.tap(store,'mont','item-10',token,12)
+        self.assertEqual(answer,'Монтирую 2 клипа «Montage reels about Jakarta Chinatown». Превью пришлю сюда.')
+        item = store.get('items/item-10')
+        self.assertEqual((item['montage'],item['status'],len(item['messages'])),(True,'queued',2))
+        self.assertEqual(store.get('outbox/draft-12')['payload'],{'item':'item-10','step':'montage','revision':item['revision']})
+        self.assertNotIn('video_batch',store.get('sessions/inbox'))
+        self.assertIsNone(self.tap(store,'mont','item-10',token,13))
+
+    def test_cancel_tap_drops_batch_and_stale_tokens_are_rejected(self):
+        store = Store(FakeFirestore())
+        self.video(store,10)
+        token = store.get('items/item-10')['batch_token']
+        self.assertIsNone(self.tap(store,'mont','item-10','wrongtok',11))
+        self.assertEqual(store.get('items/item-10')['status'],'collecting')
+        self.assertEqual(self.tap(store,'cncl','item-10',token,12),'Клипы отменены.')
+        self.assertEqual(store.get('items/item-10')['status'],'rejected')
+        self.assertNotIn('video_batch',store.get('sessions/inbox'))
+        self.assertIsNone(self.tap(store,'mont','item-10',token,13))
+        self.assertIsNone(store.get('outbox/draft-13'))
+        self.assertEqual(self.video(store,14)['item'],'item-14')
+
+    def test_rejected_item_media_is_removed_by_maintenance(self):
+        store = Store(FakeFirestore())
+        store.put('items/item-10',{'status':'rejected'})
+        blob = Mock(generation=3)
+        bucket = Mock(list_blobs=Mock(return_value=[blob]))
+        with patch.object(app.platforms,'telegram',return_value={'url':'test'}), patch.object(app.platforms,'token',return_value=None), patch.object(app,'enqueue'):
+            with patch('urllib.request.urlopen',side_effect=OSError), patch.object(app,'tell'):
+                app.maintenance({'webhook_url':'test','github_pat':'test'},store,bucket)
+        bucket.list_blobs.assert_called_with(prefix='inbox/item-10/')
+        blob.delete.assert_called_once_with(if_generation_match=3)
+
+    def test_text_and_voice_during_open_batch_join_it_as_instructions(self):
+        store = Store(FakeFirestore())
+        self.video(store,10)
+        token = store.get('items/item-10')['batch_token']
+        for identifier,text in ((11,'Montage'),(12,'монтаж'),(13,'удали'),(14,'Отклонить')):
+            result = store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
+            self.assertEqual(result['item'],'item-10')
+            self.assertEqual(result['text'],'Добавил к клипам «' + text + '». Нажми «Смонтировать».')
+            self.assertEqual(result['reply_markup'],batch_keyboard('item-10',token))
+        voice = store.intake({'update_id':15,'message':{'message_id':15,'voice':{'file_id':'a','file_size':10}}},self.config)
+        self.assertEqual(voice['text'],'Добавил к клипам. Нажми «Смонтировать».')
+        item = store.get('items/item-10')
+        self.assertEqual((item['status'],item.get('montage'),len(item['messages'])),('collecting',None,6))
+        self.assertEqual([path for path in store.db.values if path.startswith('outbox/')],[])
+
+    def test_typed_montage_words_without_batch_are_plain_material(self):
+        store = Store(FakeFirestore())
+        for identifier,text in ((11,'Montage'),(12,'монтаж')):
+            result = store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
+            self.assertEqual(result['item'],'item-' + str(identifier))
+            self.assertEqual(result['text'],'Готовлю пост из текста «' + text + '». Превью пришлю сюда.')
 
     def test_invalid_draft_logs_errors_and_tells_reason(self):
         import json
