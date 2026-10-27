@@ -1,3 +1,4 @@
+import contextvars
 import copy
 import difflib
 import hashlib
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import secrets
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -23,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, COMMANDS, COMMANDS_HINT
+from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, hinted, NAMES, COMMANDS, COMMANDS_HINT
 import drafter
 import media
 import montage
@@ -56,7 +58,7 @@ def enqueue(payload, identifier, delay=0):
 
 def item_name(item):
     messages = item['messages'] if item else []
-    count = sum(1 for m in messages if m.get('photo'))
+    count = sum(1 for m in messages if imaged(m).get('photo'))
     return titled(item) if item and titled(item) else (' ' + clips(item) if any(m.get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
 
 
@@ -67,7 +69,89 @@ def post_name(store, saved):
 
 def superseded(store, payload):
     item = store.get('items/' + payload['item'])
-    return not item or item['revision'] != payload['revision']
+    return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
+
+
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo'}
+UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужен текст без видео'}
+
+
+def activity(config, kind, stop):
+    if not kind:
+        return
+    def beat():
+        wait = 1.5
+        while not stop.wait(wait):
+            try:
+                platforms.telegram('sendChatAction',{'chat_id':config['roman_chat_id'],'action':kind})
+            except Exception:
+                pass
+            wait = 4
+    threading.Thread(target=contextvars.copy_context().run,args=(beat,),daemon=True).start()
+
+
+def edit_message(config, identifier, text, markup=None):
+    fields = {'chat_id':config['roman_chat_id'],'message_id':identifier,'text':text}
+    if markup is not None:
+        fields['reply_markup'] = markup
+    try:
+        platforms.telegram('editMessageText',fields)
+    except Exception:
+        pass
+
+
+def finish_status(config, record, line):
+    if record:
+        edit_message(config,record['id'],(record['text'] + '\n' + line).strip())
+
+
+def retire_taps(config, store, taps):
+    try:
+        platforms.configure(config,store,tempfile.gettempdir())
+    except Exception:
+        return
+    for tap in taps:
+        if tap['line'] is None:
+            try:
+                platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':tap['message_id'],'reply_markup':tap['markup']})
+            except Exception:
+                pass
+        else:
+            edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip())
+
+
+def collect_reply(config, store, item_id, item, text):
+    offers = offered(config,store.get('tokens/business') or config.get('business'))
+    return {'item':item_id,'text':hinted(text,offers),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
+
+
+def send_collect(config, store, result):
+    sent = platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':result['text'],'reply_markup':result['reply_markup']})
+    identifier = sent.get('message_id') if isinstance(sent,dict) else None
+    if type(identifier) is not int:
+        return
+    def swap(value):
+        previous = value.get('keyboard_message')
+        value['keyboard_message'] = identifier
+        return previous
+    try:
+        previous = store.change('items/' + result['item'],swap)
+        if previous:
+            remove_keyboard(config,{'preview_message':previous})
+    except Exception:
+        logging.error(json.dumps({'code':'keyboard_retire_failed'}))
+
+
+def unsupported(targets, photos, video):
+    missing = {'ig-reel':not video,'ig-post':video or not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video}
+    return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
+
+
+SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
+
+
+def skipped_lines(reasons):
+    return ['Не пойдёт в ' + SKIP_NAMES[target] + ': ' + reason + '.' for target,reason in reasons.items()]
 
 
 def tell(config, text, **extra):
@@ -139,12 +223,20 @@ def webhook(request):
                 return True
             reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':COMMANDS_HINT} if store.change('updates/' + str(value['update_id']),receive) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
-    result = store.intake(value,config)
+    taps = []
+    result = store.intake(value,config,taps)
     store.flush(enqueue)
+    retire_taps(config,store,taps)
     query = value.get('callback_query')
     if query:
         return https_fn.Response(json.dumps({'method':'answerCallbackQuery','callback_query_id':query['id'],'text':result if isinstance(result,str) else 'Принято' if result else 'Кнопка устарела или уже обработана'}),content_type='application/json')
     text = result.get('text') if isinstance(result,dict) else result
+    if text and isinstance(result,dict) and result.get('item') and result.get('reply_markup'):
+        try:
+            send_collect(config,store,result)
+            return https_fn.Response('{}',content_type='application/json')
+        except Exception:
+            pass
     reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':text} if text else {}
     if text and isinstance(result,dict) and result.get('reply_markup'):
         reply['reply_markup'] = result['reply_markup']
@@ -163,7 +255,6 @@ def buttons(slug, digest, retry=False, published=False):
     return {'inline_keyboard':[values]}
 
 
-NAMES = {'tg-channel':'Telegram-канал','tg-story':'История Telegram','ig-post':'Instagram, пост','ig-reel':'Instagram, Reels','ig-story':'Instagram, история','threads':'Threads','blog':'Блог resrom.com'}
 ROLES = {'tg-channel':('Пост','Telegram'),'threads':('Пост','Threads'),'ig-post':('Пост','Instagram'),'ig-reel':('Reels','Instagram'),'tg-story':('История','Telegram'),'ig-story':('История','Instagram'),'blog':('Блог','resrom.com')}
 
 
@@ -199,6 +290,9 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     def say(text, targets=None, **extra):
         return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra},targets=[targets] if targets else None)
     previous = store.get('specs/' + spec['slug']) or {}
+    current = store.get('items/' + item_id) or {}
+    if current.get('status') == 'rejected' or previous.get('state') == 'rejected' and not previous.get('operation'):
+        return
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
     digest = asset_hash(spec,assets if basis is None else basis)
@@ -240,12 +334,14 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
         blocks.setdefault(text,[]).append(target)
     note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
-    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note] + [', '.join(NAMES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in members) + '\n' + text for text,members in blocks.items()])
+    extras = ''.join('\n' + line for line in current.get('skipped',[])) + ('\nЗаметка: ' + spec['notes'] if spec.get('notes') else '')
+    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note + extras] + [', '.join(NAMES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in members) + '\n' + text for text,members in blocks.items()])
     def members_in(page):
         return [t for text,members in blocks.items() if text[:100] in page or text[-100:] in page for t in members]
     for text in messages[:-1]:
         say(text,members_in(text))
     message = say(messages[-1],members_in(messages[-1]),reply_markup=buttons(spec['slug'],digest))
+    shown_status = []
     def commit(tx):
         value = store.get('specs/' + spec['slug'],tx)
         item = store.get('items/' + item_id,tx) or {}
@@ -254,6 +350,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
             return False
         value.update(state='previewed',preview_message=message['message_id'],preview_targets=scoped)
         item.update(status='previewed',edits_applied=len(item.get('edits',[])),photos_applied=len(item.get('edit_photos',[])))
+        shown_status.append(item.pop('status_message',None))
         session['current'] = spec['slug']
         store.put('specs/' + spec['slug'],value,tx)
         store.put('items/' + item_id,item,tx)
@@ -264,6 +361,8 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
             remove_keyboard(config,{'preview_message':message['message_id']})
         except Error:
             pass
+    else:
+        finish_status(config,shown_status[0] if shown_status else None,'Черновик' + post_name(store,saved) + ' готов.')
 
 
 def upload_prompt(config,store,bucket,payload):
@@ -317,8 +416,11 @@ def upload_complete(config,store,bucket,payload,directory):
             store.job(tx,{'item':payload['item'],'revision':saved['revision'],'step':'montage' if saved.get('montage') else 'draft'},'upload-ready-' + payload['item'] + '-' + str(saved['revision']))
     store.atomic(finish)
     store.flush(enqueue)
-    extra = {'reply_markup':collect_keyboard(payload['item'],item['batch_token'])} if item['status'] == 'collecting' else {}
-    tell(config,'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Готово», когда всё отправлено.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
+    text = 'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Готово», когда всё отправлено.' if item['status'] == 'collecting' else ' Готовлю черновик.')
+    if item['status'] == 'collecting':
+        send_collect(config,store,collect_reply(config,store,payload['item'],item,text))
+    else:
+        tell(config,text)
 
 
 def transcript(config,store,bucket,payload,item,attachment,key):
@@ -356,12 +458,13 @@ def draft(config,store,bucket,payload,directory):
     if heard is None:
         return
     edits,shots = heard
-    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files)}
+    allowed = restrict(config,store,payload,item,bool(files),False)
+    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'chosen_targets':allowed} if allowed else {})}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % len(shots)
     def validate(value):
-        errors = drafter.validate(value, prepared=False)
+        errors = drafter.validate(value, prepared=False, chosen=allowed)
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
         try:
@@ -369,7 +472,13 @@ def draft(config,store,bucket,payload,directory):
                 errors.append('Use supplied clean media only')
         except Error:
             errors.append('Invalid media path')
-        return errors
+        if 'Invalid media path' in errors:
+            media_spec = value.get('media') if isinstance(value.get('media'),dict) else {}
+            offered_paths = [x.get('path') if isinstance(x,dict) else x for x in media_spec.get('images',[]) if isinstance(media_spec.get('images'),list)] + [media_spec[k] for k in ('video','cover') if media_spec.get(k)]
+            wrong = [str(x)[:80] for x in offered_paths if x not in files]
+            detail = 'Invalid media path ' + json.dumps(wrong,ensure_ascii=False) + '; use only these available_images paths exactly: ' + json.dumps(list(files))
+            errors = [detail if x == 'Invalid media path' else x for x in errors]
+        return list(dict.fromkeys(errors))
     spec = drafter.ask(config,source,images + shots,validate)
     if superseded(store,payload):
         return
@@ -395,6 +504,16 @@ def draft(config,store,bucket,payload,directory):
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
     preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
+
+
+def restrict(config,store,payload,item,photos,video):
+    chosen = chosen_targets(item.get('chosen',[]),config,store.get('tokens/business') or config.get('business')) if item.get('chosen') else []
+    reasons = unsupported(chosen,photos,video)
+    store.change('items/' + payload['item'],lambda value:value.update(skipped=skipped_lines(reasons)))
+    allowed = [t for t in chosen if t not in reasons]
+    if chosen and not allowed:
+        raise Error('Черновик не готов: ' + ' '.join(skipped_lines(reasons)))
+    return allowed or None
 
 
 def edit_media(config,store,bucket,payload,item,directory):
@@ -481,7 +600,8 @@ def plan_montage(config,store,bucket,payload,directory):
         raise Error('Нет клипов для монтажа.')
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
-    edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources),True)
+    allowed = restrict(config,store,payload,item,False,True)
+    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True)
     if superseded(store,payload):
         return
     identifier = secrets.token_hex(16)
@@ -596,10 +716,13 @@ def rendered(config,store,bucket,payload,directory):
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
-def remove_keyboard(config,saved):
+def remove_keyboard(config,saved,line=None):
     if saved.get('preview_message'):
         try:
-            platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':saved['preview_message'],'reply_markup':{'inline_keyboard':[]}})
+            if line:
+                platforms.telegram('editMessageText',{'chat_id':config['roman_chat_id'],'message_id':saved['preview_message'],'text':line})
+            else:
+                platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':saved['preview_message'],'reply_markup':{'inline_keyboard':[]}})
         except Error as failure:
             if not getattr(failure, 'not_modified', False):
                 raise
@@ -713,6 +836,8 @@ def run(config,store,bucket,slug,directory):
         lines.append('Facebook: поделиться вручную из Instagram, если автоматическая публикация не появилась.')
     message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial',True))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
+    finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.')
+    store.change('specs/' + slug,lambda value:value.pop('status_message',None))
 
 
 def published_ids(config,spec,target,assets,publication):
@@ -914,6 +1039,8 @@ def apply_fix(config,store,bucket,slug,directory):
     extra = {'reply_markup':buttons(slug,saved['hash'],True)} if state == 'partial' else {}
     message = tell(config,'\n'.join(lines),**extra)
     store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
+    finish_status(config,saved.get('status_message'),'Готово.' if state == 'done' else 'Готово не везде.')
+    store.change('specs/' + slug,lambda value:value.pop('status_message',None))
 
 
 @tasks_fn.on_task_dispatched(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],retry_config=options.RetryConfig(max_attempts=1),rate_limits=options.RateLimits(max_concurrent_dispatches=1),memory=options.MemoryOption.GB_2,timeout_sec=540,min_instances=0,max_instances=1)
@@ -927,8 +1054,10 @@ def handle_worker(request):
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
         platforms.configure(config,store,directory)
+        stop = threading.Event()
         try:
             step = payload['step']
+            activity(config,ACTIONS.get(step),stop)
             if payload.get('say'):
                 try:
                     tell(config,payload['say'])
@@ -953,14 +1082,14 @@ def handle_worker(request):
             elif step == 'upload-complete':
                 upload_complete(config,store,bucket,payload,directory)
             elif step in ('edit-prompt','remove-keyboard'):
-                saved = store.get('specs/' + payload['slug'])
-                remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved)
-                if step == 'edit-prompt' and saved['state'] == 'needs-edit':
+                saved = store.get('specs/' + payload['slug']) or {}
+                remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved,payload.get('line'))
+                if step == 'edit-prompt' and saved and saved['state'] == 'needs-edit':
                     tell(config,'Напиши, что поправить в черновике' + post_name(store,saved) + '.')
             elif step == 'collect-prompt':
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
-                    tell(config,collected(collecting),reply_markup=collect_keyboard(payload['item'],collecting['batch_token']))
+                    send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
@@ -990,6 +1119,8 @@ def handle_worker(request):
             elif name:
                 text =('Пост' if payload.get('step') in ('run','apply-fix','fix') else 'Черновик') + name + ': ' + text
             tell(config,text,**extra)
+        finally:
+            stop.set()
 
 
 def maintenance(config,store,bucket):

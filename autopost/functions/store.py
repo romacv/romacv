@@ -15,6 +15,11 @@ def plural(count, forms):
     return forms[2]
 
 
+NAMES = {'tg-channel':'Telegram-канал','tg-story':'История Telegram','ig-post':'Instagram, пост','ig-reel':'Instagram, Reels','ig-story':'Instagram, история','threads':'Threads','blog':'Блог resrom.com'}
+GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram-пост',('ig-post',)),('ig-reel','Instagram Reels',('ig-reel',)),('threads','Threads',('threads',)),('channel','Telegram-канал',('tg-channel',)),('site','Сайт',('blog',)))
+TOGGLES = {'tg' + str(index):group[0] for index,group in enumerate(GROUPS)}
+IMAGE_MIMES = ('image/jpeg', 'image/png', 'image/webp', 'image/heic')
+CHOICE_HINT = 'Отметь, куда пойдёт пост.'
 COMMANDS = ('/post', '/upload')
 COMMANDS_HINT = 'Команды: /post — новый пост, /upload — загрузить большое видео.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
@@ -38,11 +43,39 @@ def without_command(message):
     return stripped
 
 
-def collect_keyboard(item_id, token):
-    values = [{'text':label,'callback_data':verb + ':' + item_id + ':' + token} for verb,label in (('done','Готово'),('cncl','Отменить'))]
-    if any(len(x['callback_data'].encode()) > 64 for x in values):
+def imaged(message):
+    document = message.get('document')
+    if message.get('photo') or not isinstance(document, dict) or document.get('mime_type') not in IMAGE_MIMES:
+        return message
+    photo = {k:v for k,v in document.items() if k in ('file_id', 'file_unique_id', 'file_size')}
+    return {**{k:v for k,v in message.items() if k != 'document'}, 'photo':[photo]}
+
+
+def configured(config, business):
+    instagram = bool(config.get('instagram'))
+    return {'tg-channel':bool((config.get('channels') or {}).get('tg-channel')), 'tg-story':bool(business), 'ig-post':instagram, 'ig-reel':instagram, 'ig-story':instagram, 'threads':bool(config.get('threads')), 'blog':bool(config.get('github_pat'))}
+
+
+def offered(config, business):
+    have = configured(config, business)
+    return [key for key, label, targets in GROUPS if any(have[t] for t in targets)]
+
+
+def chosen_targets(chosen, config, business):
+    have = configured(config, business)
+    return [t for key, label, targets in GROUPS if key in chosen for t in targets if have[t]]
+
+
+def collect_keyboard(item_id, token, offers=(), chosen=()):
+    toggles = [{'text':('✓ ' if key in chosen else '') + label, 'callback_data':'tg' + str(index) + ':' + item_id + ':' + token} for index, (key, label, targets) in enumerate(GROUPS) if key in offers]
+    values = [{'text':label, 'callback_data':verb + ':' + item_id + ':' + token} for verb, label in (('done', 'Готово'), ('cncl', 'Отменить'))]
+    if any(len(x['callback_data'].encode()) > 64 for x in values + toggles):
         raise StateError('Callback exceeds 64 bytes')
-    return {'inline_keyboard':[values]}
+    return {'inline_keyboard':[toggles[i:i + 2] for i in range(0, len(toggles), 2)] + [values]}
+
+
+def hinted(text, offers):
+    return text + '\n' + CHOICE_HINT if text and offers else text
 
 
 def clips(item):
@@ -52,7 +85,7 @@ def clips(item):
 
 def contents(item, genitive=False):
     messages = item['messages']
-    photos = sum(1 for m in messages if m.get('photo'))
+    photos = sum(1 for m in messages if imaged(m).get('photo'))
     videos = sum(1 for m in messages if m.get('video'))
     voices = sum(1 for m in messages if m.get('voice') or m.get('audio'))
     parts = []
@@ -170,16 +203,19 @@ class Store:
                 enqueue(job['payload'], snapshot.id, job.get('delay', 0))
                 self.db.document('outbox/' + snapshot.id).delete()
 
-    def intake(self, update, config):
-        message = located(update.get('message', {}))
+    def intake(self, update, config, taps=None):
+        message = imaged(located(update.get('message', {})))
         query = update.get('callback_query')
         identifier = str(update['update_id'])
         def apply(tx):
+            if taps is not None:
+                del taps[:]
             update_path = 'updates/' + identifier
             if self.get(update_path, tx):
                 return None
+            business = self.get('tokens/business', tx) or config.get('business')
             if query:
-                return self.callback(tx, update_path, query)
+                return self.callback(tx, update_path, query, config, business, taps)
             if 'business_connection' in update:
                 connection = update['business_connection']
                 self.put(update_path, {'received':time.time()}, tx)
@@ -218,8 +254,13 @@ class Store:
             text = message.get('text', message.get('caption', ''))
             note = text.strip()
             photo = message.get('photo')
+            dropped = []
             if name == '/post':
                 session.pop('awaiting', None)
+                dropped = self.open_drafts(tx, session)
+                if dropped:
+                    session.pop('current', None)
+                    session.pop('collecting', None)
             waiting = session.get('awaiting')
             if waiting and not name and (message.get('text') or waiting['kind'] == 'edit' and (photo or message.get('voice'))):
                 session.pop('awaiting')
@@ -244,6 +285,7 @@ class Store:
                     self.job(tx, {'step':'upload-prompt','item':session['upload_item'],'revision':waiting['revision']}, 'upload-link-' + identifier)
                 return 'Готовлю ссылку на загрузку.'
             opened = session.get('collecting')
+            offers = offered(config, business)
             if name == '/post' or opened:
                 item_id = opened or 'item-' + identifier
                 item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
@@ -252,7 +294,7 @@ class Store:
                 sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [body] for k in ('video', 'voice')]
                 if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20):
                     self.put(update_path, {'received':time.time()}, tx)
-                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
+                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
                 group = message.get('media_group_id')
                 joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
                 if filled:
@@ -265,6 +307,7 @@ class Store:
                     item['waiting_upload'] = True
                     session['upload_item'] = item_id
                     self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
+                self.discard(tx, dropped, session, identifier)
                 self.put(update_path, {'received':time.time()}, tx)
                 self.put('items/' + item_id, item, tx)
                 self.put('sessions/inbox', session, tx)
@@ -274,7 +317,9 @@ class Store:
                     reply = None if joined else collected(item)
                 else:
                     reply = 'Пост' + titled(item) + ' уже собирается. Присылай материал и нажми «Готово».'
-                return {'item':item_id, 'revision':item['revision'], 'text':reply, 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
+                if dropped:
+                    reply = 'Отменяю старые черновики: ' + ', '.join(label for entry, label in dropped) + '.\n' + reply
+                return {'item':item_id, 'revision':item['revision'], 'text':hinted(reply, offers), 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
             slug = session.get('current')
             target = self.get('specs/' + slug, tx) if slug else None
             pending = self.get('items/' + slug, tx) if slug and not target else None
@@ -302,6 +347,48 @@ class Store:
             self.put(update_path, {'received':time.time()}, tx)
             return {'text':feedback(target, item, label), 'reply_markup':markup}
         return self.atomic(apply)
+
+    def open_drafts(self, tx, session):
+        posts = {}
+        def post(item_id, item):
+            return posts.setdefault(item_id, {'id':item_id, 'item':item, 'specs':[]})
+        opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
+        if opened and opened.get('messages'):
+            post(session['collecting'], opened)
+        for status in ('queued', 'drafting'):
+            for snapshot in self.db.collection('items').where('status', '==', status).stream():
+                post(snapshot.id, snapshot.to_dict())
+        for state in ('drafting', 'previewed', 'needs-edit'):
+            for snapshot in self.db.collection('specs').where('state', '==', state).stream():
+                saved = snapshot.to_dict()
+                if not saved.get('operation') and saved.get('item'):
+                    post(saved['item'], None)['specs'].append((snapshot.id, saved))
+        for entry in posts.values():
+            if entry['item'] is None:
+                entry['item'] = self.get('items/' + entry['id'], tx)
+        return [(entry, (named(entry['specs'][0][1] if entry['specs'] else {}, entry['item']) or ' без названия').strip()) for entry in posts.values()]
+
+    def discard(self, tx, dropped, session, identifier):
+        for entry, label in dropped:
+            item = entry['item']
+            if item:
+                item.update(status='rejected', waiting_upload=False, updated=time.time(), revision=item.get('revision', 0) + 1)
+                if session.get('upload_item') == entry['id']:
+                    session.pop('upload_item')
+                self.put('items/' + entry['id'], item, tx)
+            for slug, saved in entry['specs']:
+                saved['state'] = 'rejected'
+                self.put('specs/' + slug, saved, tx)
+                if saved.get('preview_message'):
+                    self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':saved['preview_message'], 'line':'Черновик отменён.'}, 'discard-' + identifier + '-' + slug)
+
+    def retire(self, taps, query, line, markup=None):
+        message = query.get('message') or {}
+        if taps is None or not message.get('message_id'):
+            return None
+        base = (message.get('text') or '').replace('\n' + CHOICE_HINT, '')
+        taps.append({'message_id':message['message_id'], 'text':base, 'line':line, 'markup':markup})
+        return {'id':message['message_id'], 'text':base}
 
     def edit_note(self, message):
         note = (message.get('text') or message.get('caption') or '').strip()
@@ -348,7 +435,7 @@ class Store:
         saved = self.get('specs/' + linked['slug'], tx)
         return (linked['slug'], saved) if self.fixable(saved) else None
 
-    def callback(self, tx, update_path, query):
+    def callback(self, tx, update_path, query, config=None, business=None, taps=None):
         callback_path = 'callbacks/' + query['id']
         if self.get(callback_path, tx):
             return None
@@ -359,8 +446,8 @@ class Store:
         if not slug or '/' in slug:
             return None
         if verb == 'newp':
-            return self.new_post_callback(tx, update_path, callback_path, slug, short_hash)
-        batch = verb in ('done','cncl')
+            return self.new_post_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
+        batch = verb in ('done','cncl') or verb in TOGGLES
         path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
         item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
@@ -369,24 +456,29 @@ class Store:
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if batch:
-            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier)
+            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
+        line, status = None, False
         if verb in ('fix','del') and saved.get('operation') == ('fix' if verb == 'fix' else 'delete') and saved['state'] == 'previewed':
             saved['state'] = 'approved'
             saved['approved_hash'] = saved['hash']
+            line, status = ('Публикую правку…' if verb == 'fix' else 'Удаляю…'), True
         elif verb == 'pub' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'approved'
             saved['approved_hash'] = saved['hash']
             payload['say'] = 'Публикую' + named(saved, item) + '.'
+            line, status = 'Публикую' + named(saved, item) + '…', True
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'needs-edit'
             payload['step'] = 'edit-prompt'
             session['awaiting'] = {'kind':'edit','slug':slug}
             self.put('sessions/inbox', session, tx)
+            line = 'Жду правку.'
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
             self.queue_fix(tx, slug, saved, 'delete', 'delete', identifier)
+            self.retire(taps, query, 'Готовлю удаление…')
             return deleting(saved, item)
         elif verb == 'pfix' and not saved.get('operation') and session.get('awaiting') == {'kind':'fix','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
@@ -394,23 +486,30 @@ class Store:
             session['awaiting'] = {'kind':'fix','slug':slug}
             self.put('sessions/inbox', session, tx)
             payload['step'] = 'fix-prompt'
+            line = 'Жду правку.'
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             payload['step'] = 'remove-keyboard'
             payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
+            line = 'Отклонено.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
+            line, status = 'Повторяю…', True
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
         else:
             return None
+        if line:
+            record = self.retire(taps, query, line)
+            if record and status:
+                saved['status_message'] = record
         self.put(path, saved, tx)
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
         if verb == 'edit':
             return 'Напиши, что поменять в черновике' + named(saved, item) + '.'
         return True
 
-    def new_post_callback(self, tx, update_path, callback_path, identifier, token):
+    def new_post_callback(self, tx, update_path, callback_path, identifier, token, query=None, taps=None):
         followup = self.get('followups/' + identifier, tx)
         valid = bool(followup) and followup['token'] == token and not followup.get('moved')
         item = self.get('items/' + followup['item'], tx) if valid else None
@@ -442,13 +541,27 @@ class Store:
         self.put('items/' + target, created, tx)
         self.put('sessions/inbox', session, tx)
         self.put('followups/' + identifier, followup, tx)
+        self.retire(taps, query or {}, 'Новый пост открыт.')
         return 'Новый пост открыт.'
 
-    def collect_callback(self, tx, verb, item_id, token, item, session, identifier):
+    def collect_callback(self, tx, verb, item_id, token, item, session, identifier, query=None, offers=(), taps=None):
         if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
             return None
+        query = query or {}
+        if verb in TOGGLES:
+            key = TOGGLES[verb]
+            if key not in offers:
+                return None
+            chosen = item.get('chosen', [])
+            item['chosen'] = [x for x in chosen if x != key] if key in chosen else chosen + [key]
+            self.put('items/' + item_id, item, tx)
+            self.retire(taps, query, None, collect_keyboard(item_id, token, offers, item['chosen']))
+            label = next(x[1] for x in GROUPS if x[0] == key)
+            return ('Отмечено: ' if key in item['chosen'] else 'Снято: ') + label
         if verb == 'done' and not item['messages']:
             return 'Пост пустой. Пришли текст, фото, видео или голос.'
+        if verb == 'done' and offers and not [x for x in item.get('chosen', []) if x in offers]:
+            return CHOICE_HINT
         video = any(m.get('video') for m in item['messages'])
         if verb == 'done' and video and any(m.get('photo') for m in item['messages']):
             return 'В монтаж идут видео, текст и голос. Фото пришли отдельным /post.'
@@ -462,6 +575,7 @@ class Store:
             if session.get('upload_item') == item_id:
                 session.pop('upload_item')
             result = 'Пост отменён.'
+            self.retire(taps, query, 'Отменено.')
             self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)
         else:
             session['current'] = item['slug']
@@ -469,6 +583,9 @@ class Store:
             item['montage'] = video
             self.job(tx, {'item':item_id, 'step':'montage' if video else 'draft', 'revision':item['revision']}, 'draft-' + identifier)
             result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.' if video else taken(item)
+            record = self.retire(taps, query, ('Монтирую ' + clips(item) if video else 'Готовлю превью') + titled(item) + '…')
+            if record:
+                item['status_message'] = record
         self.put('items/' + item_id, item, tx)
         self.put('sessions/inbox', session, tx)
         return result

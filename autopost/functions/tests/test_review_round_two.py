@@ -154,7 +154,7 @@ class RoundTwoTests(unittest.TestCase):
         self.assertEqual(reply,'Добавил к черновику «Новый пост»: правка.')
         self.assertEqual(self.store.get('items/item-10')['edits'],['правка'])
         self.assertNotIn('edits',self.store.get('items/item-1'))
-        self.assertEqual(self.store.get('specs/example')['state'],'previewed')
+        self.assertEqual(self.store.get('specs/example')['state'],'rejected')
 
     def test_done_with_photos_and_video_keeps_the_post_open(self):
         self.open_post(10)

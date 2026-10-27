@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
-def validate(spec, prepared=True, copy_only=False):
+def validate(spec, prepared=True, copy_only=False, chosen=None):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
     size = None
@@ -21,8 +21,12 @@ def validate(spec, prepared=True, copy_only=False):
         targets = spec.get('targets')
         if not isinstance(targets, list) or not targets or any(t not in TARGETS for t in targets) or len(set(targets)) != len(targets):
             raise Error('targets must be a nonempty unique list of supported targets')
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay'}:
+        if chosen is not None and any(t not in chosen for t in targets):
+            errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay', 'notes'}:
             errors.append('Unknown spec fields')
+        if 'notes' in spec and not (isinstance(spec['notes'], str) and len(spec['notes']) <= 500):
+            errors.append('notes must be a string of at most 500 characters')
         if not isinstance(spec.get('approval', {}), dict):
             errors.append('approval must be an object')
         media = spec.get('media', {})

@@ -35,8 +35,8 @@ class RoundThreeTests(unittest.TestCase):
         session = self.store.get('sessions/inbox')
         self.assertNotIn('awaiting',session)
         self.assertEqual(session['collecting'],'item-10')
-        self.assertEqual(self.store.get('specs/album')['state'],'previewed')
-        self.assertEqual(self.store.get('items/item-1')['revision'],1)
+        self.assertEqual(self.store.get('specs/album')['state'],'rejected')
+        self.assertEqual(self.store.get('items/item-1')['status'],'rejected')
 
     def test_post_command_replying_to_published_message_does_not_start_fix(self):
         self.store.put('specs/album',{'state':'done','item':'item-1','hash':'abcdefgh1','spec':{'targets':['tg-channel']}})

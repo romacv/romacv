@@ -8,6 +8,7 @@ import subprocess
 from datetime import timedelta
 import urllib.request
 from platforms import Error, ExpiredMaterial, telegram, digest_file
+from store import imaged
 
 
 def signed(bucket, name, config, method='GET', minutes=60, generation=None):
@@ -47,6 +48,7 @@ def download(bucket, manifest, destination):
 def attachments(item):
     result = []
     for message in item['messages']:
+        message = imaged(message)
         values = [('photo',message['photo'][-1])] if message.get('photo') else []
         values += [(kind,message[kind]) for kind in ('video','voice') if message.get(kind)]
         for kind, value in values:
