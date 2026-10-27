@@ -59,6 +59,19 @@ class WebhookTests(unittest.TestCase):
         self.task.assert_called_once()
         self.assertIsNotNone(self.store.get('updates/42'))
 
+    def test_bot_command_creates_no_item_and_replies_with_usage(self):
+        update = self.message()
+        update['message'].update({'text':'/start','entities':[{'type':'bot_command','offset':0,'length':6}]})
+        response = self.request(update)
+        reply = json.loads(response.get_data())
+        self.assertEqual(reply['method'],'sendMessage')
+        self.assertEqual(reply['text'],'Пришли текст, фото, видео или голос — подготовлю черновик поста.')
+        self.assertIsNotNone(self.store.get('updates/42'))
+        self.assertEqual([path for path in self.store.db.values if path.startswith('items/')],[])
+        self.task.assert_not_called()
+        self.assertEqual(json.loads(self.request(update).get_data()),{})
+        self.task.assert_not_called()
+
     def test_callback_checks_user_private_chat_and_hash(self):
         self.store.put('specs/example',{'state':'previewed','hash':'abcdefgh1234'})
         update = {'update_id':50,'callback_query':{'id':'callback','from':{'id':2},'message':{'chat':{'id':1,'type':'private'}},'data':'pub:example:abcdefgh'}}

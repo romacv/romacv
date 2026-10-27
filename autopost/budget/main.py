@@ -6,7 +6,7 @@ from google.api_core import exceptions
 from google.cloud import billing_v1, logging
 from firebase_functions import pubsub_fn
 
-SIMULATE_DEACTIVATION = True
+SIMULATE_DEACTIVATION = False
 
 
 def get_project_id():

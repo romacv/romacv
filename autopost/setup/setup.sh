@@ -141,6 +141,10 @@ def iam():
         bind(('run', 'services', 'add-iam-policy-binding', 'worker', '--region=' + REGION), RUNTIME, 'roles/run.invoker')
     else:
         say('worker is not deployed yet: rerun iam after owner deploy to bind private invocation.')
+    if cloud('run', 'services', 'describe', 'budget-kill', '--region=' + REGION, missing=True) is not None:
+        bind(('run', 'services', 'add-iam-policy-binding', 'budget-kill', '--region=' + REGION), BUDGET, 'roles/run.invoker')
+    else:
+        say('budget-kill is not deployed yet: rerun iam after deploy to bind its Pub/Sub trigger.')
     if cloud('run', 'jobs', 'describe', 'autopost-render', '--region=' + REGION, missing=True) is not None:
         bind(('run', 'jobs', 'add-iam-policy-binding', 'autopost-render', '--region=' + REGION), RUNTIME, run_job)
     else:

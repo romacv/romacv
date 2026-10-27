@@ -107,6 +107,18 @@ def webhook(request):
         return https_fn.Response('',status=403)
     if not authorized(value,config) or 'update_id' not in value:
         return https_fn.Response('{}',content_type='application/json')
+    message = value.get('message')
+    if isinstance(message,dict) and not any(message.get(key) for key in ('photo','video','voice','audio','document','animation','video_note','media_group_id')):
+        text = message.get('text')
+        entities = message.get('entities')
+        if isinstance(text,str) and text.strip() != '/upload' and isinstance(entities,list) and any(isinstance(entity,dict) and entity.get('type') == 'bot_command' and entity.get('offset') == 0 for entity in entities):
+            def receive(saved):
+                if saved:
+                    return False
+                saved['received'] = time.time()
+                return True
+            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':'Пришли текст, фото, видео или голос — подготовлю черновик поста.'} if store.change('updates/' + str(value['update_id']),receive) else {}
+            return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
     result = store.intake(value,config)
     store.flush(enqueue)
     query = value.get('callback_query')
