@@ -27,10 +27,13 @@ import platforms
 from platforms import Error
 from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
+import progress as progress_view
 import media
 import montage
 
 AUTOPOST = SecretParam('AUTOPOST')
+PROGRESS_URL = 'https://www.resrom.com/p'
+PROGRESS_MARKUP = {'inline_keyboard':[[{'text':'Прогресс','web_app':{'url':PROGRESS_URL}}]]}
 REGION = 'us-central1'
 RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.com'
 
@@ -258,7 +261,7 @@ def sync_pin(config, store):
                 except Error:
                     pass
         if action == 'create':
-            sent = platforms.telegram('sendMessage',{'chat_id':chat,'text':text})
+            sent = platforms.telegram('sendMessage',{'chat_id':chat,'text':text,'reply_markup':PROGRESS_MARKUP})
             store.change('sessions/pin',lambda value:value.update(message_id=sent['message_id']) if value.get('item') == wanted else None)
             record = {**record,'message_id':sent['message_id']}
             action = 'pin'
@@ -267,7 +270,7 @@ def sync_pin(config, store):
             store.change('sessions/pin',lambda value:value.update(pinned=True) if value.get('item') == wanted else None)
         elif action == 'keep' and wanted and record.get('message_id') and record.get('text') != text:
             try:
-                platforms.telegram('editMessageText',{'chat_id':chat,'message_id':record['message_id'],'text':text})
+                platforms.telegram('editMessageText',{'chat_id':chat,'message_id':record['message_id'],'text':text,'reply_markup':PROGRESS_MARKUP})
             except Error as failure:
                 if not getattr(failure,'not_modified',False):
                     raise
@@ -379,6 +382,12 @@ def webhook(request):
     if text and isinstance(result,dict) and result.get('reply_markup'):
         reply['reply_markup'] = result['reply_markup']
     return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
+
+
+@https_fn.on_request(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=30,min_instances=0,max_instances=1,invoker='public')
+def progress(request):
+    config, store, _ = runtime()
+    return progress_view.respond(request,config,store)
 
 
 def asset_hash(spec, assets):

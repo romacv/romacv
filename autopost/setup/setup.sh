@@ -369,19 +369,19 @@ def render():
 
 
 def webhook():
-    say('Register Telegram webhook with secret_token and message/callback_query/business_connection updates; retain pending updates')
+    say('Register Telegram webhook with secret_token and message/callback_query/business_connection updates; retain pending updates; set the commands and the Прогресс menu button')
     token = key('telegram_bot_token.txt')
     secret_token = key('webhook_secret.txt')
     url = key('webhook_url.txt')
     if not url.startswith('https://') or not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', secret_token):
         raise RuntimeError('Invalid webhook settings.')
     menu = [{'command': 'post', 'description': 'Новый пост'}]
-    for method, body in (('setWebhook', {'url': url, 'secret_token': secret_token, 'allowed_updates': ['message', 'callback_query', 'business_connection']}), ('setMyCommands', {'commands': menu})):
+    for method, body in (('setWebhook', {'url': url, 'secret_token': secret_token, 'allowed_updates': ['message', 'callback_query', 'business_connection']}), ('setMyCommands', {'commands': menu}), ('setChatMenuButton', {'menu_button': {'type': 'web_app', 'text': 'Прогресс', 'web_app': {'url': 'https://www.resrom.com/p'}}})):
         request = urllib.request.Request('https://api.telegram.org/bot' + token + '/' + method, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(request, timeout=30) as response:
             if not json.load(response).get('ok'):
                 raise RuntimeError(method + ' rejected.')
-    say('Webhook and commands registered.')
+    say('Webhook, commands and menu button registered.')
 
 
 def budget_test():

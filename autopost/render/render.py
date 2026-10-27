@@ -400,6 +400,7 @@ class Loader:
         self.token = os.environ.get('TELEGRAM_BOT_TOKEN')
         self.reference = reference
         self.label = ''
+        self.steps = []
         self.began = time.time()
         self.shown = None
         self.done = threading.Event()
@@ -433,8 +434,9 @@ class Loader:
 
     def stage(self, label):
         self.label = label
+        self.steps.append({'label':label,'since':time.time()})
         try:
-            self.reference.update({'progress':{'label':label,'since':self.began}})
+            self.reference.update({'progress':{'label':label,'since':self.began},'steps':self.steps})
         except Exception:
             pass
         try:

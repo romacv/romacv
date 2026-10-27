@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src https://us-central1-resromcom-493b4.cloudfunctions.net/progress; base-uri 'none'; form-action 'none'">
+<title>Прогресс</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;padding:16px 16px 32px;font:16px/1.4 system-ui,-apple-system,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000)}
+h2{margin:24px 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--tg-theme-section-header-text-color,var(--tg-theme-hint-color,#6d6d72))}
+section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px;padding:4px 16px}
+.row{padding:12px 0;border-top:1px solid var(--tg-theme-section-separator-color,rgba(128,128,128,.25))}
+.row:first-child{border-top:0}
+.line{display:flex;justify-content:space-between;gap:12px}
+.title{font-weight:600;overflow-wrap:anywhere}
+.time{font-variant-numeric:tabular-nums;color:var(--tg-theme-hint-color,#6d6d72);white-space:nowrap}
+.hint{color:var(--tg-theme-hint-color,#6d6d72);font-size:14px}
+.stage{margin-top:2px;color:var(--tg-theme-accent-text-color,var(--tg-theme-link-color,#2481cc))}
+ul{list-style:none;margin:8px 0 0;padding:0;font-size:14px}
+li{display:flex;justify-content:space-between;gap:12px;padding:2px 0}
+li.done{color:var(--tg-theme-hint-color,#6d6d72)}
+li.current{font-weight:600}
+#state{margin-top:24px;text-align:center}
+</style>
+</head>
+<body>
+<div id="active"></div>
+<div id="waiting"></div>
+<div id="published"></div>
+<p id="state" class="hint" role="status">Загрузка…</p>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+'use strict';
+const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state');
+let data=null, offset=0, busy=false, timer;
+if(app){app.ready();app.expand()}
+const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+const hour=t=>new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+const now=()=>Date.now()/1000+offset;
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+function line(left,right){const l=el('div','line');l.append(left,right);return l}
+function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
+function render(){
+  if(!data)return;
+  group('active','Сейчас',data.active.map(job=>{
+    const row=el('div','row'), time=el('span','time');
+    row.append(line(el('span','title',job.title||'Без названия'),time));
+    if(job.label)row.append(el('div','stage',job.label));
+    const list=el('ul');
+    job.steps.forEach(step=>{
+      const item=el('li',step.done?'done':'current'), t=el('span','time',step.done?clock(step.seconds):'');
+      item.append(el('span','',step.label),t);
+      list.append(item);
+    });
+    if(job.steps.length)row.append(list);
+    return row;
+  }));
+  group('waiting','Ждёт ответа',data.waiting.map(w=>{const row=el('div','row');row.append(el('div','title',w.title||'Без названия'));return row}));
+  group('published','Опубликовано',data.published.map(p=>{const row=el('div','row');row.append(line(el('span','title',p.title||'Без названия'),el('span','time','опубликован '+hour(p.at))));return row}));
+  tick();
+}
+function tick(){
+  data&&data.active.forEach((job,i)=>{
+    const row=document.querySelectorAll('#active .row')[i];
+    if(!row)return;
+    row.querySelector('.line .time').textContent=clock(Math.max(0,now()-job.since));
+    const live=row.querySelector('li.current .time');
+    const step=job.steps[job.steps.length-1];
+    if(live&&step)live.textContent=clock(Math.max(0,now()-step.since));
+  });
+}
+async function poll(){
+  clearTimeout(timer);
+  let delay=data&&data.active.length?2500:15000;
+  if(!busy&&!document.hidden&&app&&app.initData){
+    busy=true;
+    try{
+      const response=await fetch(endpoint,{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
+      if(!response.ok)throw Error(response.status);
+      data=await response.json();
+      offset=data.now-Date.now()/1000;
+      state.textContent=data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
+      delay=data.active.length?2500:15000;
+      render();
+    }catch(e){
+      const code=e.message;
+      state.textContent=code==='401'?'Открой заново из бота.':code==='403'?'Нет доступа.':code==='503'?'Сервер недоступен.':'Нет связи, повторяю…';
+      if(code==='503')delay=30000;
+    }finally{busy=false}
+  }
+  timer=setTimeout(poll,delay);
+}
+if(!app||!app.initData)state.textContent='Открой страницу из бота.';
+setInterval(tick,1000);
+document.addEventListener('visibilitychange',poll);
+poll();
+</script>
+</body>
+</html>
