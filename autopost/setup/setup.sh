@@ -310,6 +310,8 @@ def meta():
             if meta_identity(provider, base, token) != user_id:
                 raise IdsError(provider + ' exchanged token identity changed.')
         value = {'access_token': token, 'user_id': user_id, 'issued_at': issued, 'expires_at': expires}
+        if provider == 'threads':
+            value['scopes'] = metadata.get('scopes', [])
         write_id(name, value)
         if key(name, True).get('access_token') == token and key(raw_name) == original_token:
             (KEYS / raw_name).unlink()
@@ -331,7 +333,9 @@ def config():
         if not result[name].startswith('https://'):
             raise RuntimeError('HTTPS function URLs required.')
     for provider in ('instagram', 'threads'):
-        if set(result[provider]) != {'access_token', 'user_id', 'issued_at', 'expires_at'}:
+        fields = set(result[provider])
+        required = {'access_token', 'user_id', 'issued_at', 'expires_at'}
+        if not required <= fields or fields - required - ({'scopes'} if provider == 'threads' else set()):
             raise RuntimeError('Invalid provider key fields.')
     if set(result['channels']) != {'tg-channel'}:
         raise RuntimeError('Telegram channel ID required.')

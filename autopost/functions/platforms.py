@@ -44,7 +44,16 @@ def key(name, raw=False):
     if name == 'telegram-bot-token':
         return cfg['telegram_bot_token']
     provider = {'instagram-token.json': 'instagram', 'threads-token.json': 'threads', 'telegram-business.json': 'business'}[name]
-    return store.get('tokens/' + provider) or cfg.get(provider, {})
+    return token(cfg, store, provider)
+
+
+def token(cfg, store, provider):
+    saved = store.get('tokens/' + provider) or {}
+    original = cfg.get(provider, {})
+    if provider == 'business':
+        return saved or original
+    saved_time = max(saved.get('issued_at',0), saved.get('refreshed_at',0))
+    return saved if saved and saved_time >= original.get('issued_at',0) else original
 
 
 def local(value):

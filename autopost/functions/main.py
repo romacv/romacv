@@ -724,10 +724,19 @@ def maintenance(config,store,bucket):
         platforms.telegram('setWebhook',{'url':config['webhook_url'],'secret_token':config['webhook_secret'],'allowed_updates':['message','callback_query','business_connection']})
     now = int(time.time())
     for provider,host,prefix in [('instagram','https://graph.instagram.com','ig'),('threads','https://graph.threads.net','th')]:
-        token = store.get('tokens/' + provider) or config.get(provider,{})
+        token = platforms.token(config,store,provider)
         if not token:
             continue
         expiry = token.get('expires_at',0)
+        if expiry <= now:
+            def notify(value):
+                if value.get('day') == now // 86400:
+                    return False
+                value['day'] = now // 86400
+                return True
+            if store.change('token-notifications/' + provider,notify):
+                tell(config,provider + ': нужен новый токен: Generate, setup.sh meta, secret')
+            continue
         try:
             if expiry - now < 30*86400 and now-token.get('refreshed_at',token.get('issued_at',0)) >= 86400:
                 reply = platforms.request('GET',host + '/refresh_access_token',{'grant_type':prefix + '_refresh_token','access_token':token['access_token']})

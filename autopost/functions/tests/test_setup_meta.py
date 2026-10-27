@@ -47,7 +47,7 @@ class SetupMetaTests(unittest.TestCase):
                 self.assertEqual(url.path, '/v25.0/me')
             reply = {'user_id' if instagram else 'id': '123', 'username': self.username}
         elif url.path.endswith('/debug_token'):
-            reply = {'data': {'is_valid': True, 'user_id': '123', 'issued_at': self.issued, 'expires_at': self.expires}}
+            reply = {'data': {'is_valid': True, 'user_id': '123', 'issued_at': self.issued, 'expires_at': self.expires, 'scopes': ['threads_basic', 'threads_content_publish', 'threads_delete']}}
         elif url.path == '/access_token':
             self.assertEqual(params['grant_type'], ['th_exchange_token'])
             self.assertEqual(params['client_secret'], ['test-app-secret'])
@@ -64,7 +64,7 @@ class SetupMetaTests(unittest.TestCase):
         self.write('threads_token.txt', 'test-token')
         self.run_meta()
         path = self.keys / 'threads.json'
-        self.assertEqual(json.loads(path.read_text()), {'access_token': 'test-token', 'user_id': '123', 'issued_at': self.issued, 'expires_at': self.expires})
+        self.assertEqual(json.loads(path.read_text()), {'access_token': 'test-token', 'user_id': '123', 'issued_at': self.issued, 'expires_at': self.expires, 'scopes': ['threads_basic', 'threads_content_publish', 'threads_delete']})
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertFalse((self.keys / 'threads_token.txt').exists())
         self.assertEqual(len(self.calls), 2)
@@ -81,7 +81,7 @@ class SetupMetaTests(unittest.TestCase):
         self.write('threads_app_secret.txt', 'test-app-secret')
         self.run_meta()
         saved = json.loads((self.keys / 'threads.json').read_text())
-        self.assertEqual(saved, {'access_token': 'test-exchanged-token', 'user_id': '123', 'issued_at': 200000, 'expires_at': 5384000})
+        self.assertEqual(saved, {'access_token': 'test-exchanged-token', 'user_id': '123', 'issued_at': 200000, 'expires_at': 5384000, 'scopes': ['threads_basic', 'threads_content_publish', 'threads_delete']})
         self.assertFalse((self.keys / 'threads_token.txt').exists())
         self.assertNotIn('test-app-secret', self.output.getvalue())
         self.assertNotIn('test-exchanged-token', self.output.getvalue())
@@ -182,6 +182,19 @@ class SetupMetaTests(unittest.TestCase):
             with self.assertRaisesRegex(self.namespace['IdsError'], 'without symlinks'):
                 self.run_meta()
         self.network.assert_not_called()
+
+    def test_config_accepts_optional_scopes_only_for_threads(self):
+        provider = {'access_token':'test','user_id':'123','issued_at':100000,'expires_at':5284000}
+        values = {'instagram.json':dict(provider),'threads.json':dict(provider),'channels.json':{'tg-channel':-100123},'github_noreply.txt':'test@users.noreply.github.com','webhook_url.txt':'https://example.com/webhook','worker_url.txt':'https://example.com/worker'}
+        def read(name, raw=False):
+            return values.get(name,'123')
+        self.namespace['key'] = read
+        self.assertNotIn('scopes',self.namespace['config']()['threads'])
+        values['threads.json']['scopes'] = ['threads_basic','threads_delete']
+        self.assertEqual(self.namespace['config']()['threads']['scopes'],values['threads.json']['scopes'])
+        values['instagram.json']['scopes'] = []
+        with self.assertRaisesRegex(RuntimeError,'Invalid provider key fields'):
+            self.namespace['config']()
 
 
 if __name__ == '__main__':
