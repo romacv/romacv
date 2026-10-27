@@ -25,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS, COMMANDS_HINT
+from store import hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import media
 import montage
@@ -210,7 +210,7 @@ def webhook(request):
                     return False
                 saved['received'] = time.time()
                 return True
-            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':COMMANDS_HINT} if store.change('updates/' + str(value['update_id']),receive) else {}
+            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':hint_for(name)} if store.change('updates/' + str(value['update_id']),receive) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
     taps = []
     result = store.intake(value,config,taps)

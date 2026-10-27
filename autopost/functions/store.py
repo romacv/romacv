@@ -26,6 +26,10 @@ POST_HINT = 'Чтобы начать пост, отправь /post.'
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
 
+def hint_for(name):
+    return ('Привет! ' if name == '/start' else '') + COMMANDS_HINT
+
+
 def command(message):
     text = message.get('text') or message.get('caption') or ''
     entities = message.get('entities') or message.get('caption_entities') or []
@@ -80,7 +84,7 @@ def chosen_targets(chosen, config, business):
 
 
 def collect_keyboard(item_id, token, offers=(), chosen=()):
-    toggles = [{'text':('✓ ' if key in chosen else '') + label, 'callback_data':'tg' + str(index) + ':' + item_id + ':' + token} for index, (key, label, targets) in enumerate(GROUPS) if key in offers]
+    toggles = [{'text':('☑︎ ' if key in chosen else '☐ ') + label, 'callback_data':'tg' + str(index) + ':' + item_id + ':' + token} for index, (key, label, targets) in enumerate(GROUPS) if key in offers]
     values = [{'text':label, 'callback_data':verb + ':' + item_id + ':' + token} for verb, label in (('done', 'Готово'), ('cncl', 'Отменить'))]
     if any(len(x['callback_data'].encode()) > 64 for x in values + toggles):
         raise StateError('Callback exceeds 64 bytes')
