@@ -149,6 +149,43 @@ def resync_keyboard(config, store, query):
     retire_taps(config,store,[{'message_id':message['message_id'],'line':None,'item':parts[1],'token':parts[2],'offers':offers,'markup':None}])
 
 
+ALERT_LIMIT = 200
+
+
+def alert_parts(text):
+    lines = text.replace('. ','.\n').split('\n')
+    head = ''
+    while lines and len((head + '\n' + lines[0]).strip()) <= ALERT_LIMIT:
+        head = (head + '\n' + lines.pop(0)).strip()
+    if not head:
+        head, lines = text[:ALERT_LIMIT], [text[ALERT_LIMIT:]]
+    return head, '\n'.join(lines)
+
+
+def callback_reply(config, store, query, result, visible):
+    toast = {'method':'answerCallbackQuery','callback_query_id':query['id']}
+    if visible and result is not None or result is True:
+        return https_fn.Response(json.dumps(toast),content_type='application/json')
+    text = result if isinstance(result,str) else 'Кнопка устарела или уже обработана'
+    parts = (query.get('data') or '').split(':')
+    item = store.get('items/' + parts[1]) if len(parts) == 3 and parts[1] and '/' not in parts[1] else None
+    name = titled(item) if item else ''
+    if name and name not in text:
+        text = 'Пост' + name + ':\n' + text
+    head, rest = alert_parts(text)
+    toast.update(text=head,show_alert=True)
+    def deliver():
+        for attempt in range(2):
+            try:
+                tell(config,rest)
+                return
+            except Exception:
+                pass
+    if rest:
+        bounded(deliver,WEBHOOK_EDIT_SECONDS)
+    return https_fn.Response(json.dumps(toast,ensure_ascii=False),content_type='application/json')
+
+
 def collect_reply(config, store, item_id, item, text):
     offers = offered(config,store.get('tokens/business') or config.get('business'))
     return {'item':item_id,'text':hinted(text,offers),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
@@ -173,11 +210,16 @@ def send_collect(config, store, result, claim=None):
     def swap(value):
         previous = value.get('keyboard_message')
         value['keyboard_message'] = identifier
+        value['keyboard_group'] = result.get('group')
         return previous
     try:
         previous = store.change('items/' + result['item'],swap)
         if previous:
             remove_keyboard(config,{'preview_message':previous})
+        current = store.get('items/' + result['item']) or {}
+        if current.get('status') == 'collecting' and current.get('keyboard_message') == identifier and current.get('revision') != result.get('revision'):
+            fresh = collect_reply(config,store,result['item'],current,collected(current))
+            edit_message(config,identifier,fresh['text'],fresh['reply_markup'])
     except Exception:
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
 
@@ -212,6 +254,7 @@ def upload_mac(config, item, revision, expires):
 @https_fn.on_request(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=60,min_instances=0,max_instances=2,invoker='public')
 def webhook(request):
     config, store, bucket = runtime()
+    platforms.configure(config,store,tempfile.gettempdir())
     cors = {'Access-Control-Allow-Origin':'https://www.resrom.com','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Methods':'POST, OPTIONS','Vary':'Origin'}
     if request.method == 'OPTIONS':
         return https_fn.Response('',status=204,headers=cors)
@@ -259,7 +302,11 @@ def webhook(request):
     query = value.get('callback_query')
     bounded(lambda:retire_taps(config,store,taps) if taps or result is not None or not query else resync_keyboard(config,store,query),WEBHOOK_EDIT_SECONDS)
     if query:
-        return https_fn.Response(json.dumps({'method':'answerCallbackQuery','callback_query_id':query['id'],'text':result if isinstance(result,str) else 'Принято' if result else 'Кнопка устарела или уже обработана'}),content_type='application/json')
+        return callback_reply(config,store,query,result,bool(taps))
+    refresh = result.get('refresh') if isinstance(result,dict) else None
+    if refresh:
+        bounded(lambda:edit_message(config,refresh['message_id'],refresh['text'],refresh['reply_markup']),WEBHOOK_EDIT_SECONDS)
+        return https_fn.Response('{}',content_type='application/json')
     text = result.get('text') if isinstance(result,dict) else result
     if text and isinstance(result,dict) and result.get('item') and result.get('reply_markup'):
         claim = {'lock':threading.Lock(),'abandoned':False,'sent':False,'failed':False}

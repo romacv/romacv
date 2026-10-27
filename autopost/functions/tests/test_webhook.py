@@ -78,7 +78,7 @@ class WebhookTests(unittest.TestCase):
         sent = []
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda method,fields,files=None:sent.append((method,fields))):
             answer = json.loads(self.request(self.toggle('9')).get_data())
-            self.assertEqual(answer['text'],'Отмечено: Сайт')
+            self.assertNotIn('text',answer)
             self.assertEqual(self.store.get('items/item-1')['chosen'],['site'])
             sent.clear()
             self.request(self.toggle('9'))
@@ -95,7 +95,7 @@ class WebhookTests(unittest.TestCase):
             started = app.time.time()
             response = self.request(self.toggle('11'))
         self.assertLess(app.time.time()-started,5)
-        self.assertEqual(json.loads(response.get_data())['text'],'Отмечено: Сайт')
+        self.assertNotIn('text',json.loads(response.get_data()))
 
     def test_slow_collect_send_falls_back_inline_and_a_late_landing_is_deleted(self):
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
@@ -129,6 +129,62 @@ class WebhookTests(unittest.TestCase):
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=telegram):
             app.retire_taps(self.config,self.store,[{'message_id':77,'line':None,'item':'item-1','token':'tok','offers':[],'markup':None}])
         self.assertEqual(len(attempts),2)
+
+    def test_refusal_is_a_multiline_alert_within_200_characters(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'video':{'file_id':'v'}},{'message_id':2,'photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','chosen':['tg-channel']})
+        update = {'update_id':80,'callback_query':{'id':'80','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:item-1:tok'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram') as telegram:
+            answer = json.loads(self.request(update).get_data())
+        self.assertTrue(answer['show_alert'])
+        self.assertLessEqual(len(answer['text']),200)
+
+    def test_stale_button_alerts(self):
+        update = {'update_id':81,'callback_query':{'id':'81','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:gone:tok'}}
+        answer = json.loads(self.request(update).get_data())
+        self.assertTrue(answer['show_alert'])
+        self.assertIn('устарела',answer['text'])
+
+    def test_album_follow_up_refreshes_the_collect_message(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900,'keyboard_group':'g','collect_group':'g'})
+        self.store.put('sessions/inbox',{'collecting':'item-1'})
+        sent = []
+        update = {'update_id':82,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda method,fields,files=None:sent.append((method,fields))):
+            self.request(update)
+        self.assertEqual(sent[0][0],'editMessageText')
+        self.assertEqual(sent[0][1]['message_id'],900)
+        self.assertIn('1 фото',sent[0][1]['text'])
+        self.assertIn('1 клип',sent[0][1]['text'])
+
+    def test_bounded_sends_work_without_patched_configure(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
+        seen = []
+        def telegram(method,fields,files=None):
+            seen.append(app.platforms.CONTEXT.get()[0])
+        with patch.object(app.platforms,'telegram',side_effect=telegram):
+            self.request(self.toggle('90'))
+        self.assertTrue(seen)
+
+    def test_album_parts_arriving_before_the_first_send_completes_make_one_collect_message(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':0,'messages':[],'batch_token':'tok','slug':'item-1'})
+        self.store.put('sessions/inbox',{'collecting':'item-1'})
+        sends = []
+        def telegram(method,fields,files=None):
+            sends.append(method)
+            return {'message_id':5}
+        with patch.object(app.platforms,'telegram',side_effect=telegram), patch.object(app,'send_collect') as collect:
+            for number in (1,2,3):
+                self.request({'update_id':100 + number,'message':{'message_id':number,'media_group_id':'g','photo':[{'file_id':'p' + str(number)}],'from':{'id':1},'chat':{'id':1,'type':'private'}}})
+        self.assertEqual(collect.call_count,1)
+        self.assertNotIn('sendMessage',sends)
+
+    def test_album_after_post_does_not_refresh_the_post_command_message(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900})
+        self.store.put('sessions/inbox',{'collecting':'item-1'})
+        update = {'update_id':92,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
+        with patch.object(app.platforms,'telegram',return_value={'message_id':5}) as telegram:
+            self.request(update)
+        self.assertEqual(telegram.call_args_list[0].args[0],'sendMessage')
 
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})

@@ -347,11 +347,14 @@ class Store:
                     self.put(update_path, {'received':time.time()}, tx)
                     return {'item':item_id, 'revision':item['revision'], 'text':refusal, 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else refusal
                 group = message.get('media_group_id')
-                joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
+                continuing = False
                 if filled:
                     item['messages'].append(body)
                     item['revision'] += 1
                     item['updated'] = time.time()
+                    if group:
+                        continuing = item.get('collect_group') == group
+                        item['collect_group'] = group
                 session['collecting'] = item_id
                 large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
                 if large:
@@ -364,12 +367,17 @@ class Store:
                 if name == '/post' and not opened:
                     reply = 'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.' if not filled else collected(item)
                 elif filled:
-                    reply = None if joined else collected(item)
+                    reply = None if continuing else collected(item)
                 else:
                     reply = 'Пост' + titled(item) + ' уже собирается. Присылай материал и нажми «Готово».'
                 if dropped:
                     reply = 'Отменяю старые черновики: ' + ', '.join(label for entry, label in dropped) + '.\n' + reply
-                return {'item':item_id, 'revision':item['revision'], 'text':hinted(reply, offers), 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
+                markup = collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))
+                if continuing and not dropped:
+                    if item.get('keyboard_message') and item.get('keyboard_group') == group:
+                        return {'item':item_id, 'revision':item['revision'], 'text':None, 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers), 'reply_markup':markup}}
+                    return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
+                return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers), 'reply_markup':markup}
             slug = session.get('current')
             target = self.get('specs/' + slug, tx) if slug else None
             pending = self.get('items/' + slug, tx) if slug and not target else None
