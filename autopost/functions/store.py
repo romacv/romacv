@@ -173,6 +173,21 @@ def deleting(saved, item):
     return 'Готовлю удаление поста' + named(saved, item) + '. Превью пришлю сюда.'
 
 
+def progress(item, job, now):
+    name = 'Монтаж' if item.get('montage') else 'Превью'
+    hint = ' Если нужна правка, напиши её утверждением.'
+    state = (job or {}).get('state')
+    if state == 'failed':
+        return name + titled(item) + ': сборка не удалась, скоро напишу.' + hint
+    if state == 'done':
+        return name + titled(item) + ' идёт: собираю превью.' + hint
+    stage = (job or {}).get('progress')
+    if not stage or state not in ('queued', 'running'):
+        return name + titled(item) + ' идёт: ' + ('составляю план.' if item.get('montage') else 'готовлю превью.') + hint
+    seconds = int(now - stage['since'])
+    return name + titled(item) + ' идёт: ' + stage['label'].lower() + ', ' + str(seconds // 60) + ':' + format(seconds % 60, '02') + '.' + hint
+
+
 def added(item, note):
     note = ' '.join(note.split())
     return 'Добавил к черновику' + titled(item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
@@ -397,6 +412,10 @@ class Store:
                     return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
                 return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers), 'reply_markup':markup}
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
+                if note and note.rstrip().endswith('?') and not photo and not message.get('voice'):
+                    job = self.get('renders/' + pending['render'], tx) if pending.get('render') else None
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return None if once() else progress(pending, job, time.time())
                 edit, shot = self.edit_note(message)
                 silent = once(False)
                 self.add_edit(tx, pending, slug, edit, shot, identifier)
@@ -489,7 +508,7 @@ class Store:
             return None
         base = (message.get('text') or '').replace('\n' + CHOICE_HINT, '')
         taps.append({'message_id':message['message_id'], 'text':base, 'line':line, 'markup':markup})
-        return {'id':message['message_id'], 'text':base}
+        return {'id':message['message_id'], 'text':base, 'line':line}
 
     def edit_note(self, message):
         note = (message.get('text') or message.get('caption') or '').strip()

@@ -90,6 +90,10 @@ def activity(config, kind, stop):
     threading.Thread(target=contextvars.copy_context().run,args=(beat,),daemon=True).start()
 
 
+def loader_for(config, record):
+    return {'chat_id':config['roman_chat_id'],'action':'upload_video',**({'message_id':record['id'],'text':(record['text'] + '\n' + (record.get('line') or '')).strip()} if record else {})}
+
+
 def edit_message(config, identifier, text, markup=None):
     fields = {'chat_id':config['roman_chat_id'],'message_id':identifier,'text':text}
     if markup is not None:
@@ -615,6 +619,8 @@ def draft(config,store,bucket,payload,directory):
     item = store.claim_item(payload['item'],payload['revision'])
     if not item:
         return
+    if item.get('montage') and item.get('status_message'):
+        edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа').strip())
     inputs = media.intake(bucket,payload['item'],item,config,directory)
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
@@ -735,7 +741,7 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
     formats = sorted({CLIP_FORMATS[t] for t in spec['targets'] if t in CLIP_FORMATS})
-    job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued',**({'edl':edl} if edl else {})}
+    job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message')),**({'edl':edl} if edl else {})}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
@@ -870,7 +876,7 @@ def plan_montage(config,store,bucket,payload,directory):
         return
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
+    job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
     start_job(project,identifier)
@@ -884,7 +890,7 @@ def plan_montage(config,store,bucket,payload,directory):
 def start_preparation(config,store,bucket,payload,item,inputs,target=None):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
+    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
@@ -1046,7 +1052,7 @@ def start_final(config,store,bucket,saved):
     item = store.get('items/' + saved['item'])
     draft = store.get('renders/' + item['render'])
     identifier = secrets.token_hex(16)
-    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued'}
+    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','loader':loader_for(config,saved.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier))
     start_job(job['project'],identifier)

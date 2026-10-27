@@ -106,6 +106,7 @@ def infra():
     cloud('tasks', 'queues', 'update', 'worker', '--location=' + REGION, '--max-attempts=1', '--max-concurrent-dispatches=1')
     ensure(('pubsub', 'topics', 'describe', 'budget-alerts'), ('pubsub', 'topics', 'create', 'budget-alerts'))
     ensure(('secrets', 'describe', 'AUTOPOST'), ('secrets', 'create', 'AUTOPOST', '--replication-policy=automatic'))
+    ensure(('secrets', 'describe', 'AUTOPOST_NOTIFY'), ('secrets', 'create', 'AUTOPOST_NOTIFY', '--replication-policy=automatic'))
     policies()
 
 
@@ -136,6 +137,7 @@ def iam():
         bind(('iam', 'service-accounts', 'add-iam-policy-binding', RUNTIME), account, 'roles/iam.serviceAccountUser')
     grant(BUDGET, budget)
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST'), RUNTIME, 'roles/secretmanager.secretAccessor')
+    bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST_NOTIFY'), RENDER, 'roles/secretmanager.secretAccessor')
     bind(('iam', 'service-accounts', 'add-iam-policy-binding', RUNTIME), RUNTIME, signer)
     if cloud('run', 'services', 'describe', 'worker', '--region=' + REGION, missing=True) is not None:
         bind(('run', 'services', 'add-iam-policy-binding', 'worker', '--region=' + REGION), RUNTIME, 'roles/run.invoker')
@@ -354,9 +356,15 @@ def secret():
     say('After verifying all deployed bindings, destroy the previous unused version manually in Console; free tier allows 6 active versions: https://console.cloud.google.com/security/secret-manager/secret/AUTOPOST/versions?project=resromcom-493b4')
 
 
+def notify():
+    say('Add an AUTOPOST_NOTIFY version from the owner telegram_bot_token.txt without printing it; AUTOPOST stays unchanged')
+    cloud('secrets', 'versions', 'add', 'AUTOPOST_NOTIFY', '--data-file=-', data=key('telegram_bot_token.txt').encode())
+    say('AUTOPOST_NOTIFY updated. Order: infra, notify, iam, render. Rerun notify only if the bot token changes, then redeploy render.')
+
+
 def render():
     say('Build source and create/update private autopost-render job: 2 CPU, 2 GiB, 1800 s, one task, no retries; do not execute')
-    cloud('run', 'jobs', 'deploy', 'autopost-render', '--source=autopost/render', '--region=' + REGION, '--service-account=' + RENDER, '--cpu=2', '--memory=2Gi', '--task-timeout=1800s', '--tasks=1', '--parallelism=1', '--max-retries=0')
+    cloud('run', 'jobs', 'deploy', 'autopost-render', '--source=autopost/render', '--region=' + REGION, '--service-account=' + RENDER, '--cpu=2', '--memory=2Gi', '--task-timeout=1800s', '--tasks=1', '--parallelism=1', '--max-retries=0', '--set-secrets=TELEGRAM_BOT_TOKEN=AUTOPOST_NOTIFY:latest')
     say('Owner: rerun infra for cleanup and iam for job invocation grants.')
 
 
@@ -398,9 +406,9 @@ def publish_budget_sample():
     say('Sample published. Inspect disable-billing logs for the simulated result; local source does not prove deployed simulation mode.')
 
 
-commands = {'apis': apis, 'infra': infra, 'iam': iam, 'ids': ids, 'meta': meta, 'secret': secret, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
+commands = {'apis': apis, 'infra': infra, 'iam': iam, 'ids': ids, 'meta': meta, 'secret': secret, 'notify': notify, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
 if len(sys.argv) != 2 or sys.argv[1] not in commands:
-    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|ids|meta|secret|render|webhook|budget-test}')
+    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|ids|meta|secret|notify|render|webhook|budget-test}')
 try:
     commands[sys.argv[1]]()
 except IdsError as error:

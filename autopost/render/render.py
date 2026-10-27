@@ -6,6 +6,10 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import threading
+import time
+import urllib.parse
+import urllib.request
 import uuid
 
 from google.cloud import storage, firestore, tasks_v2
@@ -167,6 +171,7 @@ def put(bucket, path, name):
 
 
 def prepare(bucket,job,root):
+    stage('Готовлю звук и кадры')
     from PIL import Image, ImageDraw
     outputs = {'sources':{},'durations':{},'audio':{},'sheets':[]}
     if sum(m['size'] for m in job['sources'].values()) > 1024*1024*1024:
@@ -254,6 +259,7 @@ def timeline_groups(targets, draft):
 
 def render(bucket, job, root):
     draft = job.get('mode') == 'draft'
+    stage('Скачиваю материал')
     width, height = frame_size(draft)
     groups = timeline_groups(job['edl']['targets'],draft)
     leaders = {name:leader for leader,names in groups.items() for name in names}
@@ -266,6 +272,7 @@ def render(bucket, job, root):
         if digest_file(path) != manifest['sha256']:
             raise RuntimeError('Source hash changed')
         sources[source] = path
+    stage('Рендерю черновик' if draft else 'Собираю финал')
     outputs, joined_files = {}, {}
     for target in groups:
         timeline = job['edl']['targets'][target]
@@ -365,6 +372,7 @@ def clip_arguments(source, fmt, output):
 
 
 def render_clips(bucket, job, root):
+    stage('Режу клипы')
     outputs = {'clips':{}}
     for stem, manifest in job['sources'].items():
         source = root / (stem + '.mp4')
@@ -384,6 +392,79 @@ def render_clips(bucket, job, root):
     if job.get('edl'):
         outputs.update(render(bucket,job,root))
     return outputs
+
+
+class Loader:
+    def __init__(self, job, reference):
+        self.settings = job.get('loader') or {}
+        self.token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        self.reference = reference
+        self.label = ''
+        self.began = time.time()
+        self.shown = None
+        self.done = threading.Event()
+        self.thread = None
+
+    def call(self, method, fields):
+        data = urllib.parse.urlencode({'chat_id':self.settings['chat_id'],**fields}).encode()
+        urllib.request.urlopen('https://api.telegram.org/bot' + self.token + '/' + method,data=data,timeout=10).close()
+
+    def text(self):
+        seconds = int(time.time() - self.began)
+        return (self.settings.get('text','') + '\n' + self.label + ': ' + f'{seconds//60}:{seconds%60:02}').strip()
+
+    def edit(self, text):
+        if self.settings.get('message_id') and text != self.shown:
+            self.call('editMessageText',{'message_id':self.settings['message_id'],'text':text})
+            self.shown = text
+
+    def beat(self):
+        ticks = 0
+        while not self.done.wait(4):
+            ticks += 1
+            try:
+                if self.done.is_set():
+                    return
+                self.call('sendChatAction',{'action':self.settings.get('action','upload_video')})
+                if ticks % 2 == 0 and self.label and not self.done.is_set():
+                    self.edit(self.text())
+            except Exception:
+                pass
+
+    def stage(self, label):
+        self.label = label
+        try:
+            self.reference.update({'progress':{'label':label,'since':self.began}})
+        except Exception:
+            pass
+        try:
+            if self.token and self.settings.get('chat_id'):
+                self.edit(self.text())
+        except Exception:
+            pass
+
+    def start(self):
+        if self.token and self.settings.get('chat_id'):
+            self.thread = threading.Thread(target=self.beat,daemon=True)
+            self.thread.start()
+
+    def stop(self, failed=False):
+        self.done.set()
+        if self.thread:
+            self.thread.join(25)
+        if failed:
+            try:
+                self.edit((self.settings.get('text','') + '\nМонтаж не удался.').strip())
+            except Exception:
+                pass
+
+
+LOADER = None
+
+
+def stage(label):
+    if LOADER:
+        LOADER.stage(label)
 
 
 def enqueue(job, success):
@@ -410,13 +491,18 @@ def main():
         return True
     if not claim(transaction):
         return
+    global LOADER
+    LOADER = Loader(job,reference)
+    LOADER.start()
     success = False
     try:
         with tempfile.TemporaryDirectory() as directory:
             outputs = {'prepare':prepare,'clips':render_clips}.get(job.get('mode'),render)(storage.Client().bucket(job['bucket']),job,Path(directory))
+        LOADER.stop()
         reference.update({'state':'done','outputs':outputs})
         success = True
     except Exception:
+        LOADER.stop(True)
         reference.update({'state':'failed','error':'Render failed; inspect inputs before retry'})
     enqueue(job,success)
 

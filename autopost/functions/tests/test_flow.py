@@ -256,6 +256,27 @@ class CollectingTests(unittest.TestCase):
                 self.assertNotIn('collecting',store.get('sessions/inbox'))
                 self.assertIsNone(self.tap(store,'done','item-10',token,13))
 
+    def test_progress_question_during_montage_gets_status_and_adds_no_edit(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        self.video(store,11,'Jakarta Chinatown')
+        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        store.put('renders/r1',{'state':'running','progress':{'label':'Рендерю черновик','since':0}})
+        store.change('items/item-10',lambda value:value.update(render='r1'))
+        reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Прогресс ?'}},self.config)
+        self.assertIn('рендерю черновик',reply)
+        self.assertEqual(store.get('items/item-10').get('edits',[]),[])
+
+    def test_progress_question_on_a_photo_post_uses_no_montage_words(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
+        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Что там?'}},self.config)
+        self.assertIn('готовлю превью',reply)
+        self.assertNotIn('Монтаж',reply)
+        self.assertEqual(store.get('items/item-10').get('edits',[]),[])
+
     def test_done_accepts_photos_with_clips_and_pins_then_unpins_the_status(self):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')

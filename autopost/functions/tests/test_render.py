@@ -18,6 +18,19 @@ with patch.dict(sys.modules,{'google.cloud.tasks_v2':Mock()}):
     render = importlib.import_module('render')
 
 
+class LoaderTests(unittest.TestCase):
+    def test_stage_edits_the_status_message_and_failure_replaces_it(self):
+        with patch.dict(render.os.environ,{'TELEGRAM_BOT_TOKEN':'t'}):
+            loader = render.Loader({'loader':{'chat_id':1,'message_id':5,'text':'Монтирую 1 клип'}},Mock())
+        calls = []
+        loader.call = lambda method,fields:calls.append((method,fields))
+        loader.stage('Рендерю черновик')
+        loader.stop(True)
+        edits = [f['text'] for m,f in calls if m == 'editMessageText']
+        self.assertTrue(edits[0].startswith('Монтирую 1 клип\nРендерю черновик: 0:0'))
+        self.assertEqual(edits[-1],'Монтирую 1 клип\nМонтаж не удался.')
+
+
 class RenderSettingsTests(unittest.TestCase):
     def test_draft_is_small_and_fast_final_keeps_quality(self):
         arguments = render.encode_arguments('tg-story',True)
