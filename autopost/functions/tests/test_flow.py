@@ -1,0 +1,200 @@
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+FUNCTIONS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(FUNCTIONS))
+from fake_firestore import FakeFirestore
+import platforms as p
+import main as app
+from store import Store
+
+PLAIN = {'roman_user_id':1,'roman_chat_id':1}
+POST = {'type':'bot_command','offset':0,'length':5}
+
+
+def post_update(identifier):
+    message = {'message_id':identifier,'from':{'id':1},'chat':{'id':1,'type':'private'},'text':'/post','entities':[POST]}
+    return {'update_id':identifier,'message':message}
+
+
+class EditFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_user_id':1, 'roman_chat_id':1}
+        p.configure(self.config, self.store, self.root)
+        self.spec = json.loads((FUNCTIONS.parent / 'examples/example-work.json').read_text())
+        self.spec.update(targets=['tg-channel','threads'], at='2020-01-01T00:00:00+00:00')
+        self.spec.pop('blog')
+        self.assets = {target:{} for target in self.spec['targets']}
+        self.digest = app.asset_hash(self.spec,self.assets)
+        self.store.put('items/item-1', {'status':'previewed','revision':1,'messages':[]})
+        self.store.put('specs/example', {'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
+
+    def callback(self, verb='pub', digest=None, identifier=1):
+        return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':f'{verb}:example:{(digest or self.digest)[:8]}'}},self.config)
+
+    def test_draft_claim_never_repeats_running_or_old_revision(self):
+        self.store.put('items/job',{'status':'queued','revision':2})
+        self.assertFalse(self.store.claim_item('job',1))
+        self.assertTrue(self.store.claim_item('job',2))
+        self.assertFalse(self.store.claim_item('job',2))
+
+    def test_edit_invalidates_approval_and_queues_revision(self):
+        self.callback('edit')
+        self.assertEqual(self.store.get('sessions/inbox')['awaiting'],{'kind':'edit','slug':'example'})
+        result = self.store.intake({'update_id':42,'message':{'message_id':10,'text':'Make shorter'}},self.config)
+        self.assertTrue(result)
+        self.assertNotIn('awaiting',self.store.get('sessions/inbox'))
+        saved = self.store.get('specs/example')
+        self.assertEqual((saved['state'],saved['hash']),('drafting',''))
+        self.assertEqual(self.store.get('items/item-1')['edits'],['Make shorter'])
+        self.assertIsNotNone(self.store.get('outbox/edit-42'))
+
+
+class PreviewRaceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1}
+        self.spec = {'slug':'album','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-channel'],'copy':{'tg-channel':'Text'},'approval':{}}
+        self.assets = {'tg-channel':{}}
+        self.store.put('items/item-1',{'status':'drafting','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album'})
+
+    def message(self, identifier, **fields):
+        return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,**fields}},self.config)
+
+    def preview(self, during=None, revision=1):
+        sent = []
+        def telegram(method,fields,files=None):
+            sent.append((method,fields))
+            if method == 'sendMessage' and during:
+                during()
+            return {'message_id':100 + len(sent)}
+        with patch.object(app.platforms,'telegram',side_effect=telegram), patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
+            app.preview(self.config,self.store,None,'item-1',self.spec,self.assets,self.root,revision=revision)
+        return sent
+
+    def queue_edit(self):
+        self.store.atomic(lambda tx:self.store.queue_edit(tx,'album',self.store.get('specs/album',tx),'правка',None,'e1',{}))
+
+    def test_edit_queued_during_preview_wins_and_the_stale_keyboard_is_removed(self):
+        sent = self.preview(self.queue_edit)
+        saved = self.store.get('specs/album')
+        self.assertEqual((saved['state'],saved['hash']),('drafting',''))
+        item = self.store.get('items/item-1')
+        self.assertEqual((item['status'],item['revision']),('queued',2))
+        self.assertIsNotNone(self.store.get('outbox/edit-e1'))
+        self.assertEqual(sent[-1][0],'editMessageReplyMarkup')
+        self.assertEqual(sent[-1][1]['reply_markup'],{'inline_keyboard':[]})
+        self.assertNotIn('current',self.store.get('sessions/inbox') or {})
+
+
+class DiscardTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.store.put('sessions/inbox',{'current':'alpha','awaiting':{'kind':'edit','slug':'alpha'}})
+        self.store.put('items/item-a',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Alpha'}]})
+        self.store.put('specs/alpha',{'item':'item-a','state':'previewed','spec':{'slug':'alpha','copy':{}},'preview_message':30,'hash':'abcdefgh'})
+        self.store.put('items/item-b',{'status':'drafting','revision':1,'messages':[{'message_id':2,'text':'Beta'}]})
+        self.store.put('specs/beta',{'item':'item-b','state':'drafting','spec':{'slug':'beta','copy':{}},'hash':'12345678'})
+
+    def test_post_announces_and_rejects_open_drafts(self):
+        result = self.store.intake(post_update(20),PLAIN)
+        for slug, item in (('alpha','item-a'),('beta','item-b')):
+            self.assertEqual(self.store.get('specs/' + slug)['state'],'rejected')
+            self.assertEqual(self.store.get('items/' + item)['status'],'rejected')
+        session = self.store.get('sessions/inbox')
+        self.assertEqual(session['collecting'],'item-20')
+        self.assertNotIn('awaiting',session)
+        self.assertNotIn('current',session)
+        job = self.store.get('outbox/discard-20-alpha')['payload']
+        self.assertEqual((job['step'],job['message']),('remove-keyboard',30))
+
+    def test_late_preview_of_a_discarded_draft_is_dropped(self):
+        self.store.intake(post_update(20),PLAIN)
+        with patch.object(app.platforms,'telegram') as telegram:
+            app.preview(PLAIN,self.store,None,'item-b',{'slug':'beta','targets':['tg-channel'],'copy':{'tg-channel':'x'}},{},Path('.'))
+        telegram.assert_not_called()
+        self.assertEqual(self.store.get('specs/beta')['state'],'rejected')
+
+
+class CollectingTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1,'webhook_secret':'test-secret'}
+
+    def video(self, store, identifier, caption=None):
+        message = {'message_id':identifier,'video':{'file_id':'v','file_size':100}}
+        if caption:
+            message['caption'] = caption
+        return store.intake({'update_id':identifier,'message':message},self.config)
+
+    def post(self, store, identifier, **extra):
+        message = {'message_id':identifier,'entities' if 'text' in extra else 'caption_entities':[{'type':'bot_command','offset':0,'length':5}],**extra}
+        return store.intake({'update_id':identifier,'message':message},self.config)
+
+    def tap(self, store, verb, item, token, identifier):
+        return store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':verb + ':' + item + ':' + token}},self.config)
+
+    def test_done_queues_draft_or_montage_by_video(self):
+        for clips,step in ((False,'draft'),(True,'montage')):
+            with self.subTest(step=step):
+                store = Store(FakeFirestore())
+                self.post(store,10,text='/post')
+                if clips:
+                    self.video(store,11,'Montage reels about Jakarta Chinatown')
+                else:
+                    store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
+                token = store.get('items/item-10')['batch_token']
+                self.tap(store,'done','item-10',token,12)
+                item = store.get('items/item-10')
+                self.assertEqual((item['status'],item['montage']),('queued',clips))
+                self.assertEqual(store.get('outbox/draft-12')['payload'],{'item':'item-10','step':step,'revision':item['revision']})
+                self.assertNotIn('collecting',store.get('sessions/inbox'))
+                self.assertIsNone(self.tap(store,'done','item-10',token,13))
+
+    def test_cancel_drops_item_and_stale_tokens_are_rejected(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        token = store.get('items/item-10')['batch_token']
+        self.assertIsNone(self.tap(store,'done','item-10','wrongtok',11))
+        self.assertEqual(store.get('items/item-10')['status'],'collecting')
+        self.assertTrue(self.tap(store,'cncl','item-10',token,12))
+        self.assertEqual(store.get('items/item-10')['status'],'rejected')
+        self.assertNotIn('collecting',store.get('sessions/inbox'))
+        self.assertIsNone(self.tap(store,'done','item-10',token,13))
+        self.assertIsNone(store.get('outbox/draft-13'))
+        store.intake({'update_id':14,'message':{'message_id':14,'text':'Привет'}},self.config)
+        self.assertIsNone(store.get('items/item-14'))
+
+
+class RecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1}
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','edits':[]})
+        self.store.put('specs/album',{'state':'previewed','hash':'abcdefgh1','item':'item-1','spec':{'targets':['tg-channel']},'preview_message':100})
+        self.store.put('published-messages/100',{'slug':'album'})
+
+    def test_stuck_running_spec_survives_a_failed_notification(self):
+        self.store.put('specs/album',{'state':'running','hash':'abcdefgh1','started_at':0,'item':'item-1','spec':{'copy':{}}})
+        with patch.object(app,'tell',side_effect=RuntimeError('telegram down')):
+            with self.assertRaises(RuntimeError):
+                app.recover_running(self.config,self.store)
+        with patch.object(app,'tell') as tell:
+            app.recover_running(self.config,self.store)
+        tell.assert_called_once()
+        self.assertEqual(self.store.get('specs/album')['state'],'partial')
+
+
+if __name__ == '__main__':
+    unittest.main()

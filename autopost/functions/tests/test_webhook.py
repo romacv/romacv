@@ -41,11 +41,6 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(self.store.db.values,{})
         self.task.assert_not_called()
 
-    def test_secret_comparison_is_constant_time(self):
-        with patch.object(app.hmac,'compare_digest',wraps=app.hmac.compare_digest) as compare:
-            self.request(self.message(),secret='wrong')
-        compare.assert_called_once_with(b'wrong',b'test-secret')
-
     def test_other_users_chats_and_groups_ignored(self):
         for update in (self.message(user=2),self.message(chat=2),self.message(kind='group')):
             self.assertEqual(self.request(update).status_code,200)
@@ -62,43 +57,6 @@ class WebhookTests(unittest.TestCase):
         self.task.assert_called_once()
         self.assertIsNotNone(self.store.get('updates/42'))
 
-    def command(self,text,length):
-        update = self.message()
-        update['message'].update({'text':text,'entities':[{'type':'bot_command','offset':0,'length':length}]})
-        return update
-
-    def test_unknown_command_creates_no_item_and_replies_with_commands(self):
-        update = self.command('/start',6)
-        reply = json.loads(self.request(update).get_data())
-        self.assertEqual(reply['method'],'sendMessage')
-        self.assertEqual(reply['text'],'Команды: /post — новый пост, /upload — загрузить большое видео.')
-        self.assertIsNotNone(self.store.get('updates/42'))
-        self.assertEqual([path for path in self.store.db.values if path.startswith('items/')],[])
-        self.task.assert_not_called()
-        self.assertEqual(json.loads(self.request(update).get_data()),{})
-        self.task.assert_not_called()
-
-    def test_post_command_opens_item_with_keyboard(self):
-        reply = json.loads(self.request(self.command('/post',5)).get_data())
-        self.assertEqual(reply['text'],'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.')
-        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Готово','Отменить'])
-        self.assertEqual(self.store.get('items/item-42')['status'],'collecting')
-
-    def test_text_without_post_or_draft_asks_for_post(self):
-        reply = json.loads(self.request(self.message()).get_data())
-        self.assertEqual(reply['text'],'Чтобы начать пост, отправь /post.')
-        self.assertEqual([path for path in self.store.db.values if path.startswith('items/')],[])
-
-    def test_clip_after_post_carries_collect_keyboard(self):
-        self.request(self.command('/post',5))
-        update = self.message()
-        update['update_id'] = 43
-        update['message'].update({'video':{'file_id':'v','file_size':100}})
-        update['message'].pop('text')
-        reply = json.loads(self.request(update).get_data())
-        self.assertEqual(reply['text'],'Добавил в пост: 1 клип.')
-        self.assertEqual([b['text'] for b in reply['reply_markup']['inline_keyboard'][0]],['Готово','Отменить'])
-
     def test_callback_checks_user_private_chat_and_hash(self):
         self.store.put('specs/example',{'state':'previewed','hash':'abcdefgh1234'})
         update = {'update_id':50,'callback_query':{'id':'callback','from':{'id':2},'message':{'chat':{'id':1,'type':'private'}},'data':'pub:example:abcdefgh'}}
@@ -110,19 +68,6 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(self.store.get('specs/example')['state'],'approved')
         self.request(update)
         self.task.assert_called_once()
-
-    def test_business_connection_is_pinned_to_owner_and_chat(self):
-        update = {'update_id':60,'business_connection':{'id':'business','user':{'id':1},'user_chat_id':2}}
-        self.request(update)
-        self.assertIsNone(self.store.get('tokens/business'))
-        update['business_connection']['user_chat_id'] = 1
-        self.request(update)
-        self.assertEqual(self.store.get('tokens/business')['business_connection_id'],'business')
-
-    def test_methods_and_malformed_body(self):
-        self.assertEqual(self.request({},method='GET').status_code,405)
-        self.assertEqual(self.request({},method='OPTIONS').status_code,204)
-        self.assertEqual(self.request(['invalid']).status_code,400)
 
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})

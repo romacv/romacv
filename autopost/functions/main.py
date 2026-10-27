@@ -25,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, hinted, NAMES, COMMANDS, COMMANDS_HINT
+from store import Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS, COMMANDS_HINT
 import drafter
 import media
 import montage
@@ -73,7 +73,6 @@ def superseded(store, payload):
 
 
 ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo'}
-UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужен текст без видео'}
 
 
 def activity(config, kind, stop):
@@ -140,18 +139,6 @@ def send_collect(config, store, result):
             remove_keyboard(config,{'preview_message':previous})
     except Exception:
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
-
-
-def unsupported(targets, photos, video):
-    missing = {'ig-reel':not video,'ig-post':video or not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video}
-    return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
-
-
-SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
-
-
-def skipped_lines(reasons):
-    return ['Не пойдёт в ' + SKIP_NAMES[target] + ': ' + reason + '.' for target,reason in reasons.items()]
 
 
 def tell(config, text, **extra):
@@ -277,11 +264,22 @@ def pages(parts):
     return result + [current]
 
 
+class Withdrawn(Exception):
+    pass
+
+
 def preview(config, store, bucket, item_id, spec, assets, directory, basis=None, revision=None):
     scoped = {}
+    last = []
+    def withdrawn():
+        item = store.get('items/' + item_id) or {}
+        return item.get('status') == 'rejected' or revision is not None and item.get('revision') != revision
     def send(method, fields, files=None, targets=None):
+        if withdrawn():
+            raise Withdrawn()
         reply = platforms.telegram(method,fields,files)
         for position, message in enumerate(reply if isinstance(reply,list) else [reply]):
+            last[:] = [(message['message_id'],method)]
             store.put('published-messages/' + str(message['message_id']),{'slug':spec['slug']})
             shown_for = targets[position] if targets else []
             if shown_for:
@@ -289,17 +287,47 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         return reply
     def say(text, targets=None, **extra):
         return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra},targets=[targets] if targets else None)
-    previous = store.get('specs/' + spec['slug']) or {}
-    current = store.get('items/' + item_id) or {}
-    if current.get('status') == 'rejected' or previous.get('state') == 'rejected' and not previous.get('operation'):
-        return
-    if previous.get('state') not in (None,'drafting','needs-edit'):
-        raise StateError('Existing preview or publication cannot be overwritten')
     digest = asset_hash(spec,assets if basis is None else basis)
     saved = {'item':item_id,'spec':spec,'assets':assets,'hash':digest,'state':'drafting','results':{},'errors':{},'attempts':{}}
     if basis is not None:
         saved['basis'] = basis
-    store.put('specs/' + spec['slug'],saved)
+    started = []
+    def begin(tx):
+        previous = store.get('specs/' + spec['slug'],tx) or {}
+        current = store.get('items/' + item_id,tx) or {}
+        if current.get('status') == 'rejected' or previous.get('state') == 'rejected' and not previous.get('operation') or revision is not None and current.get('revision') != revision:
+            return False
+        if previous.get('state') not in (None,'drafting','needs-edit'):
+            raise StateError('Existing preview or publication cannot be overwritten')
+        started[:] = [current]
+        store.put('specs/' + spec['slug'],saved,tx)
+        return True
+    if not store.atomic(begin):
+        return
+    current = started[0]
+    try:
+        offer(config,store,bucket,item_id,spec,assets,directory,basis,revision,saved,digest,current,send,say,last,scoped)
+    except Withdrawn:
+        cancel_draft(config,store,item_id,spec['slug'],digest,last)
+
+
+def cancel_draft(config, store, item_id, slug, digest, last):
+    if (store.get('items/' + item_id) or {}).get('status') != 'rejected':
+        return False
+    def reject(value):
+        if value.get('state') == 'drafting' and value.get('hash') == digest:
+            value['state'] = 'rejected'
+    store.change('specs/' + slug,reject)
+    if last:
+        identifier, method = last[0]
+        try:
+            platforms.telegram('editMessageText' if method == 'sendMessage' else 'editMessageCaption',{'chat_id':config['roman_chat_id'],'message_id':identifier,**({'text':'Черновик отменён.'} if method == 'sendMessage' else {'caption':'Черновик отменён.'}),'reply_markup':{'inline_keyboard':[]}})
+        except Error:
+            pass
+    return True
+
+
+def offer(config, store, bucket, item_id, spec, assets, directory, basis, revision, saved, digest, current, send, say, last, scoped):
     platforms.telegram_identity()
     files, found = [], {}
     for target in spec['targets']:
@@ -357,10 +385,11 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         store.put('sessions/inbox',session,tx)
         return True
     if not store.atomic(commit):
-        try:
-            remove_keyboard(config,{'preview_message':message['message_id']})
-        except Error:
-            pass
+        if not cancel_draft(config,store,item_id,spec['slug'],digest,last):
+            try:
+                remove_keyboard(config,{'preview_message':message['message_id']})
+            except Error:
+                pass
     else:
         finish_status(config,shown_status[0] if shown_status else None,'Черновик' + post_name(store,saved) + ' готов.')
 
@@ -1036,7 +1065,12 @@ def apply_fix(config,store,bucket,slug,directory):
         if published_targets[target].get('awaiting_republish'):
             status += '; удалено, ожидает повторной публикации'
         lines.append(label + ': ' + status + ' ' + (url or 'ссылка не получена'))
-    extra = {'reply_markup':buttons(slug,saved['hash'],True)} if state == 'partial' else {}
+    extra = {}
+    if not deleted:
+        markup = buttons(saved['source'],source['hash'],published=True)
+        if state == 'partial':
+            markup['inline_keyboard'][0] = buttons(slug,saved['hash'],True)['inline_keyboard'][0] + markup['inline_keyboard'][0]
+        extra = {'reply_markup':markup}
     message = tell(config,'\n'.join(lines),**extra)
     store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
     finish_status(config,saved.get('status_message'),'Готово.' if state == 'done' else 'Готово не везде.')
@@ -1090,6 +1124,14 @@ def handle_worker(request):
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
                     send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
+            elif step == 'restore-keyboard':
+                restored = store.get('specs/' + payload['slug']) or {}
+                if restored.get('state') in ('done','partial') and not restored.get('deleted') and restored.get('hash'):
+                    try:
+                        platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':payload['message'],'reply_markup':buttons(payload['slug'],restored['hash'],published=True)})
+                    except Error as failure:
+                        if not getattr(failure,'not_modified',False):
+                            raise
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)

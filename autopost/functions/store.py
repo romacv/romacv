@@ -61,6 +61,19 @@ def offered(config, business):
     return [key for key, label, targets in GROUPS if any(have[t] for t in targets)]
 
 
+UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужен текст без видео'}
+SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
+
+
+def unsupported(targets, photos, video):
+    missing = {'ig-reel':not video,'ig-post':video or not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video}
+    return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
+
+
+def skipped_lines(reasons):
+    return ['Не пойдёт в ' + SKIP_NAMES[target] + ': ' + reason + '.' for target,reason in reasons.items()]
+
+
 def chosen_targets(chosen, config, business):
     have = configured(config, business)
     return [t for key, label, targets in GROUPS if key in chosen for t in targets if have[t]]
@@ -256,7 +269,11 @@ class Store:
             photo = message.get('photo')
             dropped = []
             if name == '/post':
-                session.pop('awaiting', None)
+                abandoned = session.pop('awaiting', None)
+                if abandoned and abandoned.get('kind') == 'fix':
+                    source = self.get('specs/' + abandoned['slug'], tx)
+                    if self.fixable(source) and source.get('fix_keyboard'):
+                        self.job(tx, {'step':'restore-keyboard', 'slug':abandoned['slug'], 'message':source['fix_keyboard']}, 'restore-' + identifier)
                 dropped = self.open_drafts(tx, session)
                 if dropped:
                     session.pop('current', None)
@@ -297,12 +314,15 @@ class Store:
                     return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
                 group = message.get('media_group_id')
                 joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
+                if filled and isinstance(body.get('photo'), list) and body['photo'] and isinstance(update.get('message', {}).get('document'), dict) and body['photo'][-1].get('file_size', 0) > 20*1024*1024:
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return {'item':item_id, 'revision':item['revision'], 'text':'Картинка больше 20 МБ: пришли её как фото или сожми.', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))}
                 if filled:
                     item['messages'].append(body)
                     item['revision'] += 1
                     item['updated'] = time.time()
                 session['collecting'] = item_id
-                large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (imaged(m).get('photo') or [{}])[-1])))
+                large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}),))
                 if large:
                     item['waiting_upload'] = True
                     session['upload_item'] = item_id
@@ -366,6 +386,7 @@ class Store:
         for entry in posts.values():
             if entry['item'] is None:
                 entry['item'] = self.get('items/' + entry['id'], tx)
+        posts = {k: v for k, v in posts.items() if (v['item'] or {}).get('status') != 'rejected'}
         return [(entry, (named(entry['specs'][0][1] if entry['specs'] else {}, entry['item']) or ' без названия').strip()) for entry in posts.values()]
 
     def discard(self, tx, dropped, session, identifier):
@@ -376,6 +397,8 @@ class Store:
                 if session.get('upload_item') == entry['id']:
                     session.pop('upload_item')
                 self.put('items/' + entry['id'], item, tx)
+                if item.get('keyboard_message'):
+                    self.job(tx, {'step':'remove-keyboard', 'slug':entry['id'], 'message':item['keyboard_message']}, 'discard-' + identifier + '-' + entry['id'] + '-keyboard')
             for slug, saved in entry['specs']:
                 saved['state'] = 'rejected'
                 self.put('specs/' + slug, saved, tx)
@@ -456,7 +479,7 @@ class Store:
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if batch:
-            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps)
+            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps, config or {}, business)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -484,6 +507,7 @@ class Store:
             return 'Жду правку: напиши, что поменять.'
         elif verb == 'pfix' and not saved.get('operation') and self.fixable(saved):
             session['awaiting'] = {'kind':'fix','slug':slug}
+            saved['fix_keyboard'] = (query.get('message') or {}).get('message_id')
             self.put('sessions/inbox', session, tx)
             payload['step'] = 'fix-prompt'
             line = 'Жду правку.'
@@ -544,7 +568,7 @@ class Store:
         self.retire(taps, query or {}, 'Новый пост открыт.')
         return 'Новый пост открыт.'
 
-    def collect_callback(self, tx, verb, item_id, token, item, session, identifier, query=None, offers=(), taps=None):
+    def collect_callback(self, tx, verb, item_id, token, item, session, identifier, query=None, offers=(), taps=None, config=None, business=None):
         if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
             return None
         query = query or {}
@@ -563,6 +587,11 @@ class Store:
         if verb == 'done' and offers and not [x for x in item.get('chosen', []) if x in offers]:
             return CHOICE_HINT
         video = any(m.get('video') for m in item['messages'])
+        if verb == 'done' and item.get('chosen'):
+            chosen = chosen_targets(item['chosen'], config or {}, business)
+            reasons = unsupported(chosen, not video and any(imaged(m).get('photo') for m in item['messages']), video)
+            if chosen and len(reasons) == len(chosen):
+                return ' '.join(skipped_lines(reasons))
         if verb == 'done' and video and any(m.get('photo') for m in item['messages']):
             return 'В монтаж идут видео, текст и голос. Фото пришли отдельным /post.'
         if session.get('collecting') == item_id:
