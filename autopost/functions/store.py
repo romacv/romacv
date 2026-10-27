@@ -242,7 +242,11 @@ class Store:
                 name = None
             replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
-            if name != '/post' and not session.get('collecting') and isinstance(message.get('photo'), list) and message['photo'] and message['photo'][-1].get('file_size', 0) > 20*1024*1024:
+            for key, statuses in (('collecting', ('collecting',)), ('upload_item', ('queued', 'collecting'))):
+                current = self.get('items/' + session[key], tx) if session.get(key) else None
+                if not current or current.get('status') not in statuses:
+                    session.pop(key, None)
+            if name != '/post' and (replied or not session.get('collecting')) and isinstance(message.get('photo'), list) and message['photo'] and message['photo'][-1].get('file_size', 0) > 20*1024*1024:
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Скриншот больше 20 МБ: пришли его как фото, не файлом.'
             if name != '/post' and spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
@@ -263,10 +267,6 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 self.queue_fix(tx, published[0], published[1], 'fix', text, identifier)
                 return fixing(published[1], item)
-            for key, statuses in (('collecting', ('collecting',)), ('upload_item', ('queued', 'collecting'))):
-                current = self.get('items/' + session[key], tx) if session.get(key) else None
-                if not current or current.get('status') not in statuses:
-                    session.pop(key, None)
             text = message.get('text', message.get('caption', ''))
             note = text.strip()
             photo = message.get('photo')
