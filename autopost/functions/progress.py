@@ -209,9 +209,9 @@ def billing_rows(now):
     table = next((t.table_id for t in sorted(client.list_tables(BILLING_DATASET), key=lambda t: t.table_id) if t.table_id.startswith(BILLING_PREFIX)), None)
     if not table:
         return None
-    query = 'SELECT service.description AS service, currency, SUM(cost) + SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) c)) AS cost FROM `' + BILLING_DATASET + '.' + table + '` WHERE project.id = @project AND invoice.month = @month GROUP BY service.description, currency ORDER BY cost DESC'
+    query = 'SELECT service.description AS service_name, currency, SUM(cost) + SUM((SELECT IFNULL(SUM(c.amount), 0) FROM UNNEST(credits) c)) AS cost FROM `' + BILLING_DATASET + '.' + table + '` WHERE project.id = @project AND invoice.month = @month GROUP BY service_name, currency ORDER BY cost DESC'
     config = bigquery.QueryJobConfig(maximum_bytes_billed=BILLING_BYTES, query_parameters=[bigquery.ScalarQueryParameter('project', 'STRING', PROJECT), bigquery.ScalarQueryParameter('month', 'STRING', invoice_month(now))])
-    return [{'service':row['service'],'currency':row['currency'],'cost':round(float(row['cost'] or 0), 4)} for row in client.query(query, job_config=config).result(timeout=QUOTA_DEADLINE)]
+    return [{'service':row['service_name'],'currency':row['currency'],'cost':round(float(row['cost'] or 0), 4)} for row in client.query(query, job_config=config).result(timeout=QUOTA_DEADLINE)]
 
 
 def billing(store, now):
