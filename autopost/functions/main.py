@@ -25,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import media
 import montage
@@ -112,17 +112,41 @@ def retire_taps(config, store, taps):
         return
     for tap in taps:
         if tap['line'] is None:
-            try:
-                if tap.get('item'):
-                    current = store.get('items/' + tap['item']) or {}
-                    if current.get('status') != 'collecting':
-                        continue
-                    tap['markup'] = collect_keyboard(tap['item'],tap['token'],tap['offers'],current.get('chosen',[]))
-                platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':tap['message_id'],'reply_markup':tap['markup']})
-            except Exception:
-                pass
+            for attempt in range(2 if tap.get('item') else 1):
+                try:
+                    if tap.get('item'):
+                        current = store.get('items/' + tap['item']) or {}
+                        if current.get('status') != 'collecting' or current.get('batch_token') != tap['token']:
+                            break
+                        tap['markup'] = collect_keyboard(tap['item'],tap['token'],tap['offers'],current.get('chosen',[]))
+                    platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':tap['message_id'],'reply_markup':tap['markup']})
+                    break
+                except Exception:
+                    pass
         else:
             edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip())
+
+
+WEBHOOK_EDIT_SECONDS = 8
+
+
+def bounded(work, seconds):
+    thread = threading.Thread(target=contextvars.copy_context().run,args=(work,),daemon=True)
+    thread.start()
+    thread.join(seconds)
+    return not thread.is_alive()
+
+
+def resync_keyboard(config, store, query):
+    parts = (query.get('data') or '').split(':')
+    message = query.get('message') or {}
+    if len(parts) != 3 or parts[0] not in TOGGLES or not message.get('message_id'):
+        return
+    item = store.get('items/' + parts[1]) or {}
+    if item.get('status') != 'collecting' or item.get('batch_token') != parts[2]:
+        return
+    offers = offered(config,store.get('tokens/business') or config.get('business'))
+    retire_taps(config,store,[{'message_id':message['message_id'],'line':None,'item':parts[1],'token':parts[2],'offers':offers,'markup':None}])
 
 
 def collect_reply(config, store, item_id, item, text):
@@ -130,9 +154,20 @@ def collect_reply(config, store, item_id, item, text):
     return {'item':item_id,'text':hinted(text,offers),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
 
 
-def send_collect(config, store, result):
+def send_collect(config, store, result, claim=None):
     sent = platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':result['text'],'reply_markup':result['reply_markup']})
     identifier = sent.get('message_id') if isinstance(sent,dict) else None
+    if claim is not None:
+        with claim['lock']:
+            late = claim['abandoned']
+            claim['sent'] = True
+        if late:
+            if type(identifier) is int:
+                try:
+                    platforms.telegram('deleteMessage',{'chat_id':config['roman_chat_id'],'message_id':identifier})
+                except Exception:
+                    pass
+            return
     if type(identifier) is not int:
         return
     def swap(value):
@@ -221,17 +256,25 @@ def webhook(request):
     taps = []
     result = store.intake(value,config,taps)
     store.flush(enqueue)
-    retire_taps(config,store,taps)
     query = value.get('callback_query')
+    bounded(lambda:retire_taps(config,store,taps) if taps or result is not None or not query else resync_keyboard(config,store,query),WEBHOOK_EDIT_SECONDS)
     if query:
         return https_fn.Response(json.dumps({'method':'answerCallbackQuery','callback_query_id':query['id'],'text':result if isinstance(result,str) else 'Принято' if result else 'Кнопка устарела или уже обработана'}),content_type='application/json')
     text = result.get('text') if isinstance(result,dict) else result
     if text and isinstance(result,dict) and result.get('item') and result.get('reply_markup'):
-        try:
-            send_collect(config,store,result)
+        claim = {'lock':threading.Lock(),'abandoned':False,'sent':False,'failed':False}
+        def attempt():
+            try:
+                send_collect(config,store,result,claim)
+            except Exception:
+                claim['failed'] = True
+        bounded(attempt,WEBHOOK_EDIT_SECONDS)
+        with claim['lock']:
+            delivered = claim['sent'] and not claim['failed']
+            if not delivered:
+                claim['abandoned'] = True
+        if delivered:
             return https_fn.Response('{}',content_type='application/json')
-        except Exception:
-            pass
     reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':text} if text else {}
     if text and isinstance(result,dict) and result.get('reply_markup'):
         reply['reply_markup'] = result['reply_markup']
@@ -916,7 +959,7 @@ def run(config,store,bucket,slug,directory):
         text = result['url'] if result and result['verified'] else 'опубликовано, ссылка ещё не проверена' if result else saved['errors'].get(target,'Ошибка')
         lines.append(f'{index}. {target}: {text}')
     if any(target.startswith('ig-') for target in spec['targets']):
-        lines.append('Facebook: поделиться вручную из Instagram, если автоматическая публикация не появилась.')
+        lines.append('Facebook: посты бота туда сами не попадают, поделись вручную из Instagram.')
     message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial',True))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
     finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.')

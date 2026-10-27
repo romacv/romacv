@@ -69,6 +69,67 @@ class WebhookTests(unittest.TestCase):
         self.request(update)
         self.task.assert_called_once()
 
+    def toggle(self, identifier='9'):
+        return {'update_id':int(identifier),'callback_query':{'id':identifier,'from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'},'text':'Новый пост'},'data':'tg5:item-1:tok'}}
+
+    def test_site_toggle_checks_and_a_redelivered_tap_repaints_the_keyboard(self):
+        self.config.update(github_pat='x')
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
+        sent = []
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda method,fields,files=None:sent.append((method,fields))):
+            answer = json.loads(self.request(self.toggle('9')).get_data())
+            self.assertEqual(answer['text'],'Отмечено: Сайт')
+            self.assertEqual(self.store.get('items/item-1')['chosen'],['site'])
+            sent.clear()
+            self.request(self.toggle('9'))
+        buttons = [b['text'] for row in sent[-1][1]['reply_markup']['inline_keyboard'] for b in row]
+        self.assertEqual(sent[-1][0],'editMessageReplyMarkup')
+        self.assertIn('☑︎ Сайт',buttons)
+
+    def test_slow_telegram_edit_does_not_hold_the_webhook(self):
+        self.config.update(github_pat='x')
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
+        release = app.threading.Event()
+        self.addCleanup(release.set)
+        with patch.object(app,'WEBHOOK_EDIT_SECONDS',0.2), patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda *a,**k:release.wait(30)):
+            started = app.time.time()
+            response = self.request(self.toggle('11'))
+        self.assertLess(app.time.time()-started,5)
+        self.assertEqual(json.loads(response.get_data())['text'],'Отмечено: Сайт')
+
+    def test_slow_collect_send_falls_back_inline_and_a_late_landing_is_deleted(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
+        release = app.threading.Event()
+        self.addCleanup(release.set)
+        calls = []
+        def telegram(method,fields,files=None):
+            calls.append(method)
+            if method == 'sendMessage':
+                release.wait(30)
+                return {'message_id':501}
+        result = {'item':'item-1','text':'Принято','reply_markup':{'inline_keyboard':[]}}
+        update = {'update_id':70,'message':{'message_id':5,'text':'ещё','from':{'id':1},'chat':{'id':1,'type':'private'}}}
+        with patch.object(app,'WEBHOOK_EDIT_SECONDS',0.2), patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=telegram), patch.object(self.store,'intake',return_value=result):
+            answer = json.loads(self.request(update).get_data())
+            self.assertEqual(answer['method'],'sendMessage')
+            release.set()
+            for _ in range(50):
+                if 'deleteMessage' in calls:
+                    break
+                app.time.sleep(0.1)
+        self.assertIn('deleteMessage',calls)
+
+    def test_failed_keyboard_edit_is_retried_once(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1','chosen':['site']})
+        attempts = []
+        def telegram(method,fields,files=None):
+            attempts.append(fields)
+            if len(attempts) == 1:
+                raise RuntimeError('timeout')
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=telegram):
+            app.retire_taps(self.config,self.store,[{'message_id':77,'line':None,'item':'item-1','token':'tok','offers':[],'markup':None}])
+        self.assertEqual(len(attempts),2)
+
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})
         expires = int(app.time.time())+900
