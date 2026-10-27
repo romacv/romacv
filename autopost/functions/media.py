@@ -10,6 +10,10 @@ import urllib.request
 from platforms import Error, ExpiredMaterial, telegram, digest_file
 from store import imaged
 
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
+
 
 def signed(bucket, name, config, method='GET', minutes=60, generation=None):
     import google.auth

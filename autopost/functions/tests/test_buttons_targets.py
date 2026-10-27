@@ -292,5 +292,18 @@ class MediaPathReaskTests(unittest.TestCase):
         self.assertIn('media/x.jpg',logged.output[0])
 
 
+class HeicTests(unittest.TestCase):
+    def test_heic_becomes_jpeg(self):
+        import tempfile
+        import pillow_heif
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as folder:
+            source, destination = Path(folder)/'in.heic', Path(folder)/'out.jpg'
+            pillow_heif.from_pillow(Image.new('RGBA',(64,48),(200,10,10,255))).save(source)
+            media.clean_image(source,destination)
+            with Image.open(destination) as result:
+                self.assertEqual((result.format,result.mode),('JPEG','RGB'))
+
+
 if __name__ == '__main__':
     unittest.main()

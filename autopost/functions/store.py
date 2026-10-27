@@ -302,7 +302,7 @@ class Store:
                     item['revision'] += 1
                     item['updated'] = time.time()
                 session['collecting'] = item_id
-                large = any(m.get('video', {}).get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + '.mp4' not in item.get('uploads', {}) for m in item['messages'])
+                large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (imaged(m).get('photo') or [{}])[-1])))
                 if large:
                     item['waiting_upload'] = True
                     session['upload_item'] = item_id
