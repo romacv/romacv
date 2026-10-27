@@ -228,6 +228,24 @@ class PreviewRaceTests(unittest.TestCase):
         self.assertEqual(sent[-1][1]['reply_markup'],{'inline_keyboard':[]})
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
+    def test_a_video_file_sent_to_a_previewed_draft_joins_it_and_requeues_the_montage(self):
+        self.preview()
+        self.store.put('sessions/inbox',{'current':'album'})
+        reply = self.message(5,document={'file_id':'f','file_size':1000,'mime_type':'video/quicktime'},caption='так делай')
+        item = self.store.get('items/item-1')
+        self.assertEqual((item['status'],item['montage'],len(item['messages']),item['edits']),('queued',True,2,['так делай [добавлен клип]']))
+        self.assertEqual(self.store.get('specs/album')['state'],'drafting')
+        self.assertTrue(reply.startswith('Добавил в черновик'))
+
+    def test_a_draft_waiting_for_an_upload_gets_a_fresh_link_at_the_new_revision(self):
+        self.store.put('items/item-1',{'status':'queued','revision':1,'waiting_upload':True,'messages':[{'message_id':1,'video':{'file_id':'big','file_size':30*1024*1024}}],'slug':'album'})
+        self.store.put('sessions/inbox',{'current':'album'})
+        self.store.put('specs/album',{'item':'item-1','state':'previewed','spec':self.spec,'hash':'abcdefgh'})
+        self.message(6,video={'file_id':'small','file_size':1000})
+        item = self.store.get('items/item-1')
+        self.assertEqual((item['revision'],item['waiting_upload']),(2,True))
+        self.assertEqual(self.store.get('outbox/upload-6')['payload'],{'item':'item-1','step':'upload-prompt','revision':2})
+
 
 class DiscardTests(unittest.TestCase):
     def setUp(self):

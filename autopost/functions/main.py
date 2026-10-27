@@ -64,7 +64,7 @@ def enqueue(payload, identifier, delay=0):
 def item_name(item):
     messages = item['messages'] if item else []
     count = sum(1 for m in messages if imaged(m).get('photo'))
-    return titled(item) if item and titled(item) else (' ' + clips(item) if any(m.get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
+    return titled(item) if item and titled(item) else (' ' + clips(item) if any(imaged(m).get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
 
 
 def post_name(store, saved):

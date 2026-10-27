@@ -106,6 +106,11 @@ class ImageDocumentTests(unittest.TestCase):
         values = media.attachments(item)
         self.assertEqual([(a['name'],a['kind'],a['file_id']) for a in values],[('11.jpg','photo','f')])
 
+    def test_attachments_use_the_video_document_as_a_video(self):
+        item = {'messages':[{'message_id':12,'document':{**self.document,'mime_type':'video/quicktime','file_name':'a.MOV'}}]}
+        values = media.attachments(item)
+        self.assertEqual([(a['name'],a['kind'],a['file_id']) for a in values],[('12.mp4','video','f')])
+
 
 if __name__ == '__main__':
     unittest.main()

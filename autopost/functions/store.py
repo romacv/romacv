@@ -50,10 +50,19 @@ def without_command(message):
 
 def imaged(message):
     document = message.get('document')
-    if message.get('photo') or not isinstance(document, dict) or document.get('mime_type') not in IMAGE_MIMES:
+    if message.get('photo') or message.get('video') or message.get('animation') or not isinstance(document, dict):
         return message
-    photo = {k:v for k,v in document.items() if k in ('file_id', 'file_unique_id', 'file_size', 'mime_type')}
-    return {**{k:v for k,v in message.items() if k != 'document'}, 'photo':[photo]}
+    mime = document.get('mime_type') or ''
+    if mime not in IMAGE_MIMES and not mime.startswith('video/'):
+        return message
+    file = {k:v for k,v in document.items() if k in ('file_id', 'file_unique_id', 'file_size', 'mime_type')}
+    return {**{k:v for k,v in message.items() if k != 'document'}, **({'photo':[file]} if mime in IMAGE_MIMES else {'video':file})}
+
+
+def refused(messages, body):
+    sizes = [m.get(k, {}).get('file_size', 0) for m in messages + [body] for k in ('video', 'voice')]
+    sizes += [(m.get('photo') or [{}])[-1].get('file_size', 0) for m in messages + [body]]
+    return 'Файл больше 512 МБ: сожми его или раздели.' if max(sizes) > 512*1024*1024 else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».' if sum(sizes) > 1024*1024*1024 or len(messages) >= 20 else None
 
 
 def configured(config, business):
@@ -97,14 +106,14 @@ def hinted(text, offers):
 
 
 def clips(item):
-    count = sum(1 for m in item['messages'] if m.get('video'))
+    count = sum(1 for m in item['messages'] if imaged(m).get('video'))
     return str(count) + ' ' + plural(count, ('клип', 'клипа', 'клипов'))
 
 
 def contents(item, genitive=False):
     messages = item['messages']
     photos = sum(1 for m in messages if imaged(m).get('photo'))
-    videos = sum(1 for m in messages if m.get('video'))
+    videos = sum(1 for m in messages if imaged(m).get('video'))
     voices = sum(1 for m in messages if m.get('voice') or m.get('audio'))
     parts = []
     if photos:
@@ -381,9 +390,7 @@ class Store:
                 item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
                 body = without_command(message) if name == '/post' else message
                 filled = bool(body.get('text') or body.get('caption') or any(body.get(k) for k in MEDIA_KEYS))
-                sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [body] for k in ('video', 'voice')]
-                sizes += [(m.get('photo') or [{}])[-1].get('file_size', 0) for m in item['messages'] + [body]]
-                refusal = 'Файл больше 512 МБ: сожми его или раздели.' if filled and max(sizes) > 512*1024*1024 else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».' if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20) else None
+                refusal = refused(item['messages'], body) if filled else None
                 if refusal:
                     self.put(update_path, {'received':time.time()}, tx)
                     if once():
@@ -420,6 +427,24 @@ class Store:
                         return {'item':item_id, 'revision':item['revision'], 'text':None, 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers), 'reply_markup':markup}}
                     return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
                 return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers), 'reply_markup':markup}
+            if message.get('video') and not name and (pending and pending.get('status') in ('queued', 'drafting') or target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit')):
+                held = pending or self.get('items/' + target['item'], tx)
+                limit = refused(held['messages'], message)
+                if limit:
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return None if once() else limit
+                added = (note + ' ' if note else '') + '[добавлен клип]'
+                if target:
+                    previewed = target['state'] == 'previewed'
+                    item = self.queue_edit(tx, slug, target, added, None, identifier, session, message)
+                    if previewed and target.get('preview_message'):
+                        self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
+                else:
+                    item = pending
+                    self.add_edit(tx, item, slug, added, None, identifier, message)
+                self.put(update_path, {'received':time.time()}, tx)
+                self.put('sessions/inbox', session, tx)
+                return None if once() else 'Добавил в черновик' + named(target or {}, item) + ': клип.'
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 if note and note.rstrip().endswith('?') and not photo and not message.get('voice'):
                     job = self.get('renders/' + pending['render'], tx) if pending.get('render') else None
@@ -453,7 +478,7 @@ class Store:
                 return None if once() else 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
-                return None if once() else 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
+                return None if once() else 'К черновику принимаю текст, фото, видео и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
             key = 'g' + group if group else identifier
             followup = self.get('followups/' + key, tx) if group else None
@@ -540,8 +565,14 @@ class Store:
             return note, None
         return (note + ' [см. приложенный скриншот]' if note else 'Правка на приложенном скриншоте.'), {'message_id':message['message_id'], 'photo':photo[-1:]}
 
-    def add_edit(self, tx, item, item_id, note, shot, identifier):
+    def add_edit(self, tx, item, item_id, note, shot, identifier, clip=None):
         item.setdefault('edits', []).append(note)
+        if clip:
+            item['messages'].append(clip)
+            item.pop('prepared', None)
+            item['montage'] = any(imaged(m).get('video') for m in item['messages']) and not any(imaged(m).get('photo') for m in item['messages'])
+            if any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', imaged(m).get('video') or {}), ('.jpg', (imaged(m).get('photo') or [{}])[-1]))):
+                item['waiting_upload'] = True
         if shot:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
@@ -549,10 +580,12 @@ class Store:
         item.pop('followup', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
+        if item.get('waiting_upload'):
+            self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
 
-    def queue_edit(self, tx, slug, spec, note, shot, identifier, session):
+    def queue_edit(self, tx, slug, spec, note, shot, identifier, session, clip=None):
         item = self.get('items/' + spec['item'], tx)
-        self.add_edit(tx, item, spec['item'], note, shot, identifier)
+        self.add_edit(tx, item, spec['item'], note, shot, identifier, clip)
         spec['state'] = 'drafting'
         spec['hash'] = ''
         self.put('specs/' + slug, spec, tx)
@@ -739,7 +772,7 @@ class Store:
             return 'Пост пустой. Пришли текст, фото, видео или голос.'
         if verb == 'done' and offers and not [x for x in item.get('chosen', []) if x in offers]:
             return CHOICE_HINT
-        video = any(m.get('video') for m in item['messages'])
+        video = any(imaged(m).get('video') for m in item['messages'])
         photos = any(imaged(m).get('photo') for m in item['messages'])
         if verb == 'done' and item.get('chosen'):
             chosen = chosen_targets(item['chosen'], config or {}, business)
