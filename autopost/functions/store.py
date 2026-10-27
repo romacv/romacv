@@ -20,8 +20,8 @@ GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram
 TOGGLES = {'tg' + str(index):group[0] for index,group in enumerate(GROUPS)}
 IMAGE_MIMES = ('image/jpeg', 'image/png', 'image/webp', 'image/heic')
 CHOICE_HINT = 'Отметь, куда пойдёт пост.'
-COMMANDS = ('/post', '/upload')
-COMMANDS_HINT = 'Команды: /post — новый пост, /upload — загрузить большое видео.'
+COMMANDS = ('/post',)
+COMMANDS_HINT = 'Команды: /post — новый пост.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
@@ -242,10 +242,9 @@ class Store:
                 name = None
             replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
-            for key, statuses in (('collecting', ('collecting',)), ('upload_item', ('queued', 'collecting'))):
-                current = self.get('items/' + session[key], tx) if session.get(key) else None
-                if not current or current.get('status') not in statuses:
-                    session.pop(key, None)
+            current = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
+            if not current or current.get('status') != 'collecting':
+                session.pop('collecting', None)
             if name != '/post' and (replied or not session.get('collecting')) and isinstance(message.get('photo'), list) and message['photo'] and message['photo'][-1].get('file_size', 0) > 20*1024*1024:
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Скриншот больше 20 МБ: пришли его как фото, не файлом.'
@@ -292,14 +291,6 @@ class Store:
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
                     return fixing(target, item)
-            if name == '/upload':
-                waiting = self.get('items/' + session['upload_item'], tx) if session.get('upload_item') else None
-                self.put(update_path, {'received':time.time()}, tx)
-                if not waiting:
-                    return COMMANDS_HINT
-                if waiting.get('waiting_upload'):
-                    self.job(tx, {'step':'upload-prompt','item':session['upload_item'],'revision':waiting['revision']}, 'upload-link-' + identifier)
-                return 'Готовлю ссылку на загрузку.'
             opened = session.get('collecting')
             offers = offered(config, business)
             if name == '/post' or opened:
@@ -323,7 +314,6 @@ class Store:
                 large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
                 if large:
                     item['waiting_upload'] = True
-                    session['upload_item'] = item_id
                     self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
                 self.discard(tx, dropped, session, identifier)
                 self.put(update_path, {'received':time.time()}, tx)
@@ -392,8 +382,6 @@ class Store:
             item = entry['item']
             if item:
                 item.update(status='rejected', waiting_upload=False, updated=time.time(), revision=item.get('revision', 0) + 1)
-                if session.get('upload_item') == entry['id']:
-                    session.pop('upload_item')
                 self.put('items/' + entry['id'], item, tx)
                 if item.get('keyboard_message'):
                     self.job(tx, {'step':'remove-keyboard', 'slug':entry['id'], 'message':item['keyboard_message']}, 'discard-' + identifier + '-' + entry['id'] + '-keyboard')
@@ -468,6 +456,8 @@ class Store:
             return None
         if verb == 'newp':
             return self.new_post_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
+        if verb == 'ulnk':
+            return self.upload_link_callback(tx, update_path, callback_path, slug, query, taps)
         batch = verb in ('done','cncl') or verb in TOGGLES
         path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
@@ -531,6 +521,16 @@ class Store:
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
         if verb == 'edit':
             return 'Напиши, что поменять в черновике' + named(saved, item) + '.'
+        return True
+
+    def upload_link_callback(self, tx, update_path, callback_path, item_id, query, taps):
+        item = self.get('items/' + item_id, tx)
+        self.put(update_path, {'received':time.time()}, tx)
+        self.put(callback_path, {'received':time.time()}, tx)
+        if not item or not item.get('waiting_upload') or item.get('status') not in ('collecting', 'queued'):
+            return None
+        self.retire(taps, query, 'Готовлю новую ссылку…')
+        self.job(tx, {'step':'upload-prompt', 'item':item_id, 'revision':item['revision']}, 'upload-link-' + update_path.split('/', 1)[1])
         return True
 
     def new_post_callback(self, tx, update_path, callback_path, identifier, token, query=None, taps=None):
@@ -601,8 +601,6 @@ class Store:
         if verb == 'cncl':
             item['status'] = 'rejected'
             item['waiting_upload'] = False
-            if session.get('upload_item') == item_id:
-                session.pop('upload_item')
             result = 'Пост отменён.'
             self.retire(taps, query, 'Отменено.')
             self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)

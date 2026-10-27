@@ -35,13 +35,13 @@ try {
     const li=document.createElement('li'); li.textContent=upload.name; document.getElementById('files').append(li);
   }
   status.textContent='Выбери '+ticket.uploads.length+' файл(а).';
-} catch {ticket=null; status.textContent='Ссылка отсутствует, повреждена или истекла. Запроси новую в чате.';}
+} catch {ticket=null; status.textContent='Ссылка отсутствует, повреждена или истекла. Нажми «Новая ссылка» под сообщением со ссылкой в чате.';}
 picker.addEventListener('change',()=>{start.disabled=!ticket||picker.files.length!==ticket.uploads.length;});
 function put(url,type,file,onProgress){
   return new Promise((resolve,reject)=>{
     const request=new XMLHttpRequest(); request.open('PUT',url); request.setRequestHeader('Content-Type',type);request.setRequestHeader('x-goog-if-generation-match','0');
     request.upload.onprogress=event=>{if(event.lengthComputable)onProgress(event.loaded/event.total);};
-    request.onload=()=>request.status>=200&&request.status<300?resolve():reject(Error());
+    request.onload=()=>(request.status>=200&&request.status<300)||request.status===412?resolve():reject(Error());
     request.onerror=()=>reject(Error()); request.send(file);
   });
 }
@@ -66,7 +66,7 @@ start.addEventListener('click',async()=>{
     const response=await fetch(ticket.complete,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ticket.receipt),credentials:'omit',referrerPolicy:'no-referrer'});
     if(!response.ok)throw Error();
     progress.value=100;status.textContent='Файлы загружены. Можно вернуться в чат.';
-  } catch {status.textContent='Загрузка не завершена. Вернись в чат за новой ссылкой. Не закрывай страницу до завершения загрузки.';}
+  } catch {status.textContent='Загрузка не завершена. Нажми «Новая ссылка» в чате. Не закрывай страницу до завершения загрузки.';}
 });
 </script>
 </body>

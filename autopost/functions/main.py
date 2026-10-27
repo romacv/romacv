@@ -188,12 +188,15 @@ def webhook(request):
         if not hmac.compare_digest(str(value.get('token','')).encode(),upload_mac(config,item,revision,expires).encode()):
             return https_fn.Response('',status=403,headers=cors)
         def complete(saved):
-            if saved.get('revision') != revision or not saved.get('waiting_upload'):
-                return False
+            if not saved.get('waiting_upload'):
+                return 'stale' if saved.get('revision') != revision else False
             saved['upload_complete_requested'] = True
-            return True
-        if store.change('items/' + item, complete):
-            enqueue({'step':'upload-complete','item':item,'revision':revision},'uploaded-' + item + '-' + str(revision) + '-' + secrets.token_hex(8))
+            return {'revision':saved['revision']}
+        outcome = store.change('items/' + item, complete)
+        if outcome == 'stale':
+            return https_fn.Response('',status=409,headers=cors)
+        if outcome:
+            enqueue({'step':'upload-complete','item':item,'revision':outcome['revision']},'uploaded-' + item + '-' + str(outcome['revision']) + '-' + secrets.token_hex(8))
         return https_fn.Response('{}',headers=cors,content_type='application/json')
     if not hmac.compare_digest(request.headers.get('X-Telegram-Bot-Api-Secret-Token','').encode(),config['webhook_secret'].encode()):
         return https_fn.Response('',status=403)
@@ -405,7 +408,7 @@ def upload_prompt(config,store,bucket,payload):
             name = 'inbox/' + payload['item'] + '/' + attachment['name']
             uploads.append({'name':attachment['name'],'type':media.upload_type(attachment),'url':media.signed(bucket,name,config,'PUT',15,content_type=media.upload_type(attachment))})
     fragment = {'uploads':uploads,'complete':'https://us-central1-resromcom-493b4.cloudfunctions.net/webhook','receipt':{'action':'uploaded','item':payload['item'],'revision':item['revision'],'expires':expires,'token':upload_mac(config,payload['item'],item['revision'],expires)}}
-    tell(config,'Файл больше 20 МБ' + (' для' + item_name(item) if item_name(item) else '') + ', загрузи сюда (ссылка 15 минут):\nhttps://www.resrom.com/u/#' + quote(json.dumps(fragment,separators=(',',':')),safe=''))
+    tell(config,'Файл больше 20 МБ' + (' для' + item_name(item) if item_name(item) else '') + ', загрузи сюда (ссылка 15 минут):\nhttps://www.resrom.com/u/#' + quote(json.dumps(fragment,separators=(',',':')),safe=''),reply_markup={'inline_keyboard':[[{'text':'Новая ссылка','callback_data':'ulnk:' + payload['item'] + ':' + str(item['revision'])}]]})
 
 
 def upload_complete(config,store,bucket,payload,directory):
@@ -415,6 +418,9 @@ def upload_complete(config,store,bucket,payload,directory):
     uploads = dict(item.get('uploads',{}))
     pending = []
     total = sum(value.get('size',0) for value in uploads.values()) + sum(a.get('file_size',0) for a in media.attachments(item) if a['name'] not in uploads and a.get('file_size',0) <= 20*1024*1024)
+    if not all(bucket.blob('inbox/' + payload['item'] + '/' + a['name']).exists() for a in media.attachments(item) if a.get('file_size',0) > 20*1024*1024 and a['name'] not in uploads):
+        tell(config,'Загружено не всё: нажми «Новая ссылка».')
+        return
     for attachment in media.attachments(item):
         if attachment.get('file_size',0) <= 20*1024*1024 or attachment['name'] in uploads:
             continue
