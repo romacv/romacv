@@ -28,12 +28,54 @@
 
 Рабочие и личные посты Telegram публикуются по-русски в одном публичном канале @romacv777 «Канал им. Ресенчука Романа» (`tg-channel`). Отчёт содержит ссылки `https://t.me/romacv777/<message_id>`; рабочие Instagram/Threads и blog — по-английски, личные тексты — по-русски. Blog использует атомарный Git Data commit в main от Roman Resenchuk с GitHub noreply; отчёт сверяет Action по commit SHA и title статьи. Непроверенный URL отмечается явно. Facebook mirror проверяется после Instagram; при отсутствии нужна ручная публикация. Ссылку `ig-story`, вычисленную из shortcode, обязательно открыть на телефоне **при первой живой story**; до этой проверки её корректность не подтверждена.
 
+## Токены, разрешения и тестировщики
+
+В Meta два приложения: **resrom threads** с use case **Access the Threads API** и разрешениями `threads_basic`, `threads_content_publish`, `threads_delete`; **resrom posting** с **Manage messaging & content on Instagram → API setup with Instagram login** и `instagram_business_basic`, `instagram_business_content_publish`. Meta запрещает «instagram» в имени приложения, а Threads нельзя объединить с другими use cases в одном приложении.
+
+Оба приложения остаются в development mode: пользоваться ими могут только аккаунты с ролью в приложении. Тестировщик — сам Роман, аккаунт **@romacv777**, с ролями **Threads Tester** и **Instagram Tester**; других тестировщиков нет. Приглашение нужно принять: Threads — **threads.com → Settings → Website permissions → Invites**, Instagram — **instagram.com/accounts/manage_access → Tester invites**. App Review не нужен: приложения работают только с собственным аккаунтом Романа.
+
+Токен даёт приложению доступ к аккаунту в пределах выданных разрешений. Роль тестировщика разрешает использовать приложение в development mode, но не заменяет разрешения токена.
+
+```mermaid
+flowchart TD
+    roman["Роман: Generate token в Meta dashboard"] --> raw["~/Documents/keys/autopost: threads_token.txt / instagram_token.txt"]
+    raw --> meta["setup.sh meta: проверка username romacv777"]
+    meta --> json["threads.json / instagram.json; после проверки записи исходный файл удаляется"]
+    json --> secret["setup.sh secret"]
+    father["BotFather: токен бота"] --> tg["~/Documents/keys/autopost: telegram_bot_token.txt"]
+    tg --> ids["setup.sh ids: после /start, до webhook; ID бота, владельца и канала @romacv777; проверка прав администратора"]
+    ids --> secret
+    secret --> sm["Secret Manager: AUTOPOST"]
+    sm --> fn["Redeploy webhook, worker и daily"]
+    fn --> refresh["daily: refresh Meta при остатке меньше 30 суток и возрасте от 24 часов"]
+    refresh --> store["Firestore: tokens/threads и tokens/instagram"]
+    store --> runtime["Functions: токен Firestore имеет приоритет над AUTOPOST"]
+    fn --> runtime
+```
+
+`meta` не заменяет отличающийся JSON: перед заменой токена удалить соответствующий `threads.json` или `instagram.json`. Короткий Threads token обменивается с `threads_app_secret.txt`; Instagram token нужен свежий из Generate token. Refresh сохраняет имеющиеся scopes, но не выдаёт новые. Для удаления Threads фактически выданные разрешения нужно отдельно сохранить в `tokens/threads.scopes` вместе с текущими полями токена.
+
+```mermaid
+flowchart TD
+    owner["Только Telegram ID Романа; личный чат"] --> hook["webhook: проверка владельца, чата и Telegram secret"]
+    hook --> worker["worker: черновик и подтверждение публикации или изменения"]
+    worker --> channel["Канал @romacv777: бот — администратор; Post / Edit / Delete messages"]
+    worker --> story["Личная Telegram story: Business connection Романа; Manage stories"]
+    worker --> threads["Threads: threads_basic, threads_content_publish, threads_delete"]
+    worker --> instagram["Instagram: instagram_business_basic, instagram_business_content_publish"]
+    worker --> github["Blog: GitHub PAT; Contents read/write только romacv/romacv"]
+```
+
+Перед действием runtime сверяет личность бота, канал и его права, владельца активного Business connection; для Meta — @romacv777 и сохранённый user_id, для Instagram также тип Creator. Instagram правится и удаляется вручную; разрешения публикации этого не меняют.
+
+Вручную повторить настройку нужно при отзыве токена: например, после смены пароля, удаления приложения или `/revoke` в BotFather. Сгенерировать новый токен, сохранить в соответствующий файл в `~/Documents/keys/autopost`, для Meta выполнить `setup.sh meta` после удаления старого JSON; для Telegram заменить `telegram_bot_token.txt`. Затем `setup.sh secret` и redeploy webhook, worker и daily. Если в Firestore уже есть `tokens/threads` или `tokens/instagram`, заменить его актуальными полями токена и фактически выданными scopes либо удалить устаревший документ: иначе он перекроет новый AUTOPOST. После удаления документа для удаления Threads снова потребуется записать scopes вместе с текущим токеном. Daily пытается refresh и для истёкшего токена; восстановить отозванный или истёкший токен этим нельзя.
+
 ## Настройка
 
 Права каждого SA и причины grants перечислены в [reference.md](../autopost/setup/reference.md). Runtime читает только AUTOPOST через secretAccessor, без удаления версий и инвентаризации функций. Для подписания выдан только signBlob на собственном SA; для запуска job — run и runWithOverrides на конкретном job. Speech V1 не требует отдельной Speech role: см. официальные [longrunningrecognize](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/speech/longrunningrecognize) и [operations.get](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/operations/get).
 
-1. Включить Blaze, выполнить `autopost/setup/setup.sh apis`, затем `infra` и `iam`. Подключить существующий bucket к Firebase Storage. Подготовить Telegram Post messages/Manage stories, Meta app и testers, GitHub PAT и Anthropic prepaid с auto-reload off и месячным limit.
-2. Создать приватные файлы по [keys-template.md](../autopost/setup/keys-template.md). До регистрации webhook отправить боту /start и выполнить `setup.sh ids`: команда заполнит Telegram ID и channels.json, проверив права администратора и Post/Edit/Delete messages в @romacv777. В **resrom threads → User Token Generator** и **resrom posting → Manage messaging & content on Instagram → API setup with Instagram login → Generate token** для @romacv777 получить токены, сохранить в threads_token.txt / instagram_token.txt и выполнить `setup.sh meta`. Команда проверяет личность, не печатает значения и не заменяет отличающийся JSON. Threads проверяется через debug_token; короткий токен требует threads_app_secret.txt. Instagram token должен быть только что получен через Generate token: сразу выполнить `meta`, которая запишет issued_at = now и expires_at = now + документированные 60 суток. Повтор с тем же токеном сохраняет исходные времена. Setup не вызывает refresh; позже это делает daily для действующего токена не моложе 24 часов. Подробности и официальные ссылки — в шаблоне ключей. `meta` не записывает Firestore tokens/threads.scopes: фактически выданные разрешения для удаления нужно сохранить отдельно вместе с текущими полями токена. Явный `setup.sh secret` всегда добавляет версию из переданных владельцем файлов, не читая существующее значение.
+1. Включить Blaze, выполнить `autopost/setup/setup.sh apis`, затем `infra` и `iam`. Подключить существующий bucket к Firebase Storage. Подготовить Telegram Post messages/Manage stories, два Meta-приложения и роли тестировщика, GitHub PAT и Anthropic prepaid с auto-reload off и месячным limit.
+2. Создать приватные файлы по [keys-template.md](../autopost/setup/keys-template.md). До регистрации webhook отправить боту /start и выполнить `setup.sh ids`: команда заполнит Telegram ID и channels.json, проверив права администратора и Post/Edit/Delete messages в @romacv777. В **resrom threads → User Token Generator** и **resrom posting → Manage messaging & content on Instagram → API setup with Instagram login → Generate token** для @romacv777 получить токены, сохранить в threads_token.txt / instagram_token.txt и выполнить `setup.sh meta`. Команда проверяет личность, не печатает значения и не заменяет отличающийся JSON. Threads проверяется через debug_token; короткий токен требует threads_app_secret.txt. Instagram token должен быть только что получен через Generate token: сразу выполнить `meta`, которая запишет issued_at = now и expires_at = now + документированные 60 суток. Повтор с тем же токеном сохраняет исходные времена. Setup не вызывает refresh; позже daily пытается обновить токен, когда до expires_at осталось меньше 30 суток и с issued_at/refreshed_at прошли хотя бы 24 часа; отдельной проверки, что токен ещё не истёк, в коде нет. Подробности и официальные ссылки — в шаблоне ключей. `meta` не записывает Firestore tokens/threads.scopes: фактически выданные разрешения для удаления нужно сохранить отдельно вместе с текущими полями токена. Явный `setup.sh secret` всегда добавляет версию из переданных владельцем файлов, не читая существующее значение.
 3. Выполнить `setup.sh render`; выложить functions, Firestore/Storage rules и Hosting. Проверить приватность worker/job и публичность webhook. Сверить URL, повторить `iam` и `infra` для resource grants и настроек после deploy. После первого deploy измерить суммарный размер Artifact Registry.
 4. После каждого изменения AUTOPOST выполнить redeploy webhook, worker и daily, проверить работу и привязанные версии. Вручную уничтожить прежнюю неиспользуемую версию: [AUTOPOST → Versions](https://console.cloud.google.com/security/secret-manager/secret/AUTOPOST/versions?project=resromcom-493b4), Actions → Destroy. Free tier — **6 активных версий**; автоматической очистки нет. Не уничтожать версии, ещё используемые deployments: [Firebase secrets](https://firebase.google.com/docs/functions/config-env?gen=2nd), [Secret Manager](https://docs.cloud.google.com/secret-manager/docs/destroy-secret-version).
 5. Выполнить `setup.sh webhook` с тем же секретом и URL; pending updates сохраняются. Настроить бюджет $0.01, пороги 50/90/100%, Pub/Sub budget-alerts и право публикации уведомлений.
