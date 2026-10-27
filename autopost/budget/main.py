@@ -1,9 +1,10 @@
 import base64
 import json
 import os
+import time
 import urllib.request
 from google.api_core import exceptions
-from google.cloud import billing_v1, logging
+from google.cloud import billing_v1, firestore, logging
 from firebase_functions import pubsub_fn
 
 SIMULATE_DEACTIVATION = False
@@ -19,14 +20,27 @@ def get_project_id():
     return project
 
 
+def record_budget(event):
+    try:
+        firestore.Client().document('sessions/budget').set({'costAmount':event['costAmount'],'budgetAmount':event['budgetAmount'],'costIntervalStart':event.get('costIntervalStart'),'currencyCode':event.get('currencyCode'),'at':time.time()},timeout=5,retry=None)
+    except Exception:
+        try:
+            logging.Client().logger('disable-billing').log_text('Budget record failed',severity='WARNING')
+        except Exception:
+            pass
+
+
 def stop_billing(cloud_event):
     event = json.loads(base64.b64decode(cloud_event.data.message.data))
-    if event['costAmount'] <= event['budgetAmount']:
-        return
-    billing_client = billing_v1.CloudBillingClient()
-    project = 'projects/' + get_project_id()
-    if _is_billing_enabled(project, billing_client):
-        _disable_billing_for_project(project,SIMULATE_DEACTIVATION,billing_client)
+    try:
+        if event['costAmount'] <= event['budgetAmount']:
+            return
+        billing_client = billing_v1.CloudBillingClient()
+        project = 'projects/' + get_project_id()
+        if _is_billing_enabled(project, billing_client):
+            _disable_billing_for_project(project,SIMULATE_DEACTIVATION,billing_client)
+    finally:
+        record_budget(event)
 
 
 def _is_billing_enabled(project_name, billing_client):

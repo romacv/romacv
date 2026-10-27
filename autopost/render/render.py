@@ -394,6 +394,10 @@ def render_clips(bucket, job, root):
     return outputs
 
 
+CPU = 2
+MEMORY_GIB = 2
+
+
 class Loader:
     def __init__(self, job, reference):
         self.settings = job.get('loader') or {}
@@ -432,11 +436,27 @@ class Loader:
             except Exception:
                 pass
 
+    def close(self, now):
+        if self.steps and 'ended' not in self.steps[-1]:
+            step = self.steps[-1]
+            seconds = max(0, now - step['since'])
+            step.update(ended=now,seconds=round(seconds,1),vcpu_s=round(CPU*seconds,1),gib_s=round(MEMORY_GIB*seconds,1))
+
+    def usage(self):
+        return {'seconds':round(sum(step.get('seconds',0) for step in self.steps),1),'vcpu_s':round(sum(step.get('vcpu_s',0) for step in self.steps),1),'gib_s':round(sum(step.get('gib_s',0) for step in self.steps),1)}
+
+    def finish(self):
+        now = time.time()
+        self.close(now)
+        return {'steps':self.steps,'usage':self.usage(),'ended':now}
+
     def stage(self, label):
         self.label = label
-        self.steps.append({'label':label,'since':time.time()})
+        now = time.time()
+        self.close(now)
+        self.steps.append({'label':label,'since':now})
         try:
-            self.reference.update({'progress':{'label':label,'since':self.began},'steps':self.steps})
+            self.reference.update({'progress':{'label':label,'since':self.began},'steps':self.steps,'started':self.began,'resources':{'cpu':CPU,'mem_gib':MEMORY_GIB},'usage':self.usage()})
         except Exception:
             pass
         try:
@@ -501,11 +521,11 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             outputs = {'prepare':prepare,'clips':render_clips}.get(job.get('mode'),render)(storage.Client().bucket(job['bucket']),job,Path(directory))
         LOADER.stop()
-        reference.update({'state':'done','outputs':outputs})
+        reference.update({'state':'done','outputs':outputs,**LOADER.finish()})
         success = True
     except Exception:
         LOADER.stop(True)
-        reference.update({'state':'failed','error':'Render failed; inspect inputs before retry'})
+        reference.update({'state':'failed','error':'Render failed; inspect inputs before retry',**LOADER.finish()})
     enqueue(job,success)
 
 

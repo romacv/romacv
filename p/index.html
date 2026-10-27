@@ -9,93 +9,160 @@
 <style>
 :root{color-scheme:light dark}
 body{margin:0;padding:16px 16px 32px;font:16px/1.4 system-ui,-apple-system,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000)}
+header{display:flex;justify-content:flex-end}
+#refresh{font:inherit;font-size:15px;border:0;background:none;padding:4px 0;color:var(--tg-theme-link-color,#2481cc)}
+#refresh:active{opacity:.5}
 h2{margin:24px 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--tg-theme-section-header-text-color,var(--tg-theme-hint-color,#6d6d72))}
-section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px;padding:4px 16px}
-.row{padding:12px 0;border-top:1px solid var(--tg-theme-section-separator-color,rgba(128,128,128,.25))}
+section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px;overflow:hidden}
+.row{padding:12px 16px;border-top:1px solid var(--tg-theme-section-separator-color,rgba(128,128,128,.25));cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
 .row:first-child{border-top:0}
+.row:active{background:rgba(128,128,128,.16)}
+.plain{cursor:default}
+.plain:active{background:none}
 .line{display:flex;justify-content:space-between;gap:12px}
 .title{font-weight:600;overflow-wrap:anywhere}
-.time{font-variant-numeric:tabular-nums;color:var(--tg-theme-hint-color,#6d6d72);white-space:nowrap}
+.time{font-variant-numeric:tabular-nums;color:var(--tg-theme-hint-color,#6d6d72);text-align:right}
 .hint{color:var(--tg-theme-hint-color,#6d6d72);font-size:14px}
 .stage{margin-top:2px;color:var(--tg-theme-accent-text-color,var(--tg-theme-link-color,#2481cc))}
-ul{list-style:none;margin:8px 0 0;padding:0;font-size:14px}
-li{display:flex;justify-content:space-between;gap:12px;padding:2px 0}
-li.done{color:var(--tg-theme-hint-color,#6d6d72)}
-li.current{font-weight:600}
+.more{margin-top:8px;font-size:14px}
+.more>div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.more .done{color:var(--tg-theme-hint-color,#6d6d72)}
+.more .current{font-weight:600}
+.more a{color:var(--tg-theme-link-color,#2481cc);text-decoration:none;overflow-wrap:anywhere}
+.free{color:var(--tg-theme-hint-color,#6d6d72)}
 #state{margin-top:24px;text-align:center}
+#note{margin:8px 4px 0}
 </style>
 </head>
 <body>
+<header><button id="refresh" type="button">Обновить</button></header>
 <div id="active"></div>
 <div id="waiting"></div>
 <div id="published"></div>
+<div id="limits"></div>
 <p id="state" class="hint" role="status">Загрузка…</p>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 'use strict';
 const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state');
-let data=null, offset=0, busy=false, timer;
+let data=null, offset=0, busy=false, open=null;
 if(app){app.ready();app.expand()}
+const number=n=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1});
 const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+const stamp=t=>{const d=new Date(t*1000),today=new Date().toDateString()===d.toDateString();return (today?'':d.toLocaleDateString('ru-RU',{day:'numeric',month:'short'})+', ')+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})};
 const hour=t=>new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+const money=(v,c)=>(c==='USD'||!c?'$':c+' ')+Number(v).toLocaleString('ru-RU',{maximumFractionDigits:v<1?4:2});
 const now=()=>Date.now()/1000+offset;
+const haptic=()=>{try{app.HapticFeedback.selectionChanged()}catch(e){}};
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 function line(left,right){const l=el('div','line');l.append(left,right);return l}
+function spend(paid,near){return paid===undefined?'':paid===0?(near?'≈бесплатно':'бесплатно'):'≈'+money(paid)}
+function link(name,url){
+  if(typeof url!=='string'||!url.startsWith('https://'))return el('span','',name);
+  const a=el('a','',name);a.href=url;
+  a.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();haptic();if(!app)return;/^https:\/\/t\.me\//.test(url)&&app.openTelegramLink?app.openTelegramLink(url):app.openLink(url)});
+  return a;
+}
+function row(key,head,details){
+  const r=el('div','row');r.append(head);
+  if(!details){r.classList.add('plain');return r}
+  r.setAttribute('role','button');r.tabIndex=0;
+  if(open===key)r.append(details());
+  const toggle=()=>{haptic();open=open===key?null:key;render()};
+  r.addEventListener('click',toggle);
+  r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle()}});
+  return r;
+}
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
 function render(){
   if(!data)return;
-  group('active','Сейчас',data.active.map(job=>{
-    const row=el('div','row'), time=el('span','time');
-    row.append(line(el('span','title',job.title||'Без названия'),time));
-    if(job.label)row.append(el('div','stage',job.label));
-    const list=el('ul');
-    job.steps.forEach(step=>{
-      const item=el('li',step.done?'done':'current'), t=el('span','time',step.done?clock(step.seconds):'');
-      item.append(el('span','',step.label),t);
-      list.append(item);
-    });
-    if(job.steps.length)row.append(list);
-    return row;
+  group('active','Сейчас',data.active.map((job,i)=>{
+    const head=el('div'), time=el('span','time');
+    head.append(line(el('span','title',job.title||'Без названия'),time));
+    if(job.label)head.append(el('div','stage',job.label));
+    return row('a'+(job.id||i),head,job.steps.length?()=>{
+      const box=el('div','more');
+      job.steps.forEach(step=>{
+        const item=el('div',step.done?'done':'current'), t=el('span','time',clock(step.seconds)+' · '+number(step.vcpu_s)+' vCPU·с'+(step.paid===undefined?'':' · '));
+        const s=el('span',step.paid===0&&!step.near?'free':'',spend(step.paid,step.near));
+        if(step.paid!==undefined)t.append(s);
+        item.append(el('span','',step.label),t);
+        box.append(item);
+      });
+      return box;
+    }:null);
   }));
-  group('waiting','Ждёт ответа',data.waiting.map(w=>{const row=el('div','row');row.append(el('div','title',w.title||'Без названия'));return row}));
-  group('published','Опубликовано',data.published.map(p=>{const row=el('div','row');row.append(line(el('span','title',p.title||'Без названия'),el('span','time','опубликован '+hour(p.at))));return row}));
+  group('waiting','Ждёт ответа',data.waiting.map((w,i)=>{
+    const head=el('div','title',w.title||'Без названия');
+    return row('w'+(w.id||i),head,()=>{
+      const box=el('div','more');
+      box.append(el('div','',w.wait));
+      if(w.targets.length)box.append(el('div','hint','Куда: '+w.targets.join(', ')));
+      return box;
+    });
+  }));
+  group('published','Опубликовано',data.published.map((p,i)=>{
+    const head=line(el('span','title',p.title||'Без названия'),el('span','time',hour(p.at)));
+    return row('p'+(p.id||i),head,()=>{
+      const box=el('div','more');
+      if(!p.links.length)box.append(el('div','hint',p.state==='partial'?'Опубликовано не везде.':'Ссылок нет.'));
+      p.links.forEach(l=>{const d=el('div');d.append(link(l.name,l.url));box.append(d)});
+      return box;
+    });
+  }));
+  limits();
   tick();
+}
+function limits(){
+  const box=document.getElementById('limits');box.replaceChildren();
+  const rows=[];
+  (data.quota||[]).forEach(q=>{
+    const r=el('div','row plain');
+    r.append(line(el('span','',q.label),el('span','time',q.paid>0?'≈'+money(q.paid):q.percent>=80?'≈бесплатно':'бесплатно')));
+    r.append(el('div','hint',number(q.used)+' из '+number(q.free)+' '+q.unit+' ('+number(q.percent)+'%)'));
+    rows.push(r);
+  });
+  const b=data.budget;
+  if(b&&b.cost!==undefined&&b.cost!==null){
+    const r=el('div','row plain');
+    r.append(line(el('span','','Месяц: счёт '+money(b.cost,b.currency)+' из бюджета '+money(b.budget,b.currency)),el('span','time','')));
+    if(b.at)r.append(el('div','hint','по данным на '+stamp(b.at)));
+    rows.push(r);
+  }
+  if(!rows.length)return;
+  box.append(el('h2','','Лимиты'));
+  const s=el('section');s.append(...rows);box.append(s);
+  if(data.quota&&data.quota.some(q=>q.key==='cpu'||q.key==='mem')){const n=el('p','hint','Бесплатный лимит Cloud Run общий на весь billing account; здесь считаются только render-задачи.');n.id='note';box.append(n)}
 }
 function tick(){
   data&&data.active.forEach((job,i)=>{
-    const row=document.querySelectorAll('#active .row')[i];
-    if(!row)return;
-    row.querySelector('.line .time').textContent=clock(Math.max(0,now()-job.since));
-    const live=row.querySelector('li.current .time');
-    const step=job.steps[job.steps.length-1];
-    if(live&&step)live.textContent=clock(Math.max(0,now()-step.since));
+    const rows=document.querySelectorAll('#active .row'), r=rows[i];
+    if(!r)return;
+    r.querySelector('.line .time').textContent=clock(Math.max(0,now()-job.since));
+    const step=job.steps[job.steps.length-1], live=r.querySelector('.more .current .time');
+    if(live&&step){const text=live.firstChild.nodeValue;live.firstChild.nodeValue=clock(Math.max(0,now()-step.since))+text.slice(text.indexOf(' · '))}
   });
 }
-async function poll(){
-  clearTimeout(timer);
-  let delay=data&&data.active.length?2500:15000;
-  if(!busy&&!document.hidden&&app&&app.initData){
-    busy=true;
-    try{
-      const response=await fetch(endpoint,{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
-      if(!response.ok)throw Error(response.status);
-      data=await response.json();
-      offset=data.now-Date.now()/1000;
-      state.textContent=data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
-      delay=data.active.length?2500:15000;
-      render();
-    }catch(e){
-      const code=e.message;
-      state.textContent=code==='401'?'Открой заново из бота.':code==='403'?'Нет доступа.':code==='503'?'Сервер недоступен.':'Нет связи, повторяю…';
-      if(code==='503')delay=30000;
-    }finally{busy=false}
-  }
-  timer=setTimeout(poll,delay);
+async function load(){
+  if(busy||!app||!app.initData)return;
+  busy=true;
+  try{
+    const response=await fetch(endpoint,{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
+    if(!response.ok)throw Error(response.status);
+    data=await response.json();
+    offset=data.now-Date.now()/1000;
+    state.textContent=data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
+    render();
+  }catch(e){
+    const code=e.message;
+    state.textContent=code==='401'?'Открой заново из бота.':code==='403'?'Нет доступа.':code==='503'?'Сервер недоступен.':'Нет связи. Нажми «Обновить».';
+  }finally{busy=false}
 }
 if(!app||!app.initData)state.textContent='Открой страницу из бота.';
+document.getElementById('refresh').addEventListener('click',()=>{haptic();load()});
 setInterval(tick,1000);
-document.addEventListener('visibilitychange',poll);
-poll();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load()});
+load();
 </script>
 </body>
 </html>

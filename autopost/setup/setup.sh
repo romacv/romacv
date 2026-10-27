@@ -86,7 +86,7 @@ def policies():
 
 
 def apis():
-    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging']
+    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging', 'monitoring']
     say('Enable APIs: ' + ', '.join(services))
     for start in range(0, len(services), 20):
         cloud('services', 'enable', *[service + '.googleapis.com' for service in services[start:start + 20]])
@@ -129,6 +129,7 @@ def iam():
     retire_role('autopostSpeech', ('projects', PROJECT))
     signer = role('autopostSignBlob', ['iam.serviceAccounts.signBlob'])
     run_job = role('autopostRunJob', ['run.jobs.run', 'run.jobs.runWithOverrides'])
+    monitoring = role('autopostMonitoringRead', ['monitoring.timeSeries.list'])
     budget = role('autopostBudget', ['resourcemanager.projects.get', 'resourcemanager.projects.deleteBillingAssignment', 'logging.logEntries.create'])
     for account in (RUNTIME, RENDER):
         grant(account, 'roles/datastore.user')
@@ -136,6 +137,8 @@ def iam():
         bind(('tasks', 'queues', 'add-iam-policy-binding', 'worker', '--location=' + REGION), account, 'roles/cloudtasks.enqueuer')
         bind(('iam', 'service-accounts', 'add-iam-policy-binding', RUNTIME), account, 'roles/iam.serviceAccountUser')
     grant(BUDGET, budget)
+    grant(BUDGET, 'roles/datastore.user')
+    grant(RUNTIME, monitoring)
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST'), RUNTIME, 'roles/secretmanager.secretAccessor')
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST_NOTIFY'), RENDER, 'roles/secretmanager.secretAccessor')
     bind(('iam', 'service-accounts', 'add-iam-policy-binding', RUNTIME), RUNTIME, signer)
