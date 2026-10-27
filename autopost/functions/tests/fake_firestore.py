@@ -35,6 +35,9 @@ class Transaction:
     def set(self, reference, value):
         self.writes[reference.path] = copy.deepcopy(value)
 
+    def delete(self, reference):
+        self.writes[reference.path] = None
+
 
 class Collection:
     def __init__(self, db, path):
@@ -65,5 +68,9 @@ class FakeFirestore:
         with self.lock:
             transaction = Transaction()
             result = operation(transaction)
-            self.values.update(transaction.writes)
+            for path, value in transaction.writes.items():
+                if value is None:
+                    self.values.pop(path, None)
+                else:
+                    self.values[path] = value
             return result

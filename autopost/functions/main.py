@@ -37,6 +37,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 RENDER_SETTINGS = 'final-v1'
 FINAL_DEADLINE = 2400
+EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was.'
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
 
@@ -518,7 +519,10 @@ def draft(config,store,bucket,payload,directory):
             detail = 'Invalid media path ' + json.dumps(wrong,ensure_ascii=False) + '; use only these available_images paths exactly: ' + json.dumps(list(files))
             errors = [detail if x == 'Invalid media path' else x for x in errors]
         return list(dict.fromkeys(errors))
-    spec = drafter.ask(config,source,images + shots,validate)
+    key = 'conversations/' + payload['item']
+    fresh = edits[store.seen(key,payload['revision']):]
+    follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
+    spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow)
     if superseded(store,payload):
         return
     assets = {}
@@ -640,7 +644,10 @@ def plan_montage(config,store,bucket,payload,directory):
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
     allowed = restrict(config,store,payload,item,False,True)
-    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True)
+    key = 'conversations/' + payload['item'] + '-montage'
+    fresh = edits[store.seen(key,payload['revision']):]
+    follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
+    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow)
     if superseded(store,payload):
         return
     identifier = secrets.token_hex(16)
@@ -866,6 +873,7 @@ def run(config,store,bucket,slug,directory):
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
     state = 'done' if len(saved['results']) == len(spec['targets']) else 'partial'
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
+    store.forget(saved['item'],fix=False)
     lines = ['Пост' + post_name(store,saved) + ':']
     for index,target in enumerate(spec['targets'],1):
         result = saved['results'].get(target)
@@ -934,7 +942,8 @@ def fix(config,store,slug):
                 return ['No blog was published']
             candidate = {**spec,'copy':value['copy'],'blog':value['blog'] if value['blog'] is not None else spec.get('blog')}
             return drafter.validate(candidate,prepared=False,copy_only=True)
-        corrected = drafter.ask(config,{'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'instruction':saved['instruction']},[],validate)
+        asked = {'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'instruction':saved['instruction']}
+        corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked)
         after = {**spec,'copy':corrected['copy']}
         if corrected['blog'] is not None:
             after['blog'] = corrected['blog']
@@ -1066,6 +1075,8 @@ def apply_fix(config,store,bucket,slug,directory):
     deleted = saved['operation'] == 'delete' and state == 'done' and all(x.get('deleted') or platforms.manual_change(t,x,saved['spec'],'delete') for t,x in published_targets.items())
     store.change('specs/' + saved['source'],lambda value:value.update(deleted=deleted))
     store.change('items/' + saved['item'],lambda value:value.update(published=published_targets,deleted=deleted))
+    if deleted:
+        store.forget(saved['item'])
     lines = []
     for target in saved['spec']['targets']:
         label = 'Instagram' if target.startswith('ig-') else 'Threads' if target == 'threads' else target
@@ -1214,6 +1225,7 @@ def maintenance(config,store,bucket):
                     blob.delete(if_generation_match=blob.generation)
     for snapshot in store.db.collection('items').stream():
         if snapshot.to_dict().get('status') == 'rejected':
+            store.forget(snapshot.id)
             for blob in bucket.list_blobs(prefix='inbox/' + snapshot.id + '/'):
                 blob.delete(if_generation_match=blob.generation)
     store.flush(enqueue)

@@ -8,6 +8,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
+HISTORY_BYTES = 200_000
+
+
 def validate(spec, prepared=True, copy_only=False, chosen=None):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
@@ -205,31 +208,65 @@ def language_errors(spec):
     return errors
 
 
-def ask(config, payload, images, validator, montage=False):
+def wire(turns, pool):
+    messages = []
+    for turn in turns:
+        content = [{'type':'text','text':turn['text']}]
+        for name in turn.get('images', []):
+            if name in pool:
+                content.append({'type':'image','source':{'type':'base64','media_type':'image/jpeg','data':base64.b64encode(pool[name].read_bytes()).decode()}})
+            else:
+                content.append({'type':'text','text':'(An image attached to this message is no longer available.)'})
+        messages.append({'role':turn['role'],'content':content})
+    messages[-1]['content'][-1]['cache_control'] = {'type':'ephemeral'}
+    return messages
+
+
+def ask(config, payload, images, validator, montage=False, thread=None, follow=None):
     import anthropic
     client = anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
     local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
-    payload = {**payload,'timezone':config.get('timezone','Asia/Makassar'),'current_time':local.isoformat()}
-    content = [{'type':'text','text':json.dumps(payload,ensure_ascii=False)}]
-    for path in images:
-        content.append({'type':'image','source':{'type':'base64','media_type':'image/jpeg','data':base64.b64encode(path.read_bytes()).decode()}})
-    messages = [{'role':'user','content':content}]
+    stamp = {'timezone':config.get('timezone','Asia/Makassar'),'current_time':local.isoformat()}
+    pool = {path.name:path for path in images}
+    turns, before = [], 0
+    if thread:
+        store, key, tag, count, guard = thread
+    if thread and follow is not None:
+        saved = store.get(key) or {}
+        turns = saved.get('turns', [])
+        before = saved.get('edits', 0)
+        if saved.get('tag') == tag:
+            turns = turns[:saved.get('base', 0)]
+            before = saved.get('before', 0)
+    base = len(turns)
+    known = {name for turn in turns for name in turn.get('images', [])}
+    turns.append({'role':'user','text':json.dumps({**(follow if turns else payload),**stamp},ensure_ascii=False),'images':[name for name in pool if name not in known]})
+    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text(),'cache_control':{'type':'ephemeral'}}]
     for attempt in range(2):
         try:
-            response = client.messages.create(model='claude-sonnet-5-5', max_tokens=12000, thinking={'type':'adaptive'}, system=Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text(), messages=messages)
+            response = client.messages.create(model='claude-sonnet-5-5', max_tokens=12000, thinking={'type':'adaptive'}, system=system, messages=wire(turns, pool))
         except anthropic.APIStatusError as failure:
             if failure.status_code == 402:
                 raise Error('черновик не готов: баланс Anthropic') from None
             raise Error('Draft provider rejected request: ' + str(failure.status_code)) from None
         raw = ''.join(block.text for block in response.content if block.type == 'text').strip()
+        turns.append({'role':'assistant','text':raw})
         try:
             value = json.loads(re.sub(r'^```(?:json)?\s*|\s*```$', '', raw))
             errors = validator(value)
         except (ValueError, TypeError, KeyError):
             errors = ['Return a valid JSON object matching the schema']
         if not errors:
+            if thread:
+                while len(turns) > 4 and len(json.dumps(turns, ensure_ascii=False).encode()) > HISTORY_BYTES:
+                    del turns[2:4]
+                    base = max(base - 2, min(base, 2))
+                try:
+                    store.keep(key, {'turns':turns,'base':base,'tag':tag,'edits':count,'before':before}, guard)
+                except Exception as failure:
+                    logging.error(json.dumps({'code':'conversation_save_failed','error':str(failure)[:200]},ensure_ascii=False))
             return value
-        messages.extend([{'role':'assistant','content':raw}, {'role':'user','content':'Correct these validation errors and return JSON only: ' + json.dumps(errors)}])
+        turns.append({'role':'user','text':'Correct these validation errors and return JSON only: ' + json.dumps(errors),'images':[]})
     errors = [str(e)[:200] for e in errors]
     logging.error(json.dumps({'code':'draft_invalid','errors':errors},ensure_ascii=False))
     raise Error('Черновик не готов: ' + '; '.join(errors[:2]))

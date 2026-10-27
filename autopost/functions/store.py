@@ -202,6 +202,30 @@ class Store:
         from google.cloud import firestore
         return firestore.transactional(operation)(self.db.transaction())
 
+    def delete(self, path, transaction=None):
+        reference = self.db.document(path)
+        if transaction is None:
+            reference.delete()
+        else:
+            transaction.delete(reference)
+
+    def keep(self, key, value, guard):
+        path, field, expected = guard
+        def save(tx):
+            if (self.get(path, tx) or {}).get(field) != expected:
+                return False
+            self.put(key, value, tx)
+            return True
+        return self.atomic(save)
+
+    def seen(self, key, tag):
+        saved = self.get(key) or {}
+        return saved.get('before', 0) if saved.get('tag') == tag else saved.get('edits', 0)
+
+    def forget(self, item_id, transaction=None, fix=True):
+        for suffix in ('', '-montage') + (('-fix',) if fix else ()):
+            self.delete('conversations/' + item_id + suffix, transaction)
+
     def change(self, path, operation):
         def apply(tx):
             value = self.get(path, tx) or {}
@@ -394,6 +418,7 @@ class Store:
     def discard(self, tx, dropped, session, identifier):
         for entry, label in dropped:
             item = entry['item']
+            self.forget(entry['id'], tx)
             if item:
                 item.update(status='rejected', waiting_upload=False, updated=time.time(), revision=item.get('revision', 0) + 1)
                 self.put('items/' + entry['id'], item, tx)
@@ -517,6 +542,8 @@ class Store:
             payload['step'] = 'fix-prompt'
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
+            if saved.get('item'):
+                self.forget(saved['item'], tx)
             payload['step'] = 'remove-keyboard'
             payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
             line = 'Отклонено.'

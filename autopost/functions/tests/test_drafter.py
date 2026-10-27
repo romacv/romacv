@@ -8,6 +8,8 @@ from unittest.mock import Mock, patch
 FUNCTIONS = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(FUNCTIONS))
 import drafter
+from fake_firestore import FakeFirestore
+from store import Store
 import platforms as p
 
 
@@ -91,7 +93,43 @@ class MediaPathReaskTests(unittest.TestCase):
         fake, value = self.ask([json.dumps({'media':{'images':[{'path':'media/x.jpg'}]}}),json.dumps({'media':{'images':[{'path':'clean-1.jpg'}]}})],validator)
         self.assertEqual(value['media']['images'],[{'path':'clean-1.jpg'}])
         self.assertEqual(len(fake.calls),2)
-        self.assertIn('clean-1.jpg',fake.calls[1][-1]['content'])
+        self.assertIn('clean-1.jpg',json.dumps(fake.calls[1][-1]['content']))
+
+
+class ConversationTests(unittest.TestCase):
+    def ask(self, store, replies, payload, follow, tag, count=0, current=None):
+        store.put('items/a',{'revision':tag if current is None else current})
+        fake = FakeAnthropic(replies)
+        with patch.dict(sys.modules,{'anthropic':fake}):
+            drafter.ask({'anthropic_key':'k'},payload,[],lambda value:[],thread=(store,'conversations/a',tag,count,('items/a','revision',tag)),follow=follow)
+        return fake.calls
+
+    def test_edit_resends_history_with_previous_draft(self):
+        store = Store(FakeFirestore())
+        self.ask(store,['{"v":1}'],{'slug':'a'},None,1)
+        calls = self.ask(store,['{"v":2}'],{'slug':'a'},{'edits':['shorter']},2)
+        roles = [m['role'] for m in calls[0]]
+        self.assertEqual(roles,['user','assistant','user'])
+        self.assertEqual(calls[0][1]['content'][0]['text'],'{"v":1}')
+        self.assertIn('shorter',calls[0][2]['content'][0]['text'])
+        self.assertEqual(calls[0][2]['content'][-1]['cache_control'],{'type':'ephemeral'})
+        self.assertEqual(len(store.get('conversations/a')['turns']),4)
+        self.ask(store,['{"v":3}'],{'slug':'a'},{'edits':['shorter']},2)
+        self.assertEqual(len(store.get('conversations/a')['turns']),4)
+
+    def test_stale_save_is_skipped_and_fresh_edits_follow_stored_count(self):
+        store = Store(FakeFirestore())
+        self.ask(store,['{"v":1}'],{'slug':'a'},None,3,1)
+        self.assertEqual(store.seen('conversations/a',4),1)
+        self.ask(store,['{"v":2}'],{'slug':'a'},{'edits':['x']},2,2,3)
+        self.assertEqual(store.get('conversations/a')['tag'],3)
+        self.assertEqual(store.seen('conversations/a',3),0)
+
+    def test_discard_clears_conversation(self):
+        store = Store(FakeFirestore())
+        self.ask(store,['{}'],{'slug':'a'},None,1)
+        store.atomic(lambda tx:store.discard(tx,[({'id':'a','item':None,'specs':[]},'')],{},'x'))
+        self.assertIsNone(store.get('conversations/a'))
 
 
 class DraftCorrectionTests(unittest.TestCase):
@@ -104,7 +142,7 @@ class DraftCorrectionTests(unittest.TestCase):
             validator = Mock(side_effect=[['missing field'],[]])
             self.assertEqual(drafter.ask({'anthropic_key':'unused'}, {'text':'input'}, [], validator),{})
         self.assertEqual(client.messages.create.call_count,2)
-        self.assertIn('EDL JSON schema',client.messages.create.call_args.kwargs['system'])
+        self.assertIn('EDL JSON schema',client.messages.create.call_args.kwargs['system'][0]['text'])
         client.reset_mock()
         with patch.object(anthropic,'Anthropic',return_value=client):
             with self.assertRaises(p.Error):
