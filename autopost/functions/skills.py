@@ -83,7 +83,7 @@ def listing(skills):
     out = ['Навыки бота:']
     for number, (key, value) in enumerate(rows, 1):
         count = len(value.get('examples', []))
-        out.append(str(number) + '. ' + value['title'] + ' — ' + summary(value) + ' (' + str(count) + ' ' + plural(count) + ')')
+        out.append(str(number) + '. ' + key + ' — ' + value['title'] + ': ' + summary(value) + ' (' + str(count) + ' ' + plural(count) + ')')
     out.append('Чтобы изменить, ответь на это сообщение или напиши /skills и что поменять.')
     return '\n'.join(out)
 
