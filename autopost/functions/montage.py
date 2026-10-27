@@ -80,6 +80,10 @@ def validate(edl, sources):
                 previous_end = end
             if not isinstance(text, str) or not 1 <= len(text) <= 28 or any(c in text for c in '\n\r{}\\'):
                 errors.append('Titles require text without line breaks, <=28 characters')
+        if headers and all(isinstance(cue, dict) and number(cue.get('start')) and number(cue.get('end')) for cue in headers):
+            edges = [0] + [x for cue in headers for x in (cue['start'], cue['end'])] + [total]
+            if any(abs(edges[i] - edges[i + 1]) > 1/30 for i in range(0, len(edges), 2)):
+                errors.append(target + ': titles must cover the whole timeline from 0 to the total length without gaps')
     cover = edl.get('cover')
     if not isinstance(cover, dict) or set(cover) != {'target', 'time'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
         errors.append('Invalid cover target')

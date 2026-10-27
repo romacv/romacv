@@ -217,6 +217,39 @@ class PreviewRaceTests(unittest.TestCase):
     def queue_edit(self):
         self.store.atomic(lambda tx:self.store.queue_edit(tx,'album',self.store.get('specs/album',tx),'правка',None,'e1',{}))
 
+    def test_preview_is_html_with_escaped_copy(self):
+        self.spec['copy']['tg-channel'] = 'a <b> & c'
+        sent = self.preview()
+        fields = next(f for m,f in sent if m == 'sendMessage' and 'parse_mode' in f)
+        self.assertEqual(fields['parse_mode'],'HTML')
+        self.assertIn('a &lt;b&gt; &amp; c',fields['text'])
+        self.assertIn('<b>Пост: Telegram</b>',fields['text'])
+
+    def test_a_long_copy_continues_without_a_separator_and_keeps_its_targets(self):
+        parts = app.pieces('<b>h</b>','x'*7000,None,['tg-channel']) + app.pieces('<b>k</b>','y',None,['threads'])
+        pages = app.pages(parts)
+        self.assertEqual(sum(text.count('──────────') for text,_ in pages),1)
+        self.assertTrue(all('tg-channel' in members for text,members in pages if 'x' in text))
+        self.assertTrue(all('threads' not in members for text,members in pages if 'x' in text and 'y' not in text))
+
+    def test_a_remount_is_acknowledged_once_in_a_status_message(self):
+        item = {'slug':'album','edits':['короче'],'edits_applied':0,'messages':[]}
+        self.store.put('items/item-1',item)
+        with patch.object(app,'tell',return_value={'message_id':9}) as tell:
+            app.acknowledge_remount(self.config,self.store,{'item':'item-1'},item)
+            app.acknowledge_remount(self.config,self.store,{'item':'item-1'},item)
+        self.assertEqual(tell.call_count,1)
+        self.assertEqual(self.store.get('items/item-1')['status_message']['id'],9)
+
+    def test_unreplied_text_to_a_previewed_draft_is_the_edit_at_once(self):
+        self.preview()
+        self.store.put('sessions/inbox',{'current':'album'})
+        reply = self.message(6,text='сделай короче')
+        self.assertIsNone(reply)
+        self.assertEqual(self.store.get('specs/album')['state'],'drafting')
+        self.assertEqual(self.store.get('items/item-1')['edits'],['сделай короче'])
+        self.assertIsNone(self.store.get('sessions/inbox').get('awaiting'))
+
     def test_edit_queued_during_preview_wins_and_the_stale_keyboard_is_removed(self):
         sent = self.preview(self.queue_edit)
         saved = self.store.get('specs/album')

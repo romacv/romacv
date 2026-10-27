@@ -3,6 +3,7 @@ import copy
 import difflib
 import hashlib
 import hmac
+import html
 import json
 import logging
 import mimetypes
@@ -433,16 +434,33 @@ def destinations(targets):
     return ' · '.join(role + ': ' + ', '.join(networks) for role,networks in roles.items())
 
 
+def pieces(head, body, tag=None, members=()):
+    wrap = (lambda text: '<' + tag + '>' + text + '</' + tag + '>') if tag else (lambda text: text)
+    chunks, chunk, size = [], '', 0
+    for char in body:
+        weight = platforms.units(html.escape(char,quote=False))
+        if size + weight > 3000:
+            chunks.append(chunk)
+            chunk, size = '', 0
+        chunk += char
+        size += weight
+    if chunk or not chunks:
+        chunks.append(chunk)
+    texts = [wrap(html.escape(text,quote=False)) if text else '' for text in chunks]
+    texts[0] = '\n'.join(line for line in (head,texts[0]) if line)
+    return [(text,list(members),not position) for position,text in enumerate(texts)]
+
+
 def pages(parts):
-    result, current = [], ''
-    for part in parts:
-        for piece in ([part] if platforms.units(part) <= 4096 else [part[i:i + 2000] for i in range(0,len(part),2000)]):
-            joined = current + '\n\n' + piece if current else piece
-            if platforms.units(joined) > 4096:
-                result.append(current)
-                joined = piece
-            current = joined
-    return result + [current]
+    result, current, owners = [], '', []
+    for piece, members, fresh in parts:
+        joined = current + ('\n──────────\n' if fresh else '\n') + piece if current else piece
+        if platforms.units(joined) > 4096:
+            result.append((current,owners))
+            joined, owners = piece, []
+        current = joined
+        owners += [t for t in members if t not in owners]
+    return result + [(current,owners)]
 
 
 class Withdrawn(Exception):
@@ -543,13 +561,16 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
         blocks.setdefault(text,[]).append(target)
     note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
-    extras = ''.join('\n' + line for line in current.get('skipped',[])) + ('\nЗаметка: ' + spec['notes'] if spec.get('notes') else '')
-    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note + extras] + [', '.join(NAMES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in members) + '\n' + text for text,members in blocks.items()])
-    def members_in(page):
-        return [t for text,members in blocks.items() if text[:100] in page or text[-100:] in page for t in members]
-    for text in messages[:-1]:
-        say(text,members_in(text))
-    message = say(messages[-1],members_in(messages[-1]),reply_markup=buttons(spec['slug'],digest))
+    lines = current.get('skipped',[]) + (['Заметка: ' + spec['notes']] if spec.get('notes') else [])
+    heading = '<b>' + html.escape('Черновик' + post_name(store,saved) + ': куда пойдёт',quote=False) + '</b>'
+    parts = pieces(heading,'\n'.join(([note.strip()] if note else []) + lines),'i')
+    for text,members in blocks.items():
+        label = destinations(members) + (' · «' + title + '»' if 'tg-channel' in members and title else '')
+        parts += pieces('<b>' + html.escape(label,quote=False) + '</b>',text,None,members)
+    messages = pages(parts)
+    for text,members in messages[:-1]:
+        say(text,members,parse_mode='HTML')
+    message = say(messages[-1][0],messages[-1][1],reply_markup=buttons(spec['slug'],digest),parse_mode='HTML')
     shown_status = []
     def commit(tx):
         value = store.get('specs/' + spec['slug'],tx)
@@ -871,10 +892,23 @@ def start_job(project,identifier):
     run_v2.JobsClient().run_job(request=run_v2.RunJobRequest(name=f'projects/{project}/locations/us-central1/jobs/autopost-render',overrides=run_v2.RunJobRequest.Overrides(container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=[{'name':'RENDER_ID','value':identifier}])],task_count=1)))
 
 
+def acknowledge_remount(config,store,payload,item):
+    if item.get('status_message') or len(item.get('edits',[])) <= item.get('edits_applied',0) and len(item.get('edit_photos',[])) <= item.get('photos_applied',0):
+        return
+    record = {'text':'Перемонтирую' + item_name(item) + '…','line':'Принял правку · шаг 1 из 3'}
+    try:
+        record['id'] = tell(config,(record['text'] + '\n' + record['line']))['message_id']
+    except Exception:
+        return
+    item['status_message'] = record
+    store.change('items/' + payload['item'],lambda value:value.update(status_message=record))
+
+
 def plan_montage(config,store,bucket,payload,directory):
     item = store.claim_item(payload['item'],payload['revision'])
     if not item:
         return
+    acknowledge_remount(config,store,payload,item)
     inputs = media.intake(bucket,payload['item'],item,config,directory)
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
@@ -928,7 +962,9 @@ def plan_montage(config,store,bucket,payload,directory):
     name = item_name(item)
     if edits and item.get('edl'):
         markup = newp_markup(store,payload['item']) if fresh else []
-        tell(config,'Перемонтирую' + name + ' с правкой: ' + (lambda note:note[:200] + '…' if len(note) > 200 else note)(' '.join('; '.join(fresh or edits[-1:]).split())) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.',**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
+        text = 'Перемонтирую' + name + ' с правкой: ' + (lambda note:note[:200] + '…' if len(note) > 200 else note)(' '.join('; '.join(fresh or edits[-1:]).split())) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.'
+        if markup or not item.get('status_message'):
+            tell(config,text,**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
     else:
         tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 
@@ -1494,6 +1530,7 @@ def handle_worker(request):
             elif step in ('edit-prompt','remove-keyboard'):
                 saved = store.get('specs/' + payload['slug']) or {}
                 remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved,payload.get('line'))
+                saved = store.get('specs/' + payload['slug']) or {}
                 if step == 'edit-prompt' and saved and saved['state'] == 'needs-edit':
                     tell(config,'Напиши, что поправить в черновике' + post_name(store,saved) + '.')
             elif step == 'collect-prompt':

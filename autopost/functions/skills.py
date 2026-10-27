@@ -15,6 +15,12 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
+MIGRATION = 2
+MIGRATIONS = [
+    ('writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
+    ('montage', " Short unspoken headlines are titles, not subtitles.", ""),
+    ('montage', "one at the start, a new one when the location changes. Language follows the post.", "one cue covers the whole target from 0 to its end, a new one only when the location really changes, with no gap. Resolve venue and city with web_search first (event, visible signs, current_time). Language follows the post."),
+]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 
 
@@ -35,13 +41,38 @@ def load(store):
                     return
                 for key, base in SEED.items():
                     store.put('skills/' + key, fresh(base), tx)
-                store.put(SEEDED, {'at': time.time()}, tx)
+                store.put(SEEDED, {'at': time.time(), 'version': MIGRATION}, tx)
             store.atomic(seed)
             found = read(store)
-        return found
+        return migrate(store, found)
     except Exception as failure:
         logging.error(json.dumps({'code': 'skills_load_failed', 'error': str(failure)[:200]}, ensure_ascii=False))
         return {key: fresh(base) for key, base in SEED.items()}
+
+
+def migrate(store, found):
+    def write(tx):
+        marker = store.get(SEEDED, tx) or {}
+        if marker.get('version', 1) >= MIGRATION:
+            return {}
+        now = time.time()
+        docs = {key: store.get('skills/' + key, tx) for key in {k for k, _, _ in MIGRATIONS}}
+        changed = {}
+        for key, old, new in MIGRATIONS:
+            doc = docs[key]
+            if doc and old in doc.get('body', ''):
+                if key not in changed:
+                    remember(doc, 'migration', now)
+                    changed[key] = doc
+                doc['body'] = doc['body'].replace(old, new)
+        for key, doc in changed.items():
+            doc['revision'] = doc.get('revision', 1) + 1
+            doc['updated_at'] = now
+            store.put('skills/' + key, doc, tx)
+        store.put(SEEDED, {**marker, 'version': MIGRATION}, tx)
+        return changed
+    found.update(store.atomic(write) or {})
+    return found
 
 
 def line(example, index=None):

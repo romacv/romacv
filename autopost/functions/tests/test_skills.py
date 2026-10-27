@@ -18,6 +18,23 @@ class SkillsTests(unittest.TestCase):
     def setUp(self):
         self.store = Store(FakeFirestore())
 
+    def test_live_skills_migrate_once(self):
+        skills.load(self.store)
+        self.store.put(skills.SEEDED, {'at': 1})
+        old = skills.fresh(skills.SEED['montage'])
+        old['body'] = 'Mine. A. Short unspoken headlines are titles, not subtitles. one at the start, a new one when the location changes. Language follows the post.'
+        self.store.put('skills/montage', old)
+        self.store.put('skills/writing-texts', {**old, 'body': 'edited by Roman'})
+        found = skills.load(self.store)
+        self.assertTrue(found['montage']['body'].startswith('Mine. A. one cue'))
+        self.assertNotIn('Short unspoken', found['montage']['body'])
+        self.assertIn('covers the whole target', found['montage']['body'])
+        self.assertEqual(found['writing-texts']['body'], 'edited by Roman')
+        self.assertIn('Short unspoken', found['montage']['history'][-1]['body'])
+        self.assertEqual(self.store.get(skills.SEEDED)['version'], skills.MIGRATION)
+        self.store.put('skills/montage', old)
+        self.assertIn('Short unspoken', skills.load(self.store)['montage']['body'])
+
     def test_seed_once_and_prompt_loading(self):
         first = skills.load(self.store)
         self.assertEqual(set(first), set(skills.SEED))

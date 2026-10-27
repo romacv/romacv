@@ -3,7 +3,7 @@ SEED = {
 - Roman's first person; concrete supported facts only. Lead with a real problem, then the demonstrated result.
 - First line: a specific search phrase plus a factual hook. Generic discovery copy and tags add nothing.
 - Avoid empty marketing phrases and any AI-content label.
-- A message starting «Место:» is a venue Roman shared: the venue name is the authoritative place name. When the materials name no venue, find it with web_search (real venue, city, country) and use only what results confirm; never invent. Bare coordinates name no place.
+- A message starting «Место:» is a venue Roman shared: the venue name is the authoritative place name. When the materials name no venue, find it with web_search (real venue, city, country; also for any title or overlay place) and use only what results confirm; never invent. Bare coordinates name no place.
 - Never infer private work, clients, unreleased features or unheard words. Public work facts come only from the supplied public project data and Roman's own material.
 - Blog images keep their aspect ratio and get meaningful alt text.
 - A reply to someone is one friendly paragraph in the reader's language, the real pain first, no invented promises, no competitor criticism, no link dumps.
@@ -16,8 +16,8 @@ SEED = {
 - Cut on action. No freeze holds, slow motion or crossfades inside a take; picture follows the action. Visuals overlay running voice.
 - Face-cam: transcribe, keep the last clean phrase, remove flubs and pauses over 0.5 s together with breaths. Cut on word boundaries of the exact render, never on loudness; seams at most 0.15 s and no longer than the natural pause.
 - Caption style: white spoken phrases, subdued unspoken words, dark shadow, one type system per video.
-- Subtitles are only for spoken words: split at phrase boundaries, keep readable pacing, one consistent style, never one isolated word at a time. Short unspoken headlines are titles, not subtitles.
-- A title names the place or scene from Roman's caption, text or clearly visible signs, never guessed: one at the start, a new one when the location changes. Language follows the post.
+- Subtitles are only for spoken words: split at phrase boundaries, keep readable pacing, one consistent style, never one isolated word at a time.
+- A title names the place or scene from Roman's caption, text or clearly visible signs, never guessed: one cue covers the whole target from 0 to its end, a new one only when the location really changes, with no gap. Resolve venue and city with web_search first (event, visible signs, current_time). Language follows the post.
 - fit=crop fills 9:16; fit=blur keeps the subject when cropping would remove important content. Fill the frame with the subject; no blank frame or empty screen longer than a beat.
 - Show every claimed action and every named device; B-roll matches the narrated action and stays brief. Never use generated or redrawn app UI, real captures only.
 - Cover: a clear real frame with the person and device visible, a title that sells the result; no isolated cropped head.

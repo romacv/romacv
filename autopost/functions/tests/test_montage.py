@@ -37,6 +37,14 @@ class MontageTests(unittest.TestCase):
         self.edl['targets']['tg-story']['clips'][0]['out'] = 59.9
         self.assertEqual(montage.validate(self.edl,self.sources),[])
 
+    def test_titles_cover_whole_timeline(self):
+        story = self.edl['targets']['tg-story']
+        for cues in ([{'start':0,'end':3,'text':'Jakarta'}],[{'start':0,'end':5,'text':'Jakarta'},{'start':6,'end':11,'text':'Bali'}]):
+            story['titles'] = cues
+            self.assertTrue(any('titles must cover' in e for e in montage.validate(self.edl,self.sources)))
+        story['titles'] = [{'start':0,'end':5,'text':'Jakarta'},{'start':5,'end':11,'text':'Bali'}]
+        self.assertEqual(montage.validate(self.edl,self.sources),[])
+
     def test_cover_copy_and_language(self):
         self.edl['cover']['time'] = 100
         self.assertTrue(montage.validate(self.edl,self.sources))
