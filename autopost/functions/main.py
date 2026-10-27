@@ -55,6 +55,16 @@ def item_name(item):
     return titled(item) if item and titled(item) else (' ' + clips(item) if any(m.get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
 
 
+def post_name(store, saved):
+    item = store.get('items/' + saved['item']) if saved.get('item') else None
+    return named(saved,item) or item_name(item)
+
+
+def superseded(store, payload):
+    item = store.get('items/' + payload['item'])
+    return not item or item['revision'] != payload['revision']
+
+
 def tell(config, text, **extra):
     return platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
 
@@ -157,6 +167,10 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
         return reply
     def say(text, **extra):
         return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
+    def end_window(value):
+        if value.get('editing',{}).get('slug') == spec['slug']:
+            value.pop('editing')
+    store.change('sessions/inbox',end_window)
     previous = store.get('specs/' + spec['slug']) or {}
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
@@ -193,7 +207,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
             chunk += char
         if chunk:
             say(chunk)
-    message = say('Черновик ' + spec['slug'],reply_markup=buttons(spec['slug'],digest))
+    message = say('Черновик' + post_name(store,saved) + ' готов. Опубликовать, править или отклонить?',reply_markup=buttons(spec['slug'],digest))
     saved.update(state='previewed',preview_message=message['message_id'])
     store.put('specs/' + spec['slug'],saved)
     store.change('items/' + item_id,lambda value:value.update(status='previewed'))
@@ -294,6 +308,8 @@ def draft(config,store,bucket,payload,directory):
             errors.append('Invalid media path')
         return errors
     spec = drafter.ask(config,source,images,validate)
+    if superseded(store,payload):
+        return
     assets = {}
     for target in spec['targets']:
         target_assets = {}
@@ -339,6 +355,8 @@ def plan_montage(config,store,bucket,payload,directory):
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
     edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],'edits':item.get('edits',[]),'previous_edl':item.get('edl')},images,lambda value:montage.validate(value,sources),True)
+    if superseded(store,payload):
+        return
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
     job = {'id':identifier,'item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
@@ -414,7 +432,7 @@ def run(config,store,bucket,slug,directory):
         return
     if saved.get('deleted'):
         store.change('specs/' + slug,lambda value:value.update(state='rejected'))
-        tell(config,'Публикация поста' + named(saved) + ' уже удалена. Повторная публикация запрещена.')
+        tell(config,'Публикация поста' + post_name(store,saved) + ' уже удалена. Повторная публикация запрещена.')
         return
     if not saved.get('keyboard_removed'):
         remove_keyboard(config,saved)
@@ -489,7 +507,7 @@ def run(config,store,bucket,slug,directory):
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
     state = 'done' if len(saved['results']) == len(spec['targets']) else 'partial'
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
-    lines = ['Пост' + named(saved) + ':']
+    lines = ['Пост' + post_name(store,saved) + ':']
     for index,target in enumerate(spec['targets'],1):
         result = saved['results'].get(target)
         text = result['url'] if result and result['verified'] else 'опубликовано, ссылка ещё не проверена' if result else saved['errors'].get(target,'Ошибка')
@@ -589,7 +607,7 @@ def fix(config,store,slug):
         say(chunk)
     verb, label = ('del','Подтвердить удаление') if saved['operation'] == 'delete' else ('fix','Опубликовать правку')
     markup = {'inline_keyboard':[[{'text':label,'callback_data':verb + ':' + slug + ':' + saved['hash'][:8]},{'text':'Отклонить','callback_data':'rej:' + slug + ':' + saved['hash'][:8]}]]}
-    message = tell(config,('Удаление поста' if saved['operation'] == 'delete' else 'Правка поста') + named(source),reply_markup=markup)
+    message = tell(config,('Удаление поста' if saved['operation'] == 'delete' else 'Правка поста') + post_name(store,source),reply_markup=markup)
     store.change('specs/' + slug,lambda value:value.update(state='previewed',preview_message=message['message_id']))
     store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
 
@@ -756,7 +774,7 @@ def handle_worker(request):
                     name = item_name(store.get('items/' + payload['item']))
                 elif payload.get('slug'):
                     saved = store.get('specs/' + payload['slug']) or {}
-                    name = named(saved) or item_name(store.get('items/' + saved['item']) if saved.get('item') else None)
+                    name = post_name(store,saved)
             except Exception:
                 name = ''
             if name and text.startswith('Черновик не готов'):
@@ -828,7 +846,7 @@ def recover_running(config,store):
             return value
         saved = store.change('specs/' + snapshot.id,recover)
         if saved:
-            tell(config,'Публикация поста' + named(saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
+            tell(config,'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
 
 
 @scheduler_fn.on_schedule(schedule='every 15 minutes',timezone='UTC',region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=540,min_instances=0,max_instances=1)

@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -229,6 +230,77 @@ class PublisherTests(unittest.TestCase):
         self.store.put('specs/example',{**self.store.get('specs/example'),'state':'previewed'})
         self.store.intake({'update_id':53,'message':{'message_id':14,'text':'ярче','reply_to_message':{'message_id':9,'caption':'tg-channel, threads'}}},self.config)
         self.assertEqual(self.store.get('items/item-1')['edits'][-1],'[tg-channel, threads] ярче')
+
+    def edit_and_follow_up(self):
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Чайнатаун в Джакарте'}]})
+        self.callback('edit')
+        self.store.intake({'update_id':42,'message':{'message_id':10,'text':'На видео надпись'}},self.config)
+        return self.store.intake({'update_id':43,'message':{'message_id':11,'text':'надо надпись наложить'}},self.config)
+
+    def test_follow_up_text_joins_the_edit_with_new_post_button(self):
+        result = self.edit_and_follow_up()
+        self.assertEqual(result['text'],'Добавил к правке черновика «Чайнатаун в Джакарте».')
+        self.assertEqual(result['reply_markup']['inline_keyboard'][0][0]['text'],'Это новый пост')
+        self.assertLessEqual(len(result['reply_markup']['inline_keyboard'][0][0]['callback_data'].encode()),64)
+        item = self.store.get('items/item-1')
+        self.assertEqual((item['edits'],item['revision'],item['status']),(['На видео надпись','надо надпись наложить'],3,'queued'))
+        self.assertEqual(self.store.get('outbox/edit-43')['payload'],{'item':'item-1','step':'draft','revision':3})
+        self.assertIsNone(self.store.get('items/item-43'))
+        self.assertEqual(self.store.get('specs/example')['state'],'drafting')
+
+    def test_new_post_button_moves_the_follow_up_into_its_own_item(self):
+        data = self.edit_and_follow_up()['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        result = self.store.intake({'update_id':44,'callback_query':{'id':'q44','data':data}},self.config)
+        self.assertEqual(result,'Готовлю пост из текста «надо надпись наложить». Превью пришлю сюда.')
+        self.assertEqual(self.store.get('items/item-1')['edits'],['На видео надпись'])
+        self.assertEqual(self.store.get('items/item-43')['messages'][0]['text'],'надо надпись наложить')
+        self.assertEqual(self.store.get('outbox/draft-43')['payload'],{'item':'item-43','step':'draft','revision':1})
+        self.assertEqual(self.store.get('outbox/unmove-43')['payload'],{'item':'item-1','step':'draft','revision':4})
+        self.assertIsNone(self.store.intake({'update_id':45,'callback_query':{'id':'q45','data':data}},self.config))
+
+    def test_new_post_button_is_stale_once_the_draft_is_previewed(self):
+        data = self.edit_and_follow_up()['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        self.store.change('specs/example',lambda value:value.update(state='previewed'))
+        self.assertIsNone(self.store.intake({'update_id':44,'callback_query':{'id':'q44','data':data}},self.config))
+        self.assertEqual(len(self.store.get('items/item-1')['edits']),2)
+
+    def test_text_after_window_or_preview_is_a_new_post(self):
+        self.edit_and_follow_up()
+        self.store.change('sessions/inbox',lambda value:value['editing'].update(until=0))
+        self.assertEqual(self.store.intake({'update_id':50,'message':{'message_id':12,'text':'поздно'}},self.config)['item'],'item-50')
+        self.assertNotIn('editing',self.store.get('sessions/inbox'))
+        self.store.change('sessions/inbox',lambda value:value.update(editing={'slug':'example','until':time.time() + 600}))
+        self.store.change('specs/example',lambda value:value.update(state='previewed'))
+        self.assertEqual(self.store.intake({'update_id':51,'message':{'message_id':13,'text':'после превью'}},self.config)['item'],'item-51')
+        self.assertEqual(len(self.store.get('items/item-1')['edits']),2)
+
+    def test_preview_ends_the_follow_up_window(self):
+        self.edit_and_follow_up()
+        spec = {**self.spec,'slug':'example'}
+        with patch.object(app.platforms,'telegram',return_value={'message_id':200}), patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
+            app.preview(self.config,self.store,None,'item-1',spec,self.assets,self.root)
+        self.assertNotIn('editing',self.store.get('sessions/inbox'))
+
+    def test_edit_jobs_are_delayed_like_draft_jobs(self):
+        self.edit_and_follow_up()
+        self.assertEqual((self.store.get('outbox/edit-42')['delay'],self.store.get('outbox/edit-43')['delay']),(10,10))
+
+    def test_preview_header_has_no_id_and_names_match_the_ack(self):
+        ack = self.edit_and_follow_up()['text']
+        spec = {**self.spec,'slug':'example'}
+        with patch.object(app.platforms,'telegram',return_value={'message_id':200}) as telegram, patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
+            app.preview(self.config,self.store,None,'item-1',spec,self.assets,self.root)
+        header = telegram.call_args.args[1]['text']
+        self.assertEqual(header,'Черновик «Чайнатаун в Джакарте» готов. Опубликовать, править или отклонить?')
+        self.assertNotIn('example',header)
+        self.assertNotIn('item-',header)
+        self.assertIn('«Чайнатаун в Джакарте»',ack)
+        self.assertEqual(app.post_name(self.store,self.store.get('specs/example')),' «Чайнатаун в Джакарте»')
+
+    def test_stale_draft_result_is_not_previewed(self):
+        self.store.put('items/item-1',{'status':'drafting','revision':3,'messages':[]})
+        self.assertTrue(app.superseded(self.store,{'item':'item-1','revision':2}))
+        self.assertFalse(app.superseded(self.store,{'item':'item-1','revision':3}))
 
     def test_reply_to_unknown_message_stays_new_material(self):
         result = self.store.intake({'update_id':52,'message':{'message_id':13,'text':'идея','reply_to_message':{'message_id':99,'text':'x'}}},self.config)

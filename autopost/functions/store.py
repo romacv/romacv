@@ -56,24 +56,24 @@ def snippet(text):
     return ' «' + (text[:40] + '…' if len(text) > 40 else text) + '»' if text else ''
 
 
-def named(saved):
-    return snippet(next(iter((saved.get('spec') or {}).get('copy', {}).values()), ''))
+def named(saved, item=None):
+    return (titled(item) if item else '') or snippet(next(iter((saved.get('spec') or {}).get('copy', {}).values()), ''))
 
 
-def editing(saved):
-    return 'Правлю черновик' + named(saved) + '. Новое превью пришлю сюда.'
+def editing(saved, item):
+    return 'Правлю черновик' + named(saved, item) + '. Новое превью пришлю сюда.'
 
 
-def fixing(saved):
-    return 'Правлю опубликованный пост' + named(saved) + '. Превью изменений пришлю сюда.'
+def fixing(saved, item):
+    return 'Правлю опубликованный пост' + named(saved, item) + '. Превью изменений пришлю сюда.'
 
 
-def deleting(saved):
-    return 'Готовлю удаление поста' + named(saved) + '. Превью пришлю сюда.'
+def deleting(saved, item):
+    return 'Готовлю удаление поста' + named(saved, item) + '. Превью пришлю сюда.'
 
 
 def titled(item):
-    return snippet(next((m.get('text') or m.get('caption') for m in item['messages'] if m.get('text') or m.get('caption')), ''))
+    return snippet(next((m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')), ''))
 
 
 class Store:
@@ -130,6 +130,7 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 self.put('tokens/business', {'business_connection_id':connection['id']}, tx)
                 return 'Подключение Business сохранено; права проверяются перед публикацией.'
+            session = self.get('sessions/inbox', tx) or {}
             reply_id = str(message.get('reply_to_message', {}).get('message_id', ''))
             text = message.get('text', '')
             replied = self.get('published-messages/' + reply_id, tx) if reply_id and text else None
@@ -139,16 +140,17 @@ class Store:
                 names = [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
                 quote = message.get('quote', {}).get('text')
                 note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + text
-                self.queue_edit(tx, replied['slug'], spec, note, identifier)
+                item = self.queue_edit(tx, replied['slug'], spec, note, identifier, session)
                 self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec.get('preview_message')}, 'unkey-' + identifier)
+                self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
-                return editing(spec)
+                return editing(spec, item)
             published = self.published_match(reply_id, tx) if text and reply_id else None
             if published:
+                item = self.get('items/' + published[1]['item'], tx)
                 self.put(update_path, {'received':time.time()}, tx)
                 self.queue_fix(tx, published[0], published[1], 'fix', text, identifier)
-                return fixing(published[1])
-            session = self.get('sessions/inbox', tx) or {}
+                return fixing(published[1], item)
             for key in ('video_batch', 'upload_item'):
                 current = self.get('items/' + session[key], tx) if session.get(key) else None
                 if not current or current.get('status') not in ('queued', 'collecting'):
@@ -159,15 +161,34 @@ class Store:
                 session.pop('awaiting')
                 target = self.get('specs/' + waiting['slug'], tx)
                 if waiting['kind'] == 'edit' and target and target['state'] == 'needs-edit':
-                    self.queue_edit(tx, waiting['slug'], target, message['text'], identifier)
+                    item = self.queue_edit(tx, waiting['slug'], target, message['text'], identifier, session)
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
-                    return editing(target)
+                    return editing(target, item)
                 if waiting['kind'] == 'fix' and self.fixable(target):
+                    item = self.get('items/' + target['item'], tx)
                     self.queue_fix(tx, waiting['slug'], target, 'fix', message['text'], identifier)
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
-                    return fixing(target)
+                    return fixing(target, item)
+            window = session.get('editing')
+            if window and (window['until'] <= time.time() or message.get('text') is None or reply_id or session.get('video_batch') or text.strip() == '/upload'):
+                if window['until'] <= time.time():
+                    session.pop('editing')
+                window = None
+            if window:
+                target = self.get('specs/' + window['slug'], tx)
+                if target and target['state'] == 'drafting' and not target.get('operation'):
+                    token = uuid.uuid4().hex[:8]
+                    markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + identifier + ':' + token}]]}
+                    if len(markup['inline_keyboard'][0][0]['callback_data'].encode()) > 64:
+                        raise StateError('Callback exceeds 64 bytes')
+                    item = self.queue_edit(tx, window['slug'], target, message['text'], identifier, session)
+                    self.put('followups/' + identifier, {'slug':window['slug'], 'item':target['item'], 'note':message['text'], 'message':message, 'token':token}, tx)
+                    self.put('sessions/inbox', session, tx)
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return {'text':'Добавил к правке черновика' + named(target, item) + '.', 'reply_markup':markup}
+                session.pop('editing')
             if text.strip() == '/upload' and session.get('upload_item'):
                 waiting = self.get('items/' + session['upload_item'], tx)
                 self.put(update_path, {'received':time.time()}, tx)
@@ -211,7 +232,7 @@ class Store:
             return {'item':item_id, 'revision':item['revision'], 'text':None if joined else taken(item)}
         return self.atomic(apply)
 
-    def queue_edit(self, tx, slug, spec, note, identifier):
+    def queue_edit(self, tx, slug, spec, note, identifier, session):
         item = self.get('items/' + spec['item'], tx)
         item.setdefault('edits', []).append(note)
         item['status'] = 'queued'
@@ -221,7 +242,9 @@ class Store:
         self.put('specs/' + slug, spec, tx)
         self.put('items/' + spec['item'], item, tx)
         self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
-        self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier)
+        self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
+        session['editing'] = {'slug':slug, 'until':time.time() + 600}
+        return item
 
     def fixable(self, saved):
         return bool(saved and saved.get('state') in ('done','partial') and not saved.get('deleted'))
@@ -248,9 +271,12 @@ class Store:
         verb, slug, short_hash = parts
         if not slug or '/' in slug:
             return None
+        if verb == 'newp':
+            return self.new_post_callback(tx, update_path, callback_path, slug, short_hash)
         batch = verb in ('mont','cncl')
         path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
+        item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
         session = self.get('sessions/inbox', tx) or {}
         identifier = update_path.split('/', 1)[1]
         self.put(update_path, {'received':time.time()}, tx)
@@ -273,7 +299,7 @@ class Store:
             self.put('sessions/inbox', session, tx)
         elif verb == 'pdel' and not saved.get('operation') and self.fixable(saved):
             self.queue_fix(tx, slug, saved, 'delete', 'delete', identifier)
-            return deleting(saved)
+            return deleting(saved, item)
         elif verb == 'pfix' and not saved.get('operation') and self.fixable(saved):
             session['awaiting'] = {'kind':'fix','slug':slug}
             self.put('sessions/inbox', session, tx)
@@ -288,6 +314,30 @@ class Store:
         self.put(path, saved, tx)
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
         return True
+
+    def new_post_callback(self, tx, update_path, callback_path, identifier, token):
+        followup = self.get('followups/' + identifier, tx)
+        valid = bool(followup) and followup['token'] == token and not followup.get('moved')
+        item = self.get('items/' + followup['item'], tx) if valid else None
+        spec = self.get('specs/' + followup['slug'], tx) if valid else None
+        fresh = self.get('items/item-' + identifier, tx) if valid else None
+        self.put(update_path, {'received':time.time()}, tx)
+        self.put(callback_path, {'received':time.time()}, tx)
+        if not valid or fresh or not item or not spec or spec['state'] != 'drafting' or item.get('status') not in ('queued', 'drafting') or followup['note'] not in item.get('edits', []):
+            return None
+        edits = item['edits']
+        edits.pop(len(edits) - 1 - edits[::-1].index(followup['note']))
+        item['status'] = 'queued'
+        item['revision'] += 1
+        followup['moved'] = True
+        step = 'montage' if item.get('montage') else 'draft'
+        self.job(tx, {'item':followup['item'], 'step':step, 'revision':item['revision']}, 'unmove-' + identifier, 10)
+        created = {'messages':[followup['message']], 'revision':1, 'status':'queued', 'created':time.time(), 'updated':time.time(), 'slug':('item-' + identifier)[:40]}
+        self.job(tx, {'item':'item-' + identifier, 'step':'draft', 'revision':1}, 'draft-' + identifier, 10)
+        self.put('items/' + followup['item'], item, tx)
+        self.put('items/item-' + identifier, created, tx)
+        self.put('followups/' + identifier, followup, tx)
+        return taken(created)
 
     def batch_callback(self, tx, verb, item_id, token, item, session, identifier):
         if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
