@@ -20,7 +20,7 @@
             "cover": "claudestatusline.svg"
         },
         "nostress": {
-            "title": "NoStress: HRV Stress Tracker",
+            "title": "HRV Stress Tracker: NoStress",
             "desc": "NoStress reads heart rate variability from Apple Watch and Fitbit to show your stress level in real time, on the wrist and on the phone. It sends gentle check-in notifications when your body needs a pause, and turns HRV, resting heart rate, sleep and activity into a daily overview and monthly trends. Built with SwiftUI, HealthKit, WatchKit and WidgetKit.",
             "link": "https://apps.apple.com/app/id6756629270",
             "privacy": "/projects/nostress/privacy",
