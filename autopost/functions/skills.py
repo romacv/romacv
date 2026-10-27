@@ -88,6 +88,32 @@ def listing(skills):
     return '\n'.join(out)
 
 
+def keyboard(skills):
+    return {'inline_keyboard': [[{'text': key, 'callback_data': 'skill:' + key}] for key in sorted(skills)]}
+
+
+def full(key, value):
+    examples = value.get('examples', [])
+    return value['title'] + '\n' + key + '\n\n' + value['body'] + '\n\n' + ('Примеры:\n' + '\n'.join(line(e) for e in examples) if examples else 'Примеров нет.')
+
+
+def split(text, limit=4096):
+    pages, current = [], ''
+    for row in text.split('\n'):
+        while len(row.encode('utf-16-le')) // 2 > limit:
+            cut = limit
+            while len(row[:cut].encode('utf-16-le')) // 2 > limit:
+                cut -= 1
+            pages.append(row[:cut])
+            row = row[cut:]
+        joined = current + '\n' + row if current else row
+        if len(joined.encode('utf-16-le')) // 2 > limit:
+            pages.append(current)
+            joined = row
+        current = joined
+    return pages + [current]
+
+
 def plural(count):
     if count % 10 == 1 and count % 100 != 11:
         return 'пример'

@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import drafter
+import platforms
 import skills
 from platforms import Error
 
@@ -112,7 +113,7 @@ def command(config, store, payload, tell):
     current = skills.load(store)
     text = (payload.get('text') or '').strip()
     if not text:
-        message = tell(config, skills.listing(current))
+        message = tell(config, skills.listing(current), reply_markup=skills.keyboard(current))
         store.put('skills-messages/' + str(message['message_id']), {'at': time.time()})
         return
     try:
@@ -122,3 +123,11 @@ def command(config, store, payload, tell):
     names = skills.change(store, skills.operations(value, current))
     reply = value.get('reply') if isinstance(value, dict) else None
     tell(config, 'Изменил: ' + ', '.join(names) + '.' if names else reply[:200] if isinstance(reply, str) and reply.strip() else 'Ничего не изменил.')
+
+
+def show(config, store, payload, tell):
+    key = payload['skill']
+    value = skills.load(store).get(key)
+    platforms.telegram('answerCallbackQuery', {'callback_query_id': payload['query']} | ({} if value else {'text': 'Навык не найден: список устарел, открой /skills заново', 'show_alert': True}))
+    for page in skills.split(skills.full(key, value)) if value else []:
+        tell(config, page)

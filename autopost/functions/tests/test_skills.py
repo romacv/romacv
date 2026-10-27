@@ -70,6 +70,13 @@ class SkillsTests(unittest.TestCase):
         saved = self.store.get('skills/montage')
         self.assertEqual((saved['body'], len(saved['history']), saved['history'][0]['source']), (longer, 1, 'learn'))
 
+    def test_skill_keyboard_and_split_text(self):
+        found = skills.load(self.store)
+        rows = skills.keyboard(found)['inline_keyboard']
+        self.assertEqual([r[0]['callback_data'] for r in rows], ['skill:' + k for k in sorted(found)])
+        pages = skills.split(skills.full('x', {'title': 'T', 'body': 'a' * 3000 + '\n' + 'b' * 3000, 'examples': [{'verdict': 'bad', 'feedback': 'f'}]}))
+        self.assertTrue(len(pages) > 1 and all(len(p.encode('utf-16-le')) // 2 <= 4096 for p in pages) and pages[-1].endswith('bad: «f»'))
+
     def test_learning_is_scheduled_once_and_only_with_signal(self):
         turns = [{'role': 'user', 'text': '{}'}, {'role': 'assistant', 'text': '{}'}]
         self.store.put('specs/clean', {'spec': {}})

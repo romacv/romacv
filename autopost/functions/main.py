@@ -77,7 +77,7 @@ def superseded(store, payload):
     return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
 
 
-ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing'}
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing','skill':'typing'}
 
 
 def activity(config, kind, stop):
@@ -359,6 +359,10 @@ def webhook(request):
         if isinstance(message.get('text'),str) and name and name not in COMMANDS:
             reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':hint_for(name)} if store.change('updates/' + str(value['update_id']),received) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
+    query = value.get('callback_query')
+    if isinstance(query,dict) and str(query.get('data','')).startswith('skill:'):
+        enqueue({'step':'skill','skill':query['data'][6:],'query':query['id']},'skill-' + str(query['id']))
+        return https_fn.Response('{}',content_type='application/json')
     taps = []
     result = store.intake(value,config,taps)
     store.flush(enqueue)
@@ -1498,6 +1502,8 @@ def handle_worker(request):
                 learning.step(config,store,payload)
             elif step == 'skills':
                 learning.command(config,store,payload,tell)
+            elif step == 'skill':
+                learning.show(config,store,payload,tell)
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
