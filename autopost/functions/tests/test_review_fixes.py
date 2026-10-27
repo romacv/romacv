@@ -5,7 +5,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fake_firestore import FakeFirestore
@@ -242,6 +242,17 @@ class ReviewFixTests(unittest.TestCase):
                         else:
                             with self.assertRaises(platforms.Error):
                                 platforms.probe('https://example.com/media',path,'image/jpeg')
+
+    def test_montage_plan_message_names_the_draft(self):
+        item = {'status':'queued','revision':1,'slug':'example','messages':[{'video':{},'caption':'Jakarta Chinatown'}],'prepared':{'durations':{'clip':5},'sheets':[],'sources':{'clip':{}}},'transcripts':{'clip':''}}
+        inputs = [{'kind':'video','path':Path('clip.mp4'),'name':'clip.mp4','manifest':{}}]
+        for edits,expected in (([],'Монтирую «Jakarta Chinatown»: план готов, рендерю видео, обычно 3–5 минут. Превью пришлю сюда.'),(['короче'],'Перемонтирую «Jakarta Chinatown» с правкой: короче. Рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')):
+            with self.subTest(edits=edits):
+                self.store.put('items/item-1',{**item,'edits':edits,'edl':{'kind':'video'} if edits else None})
+                config = {**self.config,'worker_url':'test','runtime_service_account':'test'}
+                with patch.object(app,'runtime',return_value=(config,self.store,Mock())), patch.object(app.media,'intake',return_value=inputs), patch.object(app.drafter,'ask',return_value={'kind':'video'}), patch.object(app.firebase_admin,'get_app'), patch.dict(sys.modules,{'google.cloud.run_v2':Mock()}), patch.object(app,'tell') as tell:
+                    app.plan_montage(config,self.store,Mock(name='bucket'),{'item':'item-1','revision':1},Path('/tmp'))
+                tell.assert_called_once_with(ANY,expected)
 
     def test_finished_render_callbacks_mark_delivery(self):
         for step in ('prepared','rendered'):

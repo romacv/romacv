@@ -22,7 +22,7 @@ def validate(edl, sources):
     allowed = {'ig-reel':90, 'ig-story':60, 'tg-story':60, 'tg-channel':90, 'threads':90}
     totals = {}
     for target, timeline in targets.items():
-        if target not in allowed or not isinstance(timeline, dict) or set(timeline) != {'clips', 'subtitles'}:
+        if target not in allowed or not isinstance(timeline, dict) or not {'clips', 'subtitles'} <= set(timeline) <= {'clips', 'subtitles', 'titles'}:
             errors.append('Invalid target timeline')
             continue
         total = 0
@@ -59,6 +59,22 @@ def validate(edl, sources):
                 previous_end = end
             if not isinstance(lines, list) or not 1 <= len(lines) <= 2 or any(not isinstance(line,str) or not 1 <= len(line) <= 32 or any(c in line for c in '\n\r{}\\') or EMOJI.search(line) for line in lines):
                 errors.append('Subtitles require 1–2 plain lines, <=32 characters each')
+        headers = timeline.get('titles', [])
+        if not isinstance(headers, list) or len(headers) > 20:
+            errors.append('Invalid title cues')
+            continue
+        previous_end = 0
+        for cue in headers:
+            if not isinstance(cue, dict) or set(cue) != {'start', 'end', 'text'}:
+                errors.append('Title requires start,end,text')
+                continue
+            start, end, text = cue['start'], cue['end'], cue['text']
+            if not number(start) or not number(end) or not previous_end <= start < end <= total:
+                errors.append('Title times overlap or exceed timeline')
+            else:
+                previous_end = end
+            if not isinstance(text, str) or not 1 <= len(text) <= 28 or any(c in text for c in '\n\r{}\\') or EMOJI.search(text):
+                errors.append('Titles require plain text, <=28 characters')
     cover = edl.get('cover')
     if not isinstance(cover, dict) or set(cover) != {'target', 'time'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
         errors.append('Invalid cover target')

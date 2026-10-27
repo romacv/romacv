@@ -134,7 +134,8 @@ class PublishedTests(unittest.TestCase):
             return corrected
         with patch.object(drafter,'ask',side_effect=ask), patch.object(app,'tell',return_value={'message_id':30}) as tell:
             app.fix(self.config,self.store,'fix-100')
-        text = '\n'.join(call.args[1] for call in tell.call_args_list)
+        text = '\n'.join(call.args[1] for call in tell.call_args_list[:-1])
+        self.assertEqual(tell.call_args.args[1],'Правка поста «Русская строка. Ошибка.»')
         self.assertIn('- Ошибка.',text)
         self.assertIn('+ Исправлено.',text)
         self.assertNotIn('Русская строка.',text)

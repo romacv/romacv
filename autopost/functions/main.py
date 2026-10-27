@@ -23,7 +23,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import Store, StateError, batch_keyboard
+from store import Store, StateError, batch_keyboard, clips, named, titled
 import drafter
 import media
 import montage
@@ -47,6 +47,12 @@ def enqueue(payload, identifier, delay=0):
         functions.task_queue('locations/us-central1/functions/worker').enqueue({'data':payload},functions.TaskOptions(task_id=identifier,schedule_delay_seconds=delay,dispatch_deadline_seconds=540))
     except admin_exceptions.AlreadyExistsError:
         pass
+
+
+def item_name(item):
+    messages = item['messages'] if item else []
+    count = sum(1 for m in messages if m.get('photo'))
+    return titled(item) if item and titled(item) else (' ' + clips(item) if any(m.get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
 
 
 def tell(config, text, **extra):
@@ -204,7 +210,7 @@ def upload_prompt(config,store,bucket,payload):
             name = 'inbox/' + payload['item'] + '/' + attachment['name']
             uploads.append({'name':attachment['name'],'url':media.signed(bucket,name,config,'PUT',15)})
     fragment = {'uploads':uploads,'complete':'https://us-central1-resromcom-493b4.cloudfunctions.net/webhook','receipt':{'action':'uploaded','item':payload['item'],'revision':item['revision'],'expires':expires,'token':upload_mac(config,payload['item'],item['revision'],expires)}}
-    tell(config,'Файл больше 20 МБ, загрузи сюда (ссылка 15 минут):\nhttps://www.resrom.com/u/#' + quote(json.dumps(fragment,separators=(',',':')),safe=''))
+    tell(config,'Файл больше 20 МБ' + (' для' + item_name(item) if item_name(item) else '') + ', загрузи сюда (ссылка 15 минут):\nhttps://www.resrom.com/u/#' + quote(json.dumps(fragment,separators=(',',':')),safe=''))
 
 
 def upload_complete(config,store,bucket,payload,directory):
@@ -245,7 +251,7 @@ def upload_complete(config,store,bucket,payload,directory):
     store.atomic(finish)
     store.flush(enqueue)
     extra = {'reply_markup':batch_keyboard(payload['item'],item['batch_token'])} if item['status'] == 'collecting' else {}
-    tell(config,'Загрузка завершена.' + (' Нажми «Смонтировать», когда все клипы отправлены.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
+    tell(config,'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Смонтировать», когда все клипы отправлены.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
 
 
 def draft(config,store,bucket,payload,directory):
@@ -341,7 +347,12 @@ def plan_montage(config,store,bucket,payload,directory):
     from google.cloud import run_v2
     client = run_v2.JobsClient()
     client.run_job(request=run_v2.RunJobRequest(name=f'projects/{project}/locations/us-central1/jobs/autopost-render',overrides=run_v2.RunJobRequest.Overrides(container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=[{'name':'RENDER_ID','value':identifier}])],task_count=1)))
-    tell(config,'План монтажа проверен. Видео рендерится.')
+    name = item_name(item)
+    edits = item.get('edits',[])
+    if edits and item.get('edl'):
+        tell(config,'Перемонтирую' + name + ' с правкой: ' + edits[-1] + '. Рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')
+    else:
+        tell(config,'Монтирую' + name + ': план готов, рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')
 
 
 def start_preparation(config,store,bucket,payload,item,inputs):
@@ -403,7 +414,7 @@ def run(config,store,bucket,slug,directory):
         return
     if saved.get('deleted'):
         store.change('specs/' + slug,lambda value:value.update(state='rejected'))
-        tell(config,'Публикация уже удалена. Повторная публикация запрещена.')
+        tell(config,'Публикация поста' + named(saved) + ' уже удалена. Повторная публикация запрещена.')
         return
     if not saved.get('keyboard_removed'):
         remove_keyboard(config,saved)
@@ -478,7 +489,7 @@ def run(config,store,bucket,slug,directory):
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
     state = 'done' if len(saved['results']) == len(spec['targets']) else 'partial'
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
-    lines = []
+    lines = ['Пост' + named(saved) + ':']
     for index,target in enumerate(spec['targets'],1):
         result = saved['results'].get(target)
         text = result['url'] if result and result['verified'] else 'опубликовано, ссылка ещё не проверена' if result else saved['errors'].get(target,'Ошибка')
@@ -578,7 +589,7 @@ def fix(config,store,slug):
         say(chunk)
     verb, label = ('del','Подтвердить удаление') if saved['operation'] == 'delete' else ('fix','Опубликовать правку')
     markup = {'inline_keyboard':[[{'text':label,'callback_data':verb + ':' + slug + ':' + saved['hash'][:8]},{'text':'Отклонить','callback_data':'rej:' + slug + ':' + saved['hash'][:8]}]]}
-    message = tell(config,'Удаление ' + source['spec']['slug'] if saved['operation'] == 'delete' else 'Правка ' + source['spec']['slug'],reply_markup=markup)
+    message = tell(config,('Удаление поста' if saved['operation'] == 'delete' else 'Правка поста') + named(source),reply_markup=markup)
     store.change('specs/' + slug,lambda value:value.update(state='previewed',preview_message=message['message_id']))
     store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
 
@@ -739,6 +750,19 @@ def handle_worker(request):
                 saved = store.get('specs/' + payload['slug'])
                 if saved and saved.get('hash'):
                     extra['reply_markup'] = buttons(payload['slug'],saved['hash'],True)
+            name = ''
+            try:
+                if payload.get('item'):
+                    name = item_name(store.get('items/' + payload['item']))
+                elif payload.get('slug'):
+                    saved = store.get('specs/' + payload['slug']) or {}
+                    name = named(saved) or item_name(store.get('items/' + saved['item']) if saved.get('item') else None)
+            except Exception:
+                name = ''
+            if name and text.startswith('Черновик не готов'):
+                text = 'Черновик' + name + text[len('Черновик'):]
+            elif name:
+                text =('Пост' if payload.get('step') in ('run','apply-fix','fix') else 'Черновик') + name + ': ' + text
             tell(config,text,**extra)
 
 
@@ -804,7 +828,7 @@ def recover_running(config,store):
             return value
         saved = store.change('specs/' + snapshot.id,recover)
         if saved:
-            tell(config,'Публикация прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
+            tell(config,'Публикация поста' + named(saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
 
 
 @scheduler_fn.on_schedule(schedule='every 15 minutes',timezone='UTC',region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=540,min_instances=0,max_instances=1)

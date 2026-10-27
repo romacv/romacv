@@ -40,6 +40,16 @@ class MontageTests(unittest.TestCase):
         self.edl['targets']['tg-story']['subtitles'] *= 2
         self.assertTrue(montage.validate(self.edl,self.sources))
 
+    def test_titles(self):
+        timeline = self.edl['targets']['tg-story']
+        timeline['titles'] = [{'start':0,'end':1,'text':'Jakarta Chinatown'},{'start':1,'end':2,'text':'Old Town'}]
+        self.assertEqual(montage.validate(self.edl,self.sources),[])
+        for titles in ([{'start':0,'end':2,'text':'a'},{'start':1,'end':3,'text':'b'}], [{'start':0,'end':1,'text':'x'*29}], [{'start':0,'end':1,'text':'\U0001F4CD Jakarta'}], [{'start':0,'end':1,'text':''}], [{'start':0,'end':99,'text':'a'}], [{'start':0,'end':1,'text':'a'}]*21):
+            with self.subTest(titles=titles):
+                edl = copy.deepcopy(self.edl)
+                edl['targets']['tg-story']['titles'] = titles
+                self.assertTrue(montage.validate(edl,self.sources))
+
     def test_malformed_structures_return_errors(self):
         for value in (None, [], 'text', {'targets':{'tg-story':None}}, {'targets':{'tg-story':{'clips':None,'subtitles':[]}}}):
             self.assertTrue(montage.validate(value,self.sources))

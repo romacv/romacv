@@ -20,6 +20,27 @@ def ass_time(seconds):
     return f'{centiseconds//360000}:{centiseconds//6000%60:02}:{centiseconds//100%60:02}.{centiseconds%100:02}'
 
 
+def title_image(text, path):
+    from PIL import Image, ImageDraw, ImageFont
+    bold = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+    with Image.new('RGBA',(136,128)) as canvas:
+        ImageDraw.Draw(canvas).text((0,0),'\U0001F4CD',font=ImageFont.truetype('/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',109),embedded_color=True)
+        pin = canvas.crop(canvas.getbbox()).resize((56,56))
+    padding, gap = 32, 16
+    width = ImageFont.truetype(bold,56).getlength(text)
+    size = min(56,int(56*(900-2*padding-gap-pin.width)/max(1,width)))
+    if size < 24:
+        raise RuntimeError('Title cannot fit safe width')
+    font = ImageFont.truetype(bold,size)
+    text_width = round(font.getlength(text))
+    image = Image.new('RGBA',(2*padding+pin.width+gap+text_width,96),(0,0,0,0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0,0,image.width-1,image.height-1),radius=48,fill=(0,0,0,140))
+    image.alpha_composite(pin,(padding,(image.height-pin.height)//2))
+    draw.text((padding+pin.width+gap,image.height//2),text,font=font,fill='white',anchor='lm',stroke_width=1,stroke_fill=(0,0,0,200))
+    image.save(path)
+
+
 def digest_file(path):
     digest = hashlib.sha256()
     with path.open('rb') as source:
@@ -146,9 +167,15 @@ def render(bucket, job, root):
         subtitles.write_text(header + ''.join(lines))
         output = root / (target + '.mp4')
         video_filter = "[0:v]tpad=start_duration=0.033333333:start_mode=clone[base];[base][1:v]overlay=enable='lt(t,0.033333333)':eof_action=repeat,ass=" + str(subtitles)
+        title_inputs = []
+        for index, cue in enumerate(timeline.get('titles',[])):
+            image = root / f'{target}-title-{index}.png'
+            title_image(cue['text'],image)
+            title_inputs += ['-i',image]
+            video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x=(W-w)/2:y=260:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story':
             video_filter += ',scale=720:1280'
-        arguments = ['-i',joined_files[target],'-i',cover,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af','adelay=33.333:all=1,loudnorm=I=-16:TP=-1.5:LRA=11']
+        arguments = ['-i',joined_files[target],'-i',cover,*title_inputs,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af','adelay=33.333:all=1,loudnorm=I=-16:TP=-1.5:LRA=11']
         if target == 'tg-story':
             arguments += ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k']
         else:
