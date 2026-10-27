@@ -104,6 +104,35 @@ class ReviewFixTests(unittest.TestCase):
                 self.assertEqual(result['item'],'item-10')
                 self.assertEqual(store.get('sessions/inbox'),{'video_batch':'item-10'})
 
+    def test_english_montage_caption_and_text_close_batch(self):
+        store = Store(FakeFirestore())
+        result = store.intake({'update_id':10,'message':{'message_id':10,'video':{'file_id':'v','file_size':100},'caption':'Montage reels about Jakarta Chinatown'}},self.config)
+        self.assertEqual(store.get('items/' + result['item'])['montage'],True)
+        self.assertEqual(store.get('items/' + result['item'])['status'],'queued')
+        store.intake({'update_id':11,'message':{'message_id':11,'video':{'file_id':'v','file_size':100}}},self.config)
+        result = store.intake({'update_id':12,'message':{'message_id':12,'text':'Montage','reply_to_message':{'message_id':11}}},self.config)
+        item = store.get('items/item-11')
+        self.assertEqual((result['item'],item['montage'],item['status'],len(item['messages'])),('item-11',True,'queued',2))
+        self.assertEqual(store.get('outbox/draft-12')['payload']['step'],'montage')
+
+    def test_montage_word_without_batch_explains(self):
+        store = Store(FakeFirestore())
+        result = store.intake({'update_id':10,'message':{'message_id':10,'text':'Montage'}},self.config)
+        self.assertIn('Нет клипов',result)
+        self.assertIsNone(store.get('items/item-10'))
+
+    def test_invalid_draft_logs_errors_and_tells_reason(self):
+        import json
+        import drafter
+        response = SimpleNamespace(content=[SimpleNamespace(type='text',text='{}')])
+        client = SimpleNamespace(messages=SimpleNamespace(create=Mock(return_value=response)))
+        with patch.dict(sys.modules,{'anthropic':SimpleNamespace(Anthropic=Mock(return_value=client),APIStatusError=Exception)}):
+            with self.assertLogs(level='ERROR') as logs:
+                with self.assertRaises(platforms.Error) as raised:
+                    drafter.ask({'anthropic_key':'k'},{},[],lambda value:['tg-channel: copy is required','threads: banned phrase','third'])
+        self.assertEqual(str(raised.exception),'Черновик не готов: tg-channel: copy is required; threads: banned phrase')
+        self.assertEqual(json.loads(logs.records[-1].getMessage()),{'code':'draft_invalid','errors':['tg-channel: copy is required','threads: banned phrase','third']})
+
     def test_repeated_upload_receipts_have_unique_task_names(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})
         expires = int(app.time.time())+900

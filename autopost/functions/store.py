@@ -7,6 +7,10 @@ import uuid
 from datetime import datetime, timezone
 
 
+MONTAGE = re.compile(r'монтаж|\bmontage\b', re.I)
+DELETE_WORD = re.compile(r'\s*(отклони(?:ть)?|удали(?:ть)?|delete|remove)\W*', re.I)
+
+
 class StateError(Exception):
     pass
 
@@ -88,13 +92,16 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Правки приняты.'
             command = re.match(r'^\s*(поправь|исправь|отредактируй|удали|fix|delete)\b', text, re.I)
-            published = self.published_match(message, tx, command)
-            if text and command:
+            bare = DELETE_WORD.fullmatch(text)
+            published = self.published_match(message, tx, bool(command or bare or (text and reply_id)))
+            if text and (command or bare or published):
                 self.put(update_path, {'received':time.time()}, tx)
                 if not published:
+                    if bare:
+                        return 'Не понял, к какому посту это. Ответь на сообщение поста или пришли материал.'
                     return 'Какой пост? Ответь на его превью или отчёт либо пришли ссылку.'
                 slug, source = published
-                operation = 'delete' if command.group(1).lower() in ('удали','delete') else 'fix'
+                operation = 'delete' if bare or (command and command.group(1).lower() in ('удали','delete')) else 'fix'
                 name = 'fix-' + identifier
                 self.put('specs/' + name, {'operation':operation,'source':slug,'item':source['item'], 'instruction':text,'state':'drafting','results':{},'errors':{},'hash':''}, tx)
                 self.job(tx, {'step':'fix','slug':name}, 'fix-' + identifier)
@@ -112,7 +119,10 @@ class Store:
                     self.job(tx, {'step':'upload-prompt','item':session['upload_item'],'revision':waiting['revision']}, 'upload-link-' + identifier)
                 return 'Готовлю ссылку на загрузку.'
             video = message.get('video')
-            montage = 'монтаж' in text.lower()
+            montage = bool(MONTAGE.search(text))
+            if montage and message.get('text') and not session.get('video_batch') and MONTAGE.fullmatch(message['text'].strip()):
+                self.put(update_path, {'received':time.time()}, tx)
+                return 'Нет клипов для монтажа. Пришли видео, потом напиши «монтаж».'
             group = message.get('media_group_id')
             item_id = session.get('video_batch') if (video or montage) else None
             item_id = item_id or ('album-' + str(group) if group else 'item-' + identifier)

@@ -71,13 +71,32 @@ class PublishedTests(unittest.TestCase):
 
     def test_false_positive_material_never_starts_fix(self):
         for identifier,text in enumerate(['Удалось','исправил баг','справка','fixed','поправь удалённое слово'],300):
-            if identifier == 304:
-                self.intake(text,20,identifier)
-                self.assertEqual(self.store.get('specs/fix-304')['operation'],'fix')
-            else:
-                result = self.intake(text,20,identifier)
-                self.assertEqual(result['item'],'item-' + str(identifier))
-                self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
+            self.intake(text,identifier=identifier)
+            self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
+        self.intake('поправь удалённое слово',20,305)
+        self.assertEqual(self.store.get('specs/fix-305')['operation'],'fix')
+
+    def test_bare_reject_reply_to_published_post_starts_delete(self):
+        self.store.put('published-messages/21',{'slug':'article'})
+        for identifier,reply,text in [(310,21,'Отклонить'),(311,20,'отклони'),(312,21,'delete'),(313,21,'Remove.')]:
+            self.assertEqual(self.intake(text,reply,identifier),'Готовлю превью удаления.')
+            saved = self.store.get('specs/fix-' + str(identifier))
+            self.assertEqual((saved['operation'],saved['source']),('delete','article'))
+            self.assertIsNotNone(self.store.get('outbox/fix-' + str(identifier)))
+
+    def test_plain_reply_to_published_post_starts_fix(self):
+        self.store.put('published-messages/21',{'slug':'article'})
+        self.assertEqual(self.intake('Здесь опечатка в первом слове',21,320),'Готовлю превью правки.')
+        self.assertEqual(self.store.get('specs/fix-320')['operation'],'fix')
+        self.assertIsNone(self.store.get('items/item-320'))
+
+    def test_bare_command_word_without_target_explains(self):
+        for identifier,text in enumerate(['Отклонить','удали','Remove'],330):
+            self.assertIn('к какому посту',self.intake(text,identifier=identifier))
+            self.assertIsNone(self.store.get('items/item-' + str(identifier)))
+            self.assertIsNone(self.store.get('specs/fix-' + str(identifier)))
+        self.assertIn('к какому посту',self.intake('Отклонить',99,340))
+        self.assertIsNone(self.store.get('items/item-340'))
 
     def test_plain_message_does_not_scan_specs(self):
         with patch.object(self.store.db,'collection',side_effect=AssertionError('scan')):

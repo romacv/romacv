@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import re
 import struct
 from datetime import datetime, timezone, timedelta
@@ -183,4 +184,6 @@ def ask(config, payload, images, validator, montage=False):
         if not errors:
             return value
         messages.extend([{'role':'assistant','content':raw}, {'role':'user','content':'Correct these validation errors and return JSON only: ' + json.dumps(errors)}])
-    raise Error('Draft validation failed after one correction')
+    errors = [str(e)[:200] for e in errors]
+    logging.error(json.dumps({'code':'draft_invalid','errors':errors},ensure_ascii=False))
+    raise Error('Черновик не готов: ' + '; '.join(errors[:2]))
