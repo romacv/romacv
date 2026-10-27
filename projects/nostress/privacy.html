@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="How NoStress accesses, uses and stores health data on your device.">
+    <meta name="theme-color" content="#f5f5f5">
+    <title>NoStress Privacy Policy</title>
+    <link rel="canonical" href="https://resrom.com/projects/nostress/privacy">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="stylesheet" href="/css/style.css?v=20260930">
+    <style>
+        .nostress-content { max-width: 800px; margin: 0 auto; padding: 32px 0; }
+        .nostress-content h1 { font-size: 2rem; }
+        .nostress-content h2 { font-size: 1.25rem; margin-top: 28px; }
+        .nostress-content p, .nostress-content li { line-height: 1.7; }
+        .nostress-content ul { list-style: disc; padding-left: 24px; margin-bottom: 16px; }
+        .nostress-content a { text-decoration: underline; text-underline-offset: 3px; }
+        .nostress-content a:hover { color: #7ec9ab; }
+        .nostress-content code { overflow-wrap: anywhere; }
+        .nostress-content .updated { color: #666; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <a href="/">
+                    <h1>Roman Resenchuk<small> iOS/macOS &amp; Agentic AI Developer</small></h1>
+                </a>
+            </div>
+            <div class="menu">
+                <ul>
+                    <li><a href="/projects">All projects</a></li>
+                    <li><a href="/#about">About me</a></li>
+                    <li><a href="https://appstore-metadata.web.app/nostress/contact">Contact form</a></li>
+                </ul>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <article class="nostress-content">
+<p><a href="/projects/nostress">← NoStress</a></p>
+<h1>NoStress Privacy Policy</h1>
+<p class="updated">Last updated: September 2026</p>
+
+<h2>Data Collection</h2>
+<p>We do not collect, transmit, or store any personal data on external servers.</p>
+
+<h2>HealthKit Data</h2>
+<p>The app accesses HealthKit data with your explicit permission. All health data:</p>
+<ul>
+<li>Remains on your device</li>
+<li>Is never transmitted to any server</li>
+<li>Is used only for local calculations and display</li>
+<li>Follows Apple's HealthKit privacy requirements</li>
+</ul>
+
+<h2>Google Health</h2>
+<p>If you choose to connect Google Health (for example, to use a Fitbit Air), you sign in with Google and the app requests read-only access to the following data through the Google Health API:</p>
+<ul>
+<li>Heart rate, resting heart rate, respiratory rate, heart rate variability, and blood oxygen (SpO2), via the <code>googlehealth.health_metrics_and_measurements.readonly</code> scope</li>
+<li>Sleep sessions and sleep stages, via the <code>googlehealth.sleep.readonly</code> scope</li>
+<li>Steps, exercise and workouts, and calories, via the <code>googlehealth.activity_and_fitness.readonly</code> scope</li>
+</ul>
+<p>This data:</p>
+<ul>
+<li>Is downloaded directly from Google to your device</li>
+<li>Is never transmitted to our servers or any third party</li>
+<li>Is used only to calculate and display your stress level and health metrics, processed entirely on your device</li>
+<li>Is never used for advertising, sold, or used to train AI models</li>
+</ul>
+<p>Your Google sign-in is stored securely in the device Keychain. You can disconnect Google Health at any time in Settings, which revokes the app's access. You can also remove access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</p>
+<p>NoStress's use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements, and the <a href="https://developers.google.com/health/policies/health-api-developer-user-data-policy">Google Health API Developer and User Data Policy</a>.</p>
+
+<h2>Local Storage</h2>
+<p>User preferences are stored locally on your device using standard iOS storage mechanisms.</p>
+
+<h2>Third-Party Services</h2>
+<p>The app uses Superwall for subscription management, which processes payments through the App Store. No personal data is shared with Superwall beyond what Apple provides for subscription verification.</p>
+<ul>
+<li><strong>Apple App Store</strong> — <a href="https://www.apple.com/legal/privacy/en-ww/">Privacy</a> · <a href="https://www.apple.com/legal/internet-services/itunes/">Terms</a></li>
+<li><strong>Superwall</strong> — <a href="https://superwall.com/privacy">Privacy</a> · <a href="https://superwall.com/terms-of-service">Terms</a></li>
+<li><strong>Google (Google Sign-In, Google Health API)</strong> — <a href="https://policies.google.com/privacy">Privacy</a> · <a href="https://policies.google.com/terms">Terms</a> · <a href="https://developers.google.com/terms/api-services-user-data-policy">API Services User Data Policy</a></li>
+<li><strong>Google Sign-In, AppAuth and GTMAppAuth</strong> — on-device libraries that open Google's sign-in page and keep the sign-in token in the Keychain; they send data only to Google. <a href="https://github.com/google/GoogleSignIn-iOS">Source</a> · <a href="https://github.com/openid/AppAuth-iOS">Source</a> · <a href="https://github.com/google/GTMAppAuth">Source</a></li>
+<li><strong>Lottie, SDWebImage, SDWebImageLottieCoder and rlottie</strong> — on-device animation and image rendering; no data collected. <a href="https://github.com/airbnb/lottie-ios">Source</a> · <a href="https://github.com/airbnb/lottie-spm">Source</a> · <a href="https://github.com/SDWebImage/SDWebImage">Source</a> · <a href="https://github.com/SDWebImage/SDWebImageLottieCoder">Source</a> · <a href="https://github.com/SDWebImage/librlottie-Xcode">Source</a></li>
+</ul>
+
+<h2>Apple Watch</h2>
+<p>If you use the companion Apple Watch app, data is synced locally between your devices via Apple's Watch Connectivity framework. No data leaves your devices.</p>
+
+<h2>Analytics</h2>
+<p>We do not use analytics or tracking services.</p>
+
+<h2>Children's Privacy</h2>
+<p>The app does not knowingly collect data from anyone, including children.</p>
+
+<h2>Changes to Privacy Policy</h2>
+<p>This policy may be updated. Continued use constitutes acceptance of changes.</p>
+
+<h2>Contact</h2>
+<p>For privacy questions, visit our <a href="https://appstore-metadata.web.app/nostress/contact">contact form</a>.</p>
+            </article>
+        </div>
+    </main>
+    <footer>Roman Resenchuk<br>© 2026</footer>
+</body>
+</html>

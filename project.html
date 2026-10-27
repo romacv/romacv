@@ -123,6 +123,15 @@
                 desc.innerHTML = project.desc.replace(/\n/g, '<br>');
                 container.appendChild(desc);
 
+                if (project.privacy) {
+                    const policy = document.createElement('p');
+                    const policyLink = document.createElement('a');
+                    policyLink.href = project.privacy;
+                    policyLink.textContent = 'Privacy policy';
+                    policy.appendChild(policyLink);
+                    container.appendChild(policy);
+                }
+
                 if (project.link) {
                     const link = document.createElement('a');
                     link.href = project.link;
