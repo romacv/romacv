@@ -1,7 +1,9 @@
+from functools import lru_cache
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import uuid
@@ -33,14 +35,79 @@ def title_pin(size, color, hole):
     return image.resize((size,int(size*1.3)),Image.LANCZOS)
 
 
+TITLE_MARGIN = 60
+EMOJI_BASE = '[\U0001f000-\U0001faff\u2600-\u27bf\u2300-\u23ff]'
+EMOJI_MARK = '[\ufe0f\U0001f3fb-\U0001f3ff]*'
+EMOJI_CLUSTER = re.compile('[0-9#*]\ufe0f?\u20e3|[\U0001f1e6-\U0001f1ff]{2}|' + EMOJI_BASE + EMOJI_MARK + '(?:\u200d' + EMOJI_BASE + EMOJI_MARK + ')*')
+
+
+def title_segments(text):
+    result, last = [], 0
+    def add(kind, value):
+        if kind == 'text' and result and result[-1][0] == 'text':
+            result[-1] = ('text',result[-1][1] + value)
+        elif value:
+            result.append((kind,value))
+    for found in EMOJI_CLUSTER.finditer(text):
+        add('text',text[last:found.start()])
+        cluster = found.group()
+        if cluster.rstrip('\ufe0f') == '\U0001f4cd':
+            add('pin',cluster)
+        elif title_has_emoji(cluster):
+            add('emoji',cluster)
+        else:
+            add('text',cluster.replace('\ufe0f','').replace('\u200d',''))
+        last = found.end()
+    add('text',text[last:])
+    return result
+
+
+@lru_cache(maxsize=256)
+def title_has_emoji(cluster):
+    return title_strike(cluster).getbbox() is not None
+
+
+def title_strike(cluster):
+    from PIL import Image, ImageDraw, ImageFont
+    font = ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'NotoColorEmoji.ttf'),109)
+    ascent, descent = font.getmetrics()
+    strike = Image.new('RGBA',(round(font.getlength(cluster)),ascent+descent),(0,0,0,0))
+    ImageDraw.Draw(strike).text((0,0),cluster,font=font,embedded_color=True)
+    return strike
+
+
+@lru_cache(maxsize=64)
+def title_emoji(cluster, height):
+    from PIL import Image
+    strike = title_strike(cluster)
+    return strike.resize((round(strike.width*height/strike.height),height),Image.LANCZOS)
+
+
+def title_run(kind, value, size):
+    if kind == 'pin':
+        return title_pin(round(size*0.62),(235,64,52,255),(255,255,255,255))
+    return title_emoji(value,round(size*1.18))
+
+
+def title_advance(kind, value, size):
+    return title_run(kind,value,size).width + (round(size*0.12) if kind == 'pin' else 0)
+
+
+def title_width(text, font):
+    return sum(font.getlength(value) if kind == 'text' else title_advance(kind,value,font.size) for kind, value in title_segments(text))
+
+
 def title_shadow(layer, radius, alpha):
     from PIL import Image, ImageFilter
-    mask = layer.split()[3].point(lambda value: value*alpha//255)
-    shadow = Image.new('RGBA',layer.size,(0,0,0,0))
+    margin = TITLE_MARGIN
+    padded = Image.new('RGBA',(layer.width+2*margin,layer.height+2*margin),(0,0,0,0))
+    padded.alpha_composite(layer,(margin,margin))
+    mask = padded.split()[3].point(lambda value: value*alpha//255)
+    shadow = Image.new('RGBA',padded.size,(0,0,0,0))
     shadow.putalpha(mask.filter(ImageFilter.GaussianBlur(radius)))
-    image = Image.new('RGBA',layer.size,(0,0,0,0))
+    image = Image.new('RGBA',padded.size,(0,0,0,0))
     image.alpha_composite(shadow,(0,6))
-    image.alpha_composite(layer)
+    image.alpha_composite(padded)
     return image
 
 
@@ -49,22 +116,34 @@ def title_image(text, path):
     semibold = str(Path(__file__).parent / 'fonts' / 'InterDisplay-SemiBold.otf')
     pin = title_pin(34,(235,64,52,255),(255,255,255,255))
     padding, gap, height = 30, 14, 92
-    width = ImageFont.truetype(semibold,50).getlength(text)
+    width = title_width(text,ImageFont.truetype(semibold,50))
     size = min(50,int(50*(900-2*padding-gap-pin.width)/max(1,width)))
     if size < round(50/76*44):
         raise RuntimeError('Title cannot fit safe width')
     font = ImageFont.truetype(semibold,size)
-    text_width = round(font.getlength(text))
-    image = Image.new('RGBA',(2*padding+pin.width+gap+text_width,height),(0,0,0,0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0,0,image.width-1,height-1),radius=22,fill=(255,255,255,255))
+    full = (2*padding+pin.width+gap+round(title_width(text,font)),height)
+    shape = Image.new('RGBA',(full[0]*4,full[1]*4),(0,0,0,0))
+    ImageDraw.Draw(shape).rounded_rectangle((0,0,full[0]*4-1,full[1]*4-1),radius=88,fill=(255,255,255,255))
+    image = shape.resize(full,Image.LANCZOS)
     image.alpha_composite(pin,(padding,(height-pin.height)//2))
-    draw.text((padding+pin.width+gap,height//2),text,font=font,fill=(20,20,20),anchor='lm')
+    ascent, descent = font.getmetrics()
+    baseline = height//2 + (ascent-descent)//2
+    draw = ImageDraw.Draw(image)
+    x = padding + pin.width + gap
+    for kind, value in title_segments(text):
+        if kind == 'text':
+            draw.text((x,baseline),value,font=font,fill=(20,20,20),anchor='ls')
+            x += font.getlength(value)
+            continue
+        glyph = title_run(kind,value,font.size)
+        top = baseline - glyph.height if kind == 'pin' else baseline - round(glyph.height*0.79)
+        image.alpha_composite(glyph,(round(x),round(top)))
+        x += title_advance(kind,value,font.size)
     title_shadow(image,18,90).save(path)
 
 
 def title_origin(image_size, frame):
-    return (frame[0]-image_size[0])//2, round(590*frame[0]/1080)
+    return (frame[0]-image_size[0])//2, round((590-TITLE_MARGIN)*frame[0]/1080)
 
 
 def title_position(image_size, draft):

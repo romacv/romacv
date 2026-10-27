@@ -15,6 +15,45 @@ from store import Store, StateError
 from blog_commit import GitHub
 
 
+class StoryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        from PIL import Image
+        Image.new('RGB',(1080,1920),(90,90,90)).save(self.root/'image0.jpg','JPEG')
+        p.configure({'channels':{'tg-channel':-100123},'telegram_bot_token':'x'},Store(FakeFirestore()),self.root)
+        self.spec = {'slug':'trip','targets':['tg-channel','tg-story'],'media':{'images':[{'path':'image0.jpg','alt':'a'}]},'copy':{'tg-story':'Дом'}}
+        self.identity = {'id':'biz','user':{'id':1,'username':'romacv777'}}
+
+    def post(self, state, reply=None):
+        calls = []
+        def fake(method, fields=None, files=None):
+            calls.append((method,fields))
+            if isinstance(reply,Exception):
+                raise reply
+            return {'username':'romacv777','id':-100123} if method == 'getChat' else {'id':7}
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()):
+            return p.post_telegram(self.spec,state,'tg-story'), calls
+
+    def test_story_links_the_channel_post_and_waits_for_it(self):
+        with self.assertRaises(p.Error):
+            self.post({'steps':{}})
+        url, calls = self.post({'steps':{'tg-channel:publish':{'status':'done','value':{'message_id':305}}}})
+        area = calls[-1][1]['areas'][0]
+        self.assertEqual(area['type'],{'type':'link','url':'https://t.me/romacv777/305'})
+        self.assertGreater(area['position']['y_percentage'],60)
+
+    def test_story_failure_is_reported_in_russian_with_the_reason(self):
+        failure = p.Error('API failure: 400',status_code=400)
+        failure.description = "Bad Request: can't download or generate the file"
+        self.spec['targets'] = ['tg-story']
+        with self.assertRaises(p.Error) as caught:
+            self.post({'steps':{}},failure)
+        self.assertIn('Telegram не принял историю',str(caught.exception))
+        self.assertIn("can't download",str(caught.exception))
+
+
 class PublisherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

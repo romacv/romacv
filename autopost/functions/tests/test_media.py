@@ -31,6 +31,59 @@ class StoryTests(unittest.TestCase):
         self.assertEqual((size,self.format),((1080,1920),'JPEG'))
 
 
+class PostPhotoTests(unittest.TestCase):
+    def test_post_photo_is_square_around_the_detailed_subject(self):
+        from PIL import ImageDraw
+        directory = Path(tempfile.mkdtemp())
+        source = directory/'tall.jpg'
+        image = Image.new('RGB',(900,1600),(200,200,200))
+        draw = ImageDraw.Draw(image)
+        for step in range(0,200,10):
+            draw.rectangle((100+step,1150+step,140+step,1190+step),fill=(20,20,20))
+        image.save(source,'JPEG')
+        destination = directory/'post.jpg'
+        media.clean_image(source,destination,False,True)
+        with Image.open(destination) as result:
+            self.assertEqual(result.size,(900,900))
+            self.assertLess(result.convert('L').getextrema()[0],100)
+
+    def test_story_pill_corners_stay_transparent_and_emoji_overlay_renders(self):
+        pill = media.place_pill('Ubud')
+        self.assertEqual(pill.getpixel((0,0))[3],0)
+        margin = pill.info['margin']
+        self.assertLess(pill.getpixel((margin,margin))[3],40)
+        self.assertEqual(max(pill.getpixel((0,y))[3] for y in range(pill.height)),0)
+        directory = Path(tempfile.mkdtemp())
+        source = directory/'plate.jpg'
+        Image.new('RGB',(1200,900),(120,120,120)).save(source,'JPEG')
+        destination = directory/'story.jpg'
+        media.compose_story(source,destination,overlay(text='Back home to \U0001F4CDBali \U0001F334',place='Bali \U0001F1EE\U0001F1E9'))
+        with Image.open(destination) as result:
+            self.assertEqual(result.size,(1080,1920))
+
+
+class EmojiRunTests(unittest.TestCase):
+    def test_symbols_missing_from_emoji_font_stay_text_and_keycap_is_one_glyph(self):
+        from PIL import ImageFont
+        self.assertEqual(media.segments('Кафе \u2605 \u2318'),[('text','Кафе \u2605 \u2318')])
+        self.assertEqual(media.segments('1\ufe0f\u20e3'),[('emoji','1\ufe0f\u20e3')])
+        font = ImageFont.truetype(str(media.FONTS/'InterDisplay-Bold.otf'),60)
+        layer = Image.new('RGBA',(400,120),(0,0,0,0))
+        media.draw_runs(layer,10,80,'\u2605 1\ufe0f\u20e3',font,(255,255,255))
+        self.assertIsNotNone(layer.getbbox())
+        self.assertGreater(media.measure('1\ufe0f\u20e3',font),font.size)
+
+    def test_dark_swap_places_and_reports_the_block_actually_pasted(self):
+        directory = Path(tempfile.mkdtemp())
+        source = directory/'plate.jpg'
+        Image.new('RGB',(1200,900),(250,250,250)).save(source,'JPEG')
+        light = media.story_block(overlay(place=None),False)[0]
+        dark = media.story_block(overlay(place=None),True)[0]
+        self.assertNotEqual(light.info['margin'],dark.info['margin'])
+        box = media.compose_story(source,directory/'story.jpg',overlay(place=None))
+        self.assertEqual((box[2]-box[0],box[3]-box[1]),(dark.width-2*dark.info['margin'],dark.height-2*dark.info['margin']))
+
+
 class HeicTests(unittest.TestCase):
     def test_heic_becomes_jpeg(self):
         import tempfile

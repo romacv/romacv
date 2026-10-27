@@ -18,9 +18,10 @@ class ValidatorTests(unittest.TestCase):
         self.spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
         self.spec.update(targets=['tg-channel','threads'],at='2020-01-01T00:00:00+00:00')
         self.spec.pop('blog')
+        self.spec['threads_tag'] = 'iosdev'
 
     def valid(self, **extra):
-        return {'slug':'a','kind':'work','at':'2026-01-01T00:00:00+00:00','targets':['threads'],'media':{},'copy':{'threads':'A concrete fact.\nWhat next?'},'approval':{},**extra}
+        return {'slug':'a','kind':'work','at':'2026-01-01T00:00:00+00:00','targets':['threads'],'media':{},'copy':{'threads':'A concrete fact.\nWhat next?'},'approval':{},'threads_tag':'iosdev',**extra}
 
     def test_example_threads_and_personal_rules(self):
         self.assertEqual(drafter.validate(self.spec),[])
@@ -33,7 +34,7 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any('work' in e for e in drafter.validate(spec)))
 
     def test_personal_channel_and_threads_copy_must_match(self):
-        spec = {'slug':'a','kind':'personal','at':datetime.now(timezone.utc).isoformat(),'targets':['tg-channel','threads'],'media':{},'copy':{'tg-channel':'Привет','threads':'Пока'},'approval':{}}
+        spec = {'slug':'a','kind':'personal','at':datetime.now(timezone.utc).isoformat(),'targets':['tg-channel','threads'],'media':{},'copy':{'tg-channel':'Привет','threads':'Пока'},'approval':{},'threads_tag':'бали'}
         self.assertIn('personal: tg-channel and threads copy must be identical',drafter.validate(spec,copy_only=True))
         spec['copy']['threads'] = 'Привет'
         self.assertNotIn('personal: tg-channel and threads copy must be identical',drafter.validate(spec,copy_only=True))
@@ -43,6 +44,19 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any('chosen' in e for e in errors))
         errors = drafter.validate(self.valid(),prepared=False,chosen=['threads'])
         self.assertFalse(any('chosen' in e for e in errors))
+
+    def test_notes_tag_and_owner_wording(self):
+        self.assertEqual(drafter.validate(self.valid(notes='Блог убран: он только для работы.'),prepared=False),[])
+        for note in ('Blog removed: the schema has no crop field.','Квадрат делает renderer.'):
+            self.assertTrue(any('notes' in e for e in drafter.validate(self.valid(notes=note),prepared=False)),note)
+        self.assertIn('threads needs threads_tag',drafter.validate({k:v for k,v in self.valid().items() if k != 'threads_tag'},prepared=False))
+        self.assertNotIn('threads needs threads_tag',drafter.validate({k:v for k,v in self.valid().items() if k != 'threads_tag'},prepared=False,copy_only=True))
+        for tag in ('#a','a.b','a&b','a b'):
+            self.assertTrue(any('threads_tag' in e for e in drafter.validate(self.valid(threads_tag=tag),prepared=False)),tag)
+        spec = {'slug':'a','kind':'personal','at':datetime.now(timezone.utc).isoformat(),'targets':['tg-story'],'media':{},'copy':{'tg-story':'Back home to 📍Bali'},'approval':{}}
+        self.assertTrue(drafter.validate(spec,copy_only=True))
+        self.assertEqual(drafter.validate(spec,copy_only=True,owner='надо "Back home to 📍Bali"'),[])
+        self.assertEqual(drafter.overlay_errors({'copy':spec['copy'],'overlay':{'tg-story':{'text':'Back home to 📍Bali','place':'📍Bali','anchor':[0.5,0.5],'align':'center'}}},['tg-story'],[{'path':'a.jpg','alt':'a'}]),[])
 
     def test_overlay_rules(self):
         images = [{'path':'a.jpg','alt':'a'}]

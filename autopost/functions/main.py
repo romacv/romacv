@@ -37,7 +37,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 RENDER_SETTINGS = 'final-v1'
 FINAL_DEADLINE = 2400
-EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was.'
+EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead.'
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
 
@@ -503,8 +503,11 @@ def draft(config,store,bucket,payload,directory):
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % len(shots)
+    owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
     def validate(value):
-        errors = drafter.validate(value, prepared=False, chosen=allowed)
+        if drafter.answered(value):
+            return drafter.answer_errors(value) if follow is not None else ['Return a draft, not an answer']
+        errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner)
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
         try:
@@ -525,6 +528,9 @@ def draft(config,store,bucket,payload,directory):
     spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow)
     if superseded(store,payload):
         return
+    if drafter.answered(spec):
+        answer_edit(config,store,payload,item,spec['answer'])
+        return
     assets = {}
     composed = {}
     for target in spec['targets']:
@@ -540,13 +546,36 @@ def draft(config,store,bucket,payload,directory):
                     composed[key] = directory/(target + '-overlay-' + str(index) + '.jpg')
                     media.compose_story(cleaned,composed[key],overlay)
                 path = composed[key]
-            elif target in ('ig-story','tg-story','ig-post'):
+            elif target in ('ig-story','tg-story','ig-post','threads','tg-channel'):
                 converted = directory/(target + '-' + str(index) + '.jpg')
-                media.clean_image(path,converted,target != 'ig-post',target == 'ig-post')
+                media.clean_image(path,converted,target in ('ig-story','tg-story'),target not in ('ig-story','tg-story'))
                 path = converted
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
     preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
+
+
+def answer_edit(config,store,payload,item,answer):
+    slug = item['slug']
+    saved = store.get('specs/' + slug) or {}
+    if saved.get('state') != 'drafting':
+        return
+    digest = asset_hash(saved['spec'],saved['basis'] if 'basis' in saved else saved['assets'])
+    message = tell(config,answer,reply_markup=buttons(slug,digest))
+    def restore(tx):
+        saved = store.get('specs/' + slug,tx)
+        current = store.get('items/' + payload['item'],tx)
+        if not saved or not current or saved.get('state') != 'drafting' or current.get('revision') != payload['revision'] or current.get('status') != 'drafting':
+            return False
+        saved.update(state='previewed',hash=digest,preview_message=message['message_id'])
+        current.update(status='previewed',edits_applied=len(current.get('edits',[])),photos_applied=len(current.get('edit_photos',[])))
+        current.pop('status_message',None)
+        store.put('specs/' + slug,saved,tx)
+        store.put('items/' + payload['item'],current,tx)
+        store.put('published-messages/' + str(message['message_id']),{'slug':slug},tx)
+        return True
+    if not store.atomic(restore):
+        remove_keyboard(config,{'preview_message':message['message_id']})
 
 
 def restrict(config,store,payload,item,photos,video):
@@ -647,8 +676,11 @@ def plan_montage(config,store,bucket,payload,directory):
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
-    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow)
+    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:(drafter.answer_errors(value) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow)
     if superseded(store,payload):
+        return
+    if drafter.answered(edl):
+        answer_edit(config,store,payload,item,edl['answer'])
         return
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
@@ -756,7 +788,7 @@ def rendered(config,store,bucket,payload,directory):
     if job.get('state') != 'done':
         raise Error('Рендер не завершён. Материал сохранён.')
     edl = job['edl']
-    spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],'approval':{}}
+    spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],**({'threads_tag':edl['threads_tag']} if 'threads_tag' in edl else {}),'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
     preview(config,store,bucket,payload['item'],spec,assets,directory,{'edl':edl,'render':RENDER_SETTINGS} if job.get('mode') == 'draft' else None,payload['revision'])
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
@@ -789,6 +821,10 @@ def start_final(config,store,bucket,saved):
         pass
 
 
+def publish_order(targets):
+    return sorted(targets,key=lambda target:target == 'tg-story' and 'tg-channel' in targets)
+
+
 def run(config,store,bucket,slug,directory):
     saved = store.claim_run(slug)
     if not saved:
@@ -816,7 +852,7 @@ def run(config,store,bucket,slug,directory):
         enqueue({'step':'run','slug':slug},'due-' + slug + '-' + secrets.token_hex(8),max(1,int((due-datetime.now(timezone.utc)).total_seconds())))
         return
     published_targets = {**saved['results'],**saved.get('published',{})}
-    for target in spec['targets']:
+    for target in publish_order(spec['targets']):
         if target in published_targets:
             continue
         attempts = saved.setdefault('attempts',{})
@@ -934,6 +970,8 @@ def fix(config,store,slug):
         spec['blog'] = before['blog'].get('blog',spec['blog'])
     if saved['operation'] == 'fix':
         def validate(value):
+            if drafter.answered(value):
+                return drafter.answer_errors(value)
             if not isinstance(value,dict) or set(value) != {'copy','blog'}:
                 return ['Return exactly copy and blog']
             if not isinstance(value['copy'],dict) or set(value['copy']) != set(spec['copy']):
@@ -941,9 +979,15 @@ def fix(config,store,slug):
             if 'blog' not in spec['targets'] and value['blog'] is not None:
                 return ['No blog was published']
             candidate = {**spec,'copy':value['copy'],'blog':value['blog'] if value['blog'] is not None else spec.get('blog')}
-            return drafter.validate(candidate,prepared=False,copy_only=True)
-        asked = {'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'instruction':saved['instruction']}
+            return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
+        status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in source['spec']['targets']}
+        asked = {'mode':'fix','published':{'copy':spec['copy'],'blog':spec.get('blog')},'status':status,'instruction':saved['instruction']}
         corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked)
+        if drafter.answered(corrected):
+            message = tell(config,corrected['answer'])
+            store.change('specs/' + slug,lambda value:value.update(state='rejected'))
+            store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
+            return
         after = {**spec,'copy':corrected['copy']}
         if corrected['blog'] is not None:
             after['blog'] = corrected['blog']
@@ -965,7 +1009,12 @@ def fix(config,store,slug):
             if changes:
                 warning = '\nбудет удалён и опубликован заново, лайки и комментарии пропадут' if target == 'threads' else '\nправь вручную' if target.startswith('ig-') else ''
                 lines.append(label + warning + '\n' + '\n'.join(changes))
-    text = '\n'.join(lines) or 'Изменений нет.'
+    if not lines:
+        message = tell(config,'Менять нечего: текст уже такой.')
+        store.change('specs/' + slug,lambda value:value.update(state='rejected'))
+        store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
+        return
+    text = '\n'.join(lines)
     def say(text):
         message = tell(config,text)
         store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})

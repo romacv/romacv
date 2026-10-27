@@ -1,3 +1,4 @@
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -119,6 +120,33 @@ def shrink(path):
     image.save(path,'JPEG',quality=90)
 
 
+def subject_offset(image, side):
+    from PIL import Image, ImageFilter
+    horizontal = image.width > image.height
+    small = image.convert('L')
+    small.thumbnail((256,256))
+    edges = small.filter(ImageFilter.FIND_EDGES)
+    count = edges.width if horizontal else edges.height
+    profile = list(edges.resize((count,1) if horizontal else (1,count),Image.BOX).tobytes())
+    span = image.width if horizontal else image.height
+    window = max(1,round(side/span*count))
+    total = [0]
+    for value in profile:
+        total.append(total[-1]+value)
+    middle = (count-window)/2
+    best = max(range(count-window+1),key=lambda i:(total[i+window]-total[i])*(1-0.15*abs(i-middle)/max(1,middle)))
+    return min(span-side,round(best/count*span))
+
+
+def square_crop(image):
+    side = min(image.size)
+    if image.width == image.height:
+        return image
+    offset = subject_offset(image,side)
+    box = (offset,0,offset+side,side) if image.width > image.height else (0,offset,side,offset+side)
+    return image.crop(box)
+
+
 def clean_image(source, destination, story=False, crop=False):
     from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageCms
     with Image.open(source) as original:
@@ -129,16 +157,13 @@ def clean_image(source, destination, story=False, crop=False):
             background.paste(front,((1080-front.width)//2,(1920-front.height)//2))
             image = background
         else:
-            image.thumbnail((1440,1800))
             if crop:
-                if image.width / image.height < 0.8:
-                    height = math.floor(image.width/0.8)
-                    top = (image.height-height)//2
-                    image = image.crop((0,top,image.width,top+height))
-                elif image.width / image.height > 1.91:
-                    width = math.floor(image.height*1.91)
-                    left = (image.width-width)//2
-                    image = image.crop((left,0,left+width,image.height))
+                ratio = min(1,1440/min(image.size))
+                if ratio < 1:
+                    image = image.resize((round(image.width*ratio),round(image.height*ratio)),Image.LANCZOS)
+                image = square_crop(image)
+            else:
+                image.thumbnail((1440,1800))
             if image.width < 320:
                 image = image.resize((320,round(image.height*320/image.width)))
         clean = Image.new('RGB',image.size)
@@ -150,6 +175,10 @@ def clean_image(source, destination, story=False, crop=False):
 
 FONTS = Path(__file__).with_name('fonts')
 STORY_SAFE = (60, 250, 1020, 1500)
+EMOJI_BASE = '[\U0001f000-\U0001faff☀-➿⌀-⏿]'
+EMOJI_MARK = '[️\U0001f3fb-\U0001f3ff]*'
+EMOJI_CLUSTER = re.compile('[0-9#*]\ufe0f?\u20e3|[\U0001f1e6-\U0001f1ff]{2}|' + EMOJI_BASE + EMOJI_MARK + '(?:‍' + EMOJI_BASE + EMOJI_MARK + ')*')
+PIN = '\U0001f4cd'
 
 
 def pin_icon(size, color, hole):
@@ -165,14 +194,89 @@ def pin_icon(size, color, hole):
     return image.resize((size,int(size*1.3)),Image.LANCZOS)
 
 
+def segments(text):
+    result, last = [], 0
+    def add(kind, value):
+        if kind == 'text' and result and result[-1][0] == 'text':
+            result[-1] = ('text',result[-1][1] + value)
+        elif value:
+            result.append((kind,value))
+    for found in EMOJI_CLUSTER.finditer(text):
+        add('text',text[last:found.start()])
+        cluster = found.group()
+        if cluster.rstrip('\ufe0f') == PIN:
+            add('pin',cluster)
+        elif has_emoji(cluster):
+            add('emoji',cluster)
+        else:
+            add('text',cluster.replace('\ufe0f','').replace('\u200d',''))
+        last = found.end()
+    add('text',text[last:])
+    return result
+
+
+@lru_cache(maxsize=256)
+def has_emoji(cluster):
+    return emoji_strike(cluster).getbbox() is not None
+
+
+def emoji_strike(cluster):
+    from PIL import Image, ImageDraw, ImageFont
+    font = ImageFont.truetype(str(FONTS/'NotoColorEmoji.ttf'),109)
+    ascent, descent = font.getmetrics()
+    strike = Image.new('RGBA',(round(font.getlength(cluster)),ascent+descent),(0,0,0,0))
+    ImageDraw.Draw(strike).text((0,0),cluster,font=font,embedded_color=True)
+    return strike
+
+
+@lru_cache(maxsize=64)
+def emoji_glyph(cluster, height):
+    from PIL import Image
+    strike = emoji_strike(cluster)
+    return strike.resize((round(strike.width*height/strike.height),height),Image.LANCZOS)
+
+
+def run_image(kind, value, size):
+    if kind == 'pin':
+        return pin_icon(round(size*0.62),(235,64,52,255),(255,255,255,255))
+    return emoji_glyph(value,round(size*1.18))
+
+
+def run_advance(kind, value, size):
+    image = run_image(kind,value,size)
+    return image.width + (round(size*0.12) if kind == 'pin' else 0)
+
+
+def measure(text, font):
+    return sum(font.getlength(value) if kind == 'text' else run_advance(kind,value,font.size) for kind, value in segments(text))
+
+
+def draw_runs(layer, x, baseline, text, font, fill):
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(layer)
+    for kind, value in segments(text):
+        if kind == 'text':
+            draw.text((x,baseline),value,font=font,fill=fill,anchor='ls')
+            x += font.getlength(value)
+            continue
+        image = run_image(kind,value,font.size)
+        top = baseline - image.height if kind == 'pin' else baseline - round(image.height*0.79)
+        layer.alpha_composite(image,(round(x),round(top)))
+        x += run_advance(kind,value,font.size)
+
+
 def soft_shadow(layer, radius, alpha, color=(0,0,0), offset=6):
     from PIL import Image, ImageFilter
-    mask = layer.split()[3].point(lambda value: value*alpha//255)
-    shadow = Image.new('RGBA',layer.size,(*color,0))
+    margin = 3*radius + offset
+    padded = Image.new('RGBA',(layer.width+2*margin,layer.height+2*margin),(0,0,0,0))
+    padded.alpha_composite(layer,(margin,margin))
+    mask = padded.split()[3].point(lambda value: value*alpha//255)
+    shadow = Image.new('RGBA',padded.size,(*color,0))
     shadow.putalpha(mask.filter(ImageFilter.GaussianBlur(radius)))
-    image = Image.new('RGBA',layer.size,(0,0,0,0))
+    image = Image.new('RGBA',padded.size,(0,0,0,0))
     image.alpha_composite(shadow,(0,offset))
-    image.alpha_composite(layer)
+    image.alpha_composite(padded)
+    image.info['margin'] = margin
     return image
 
 
@@ -181,17 +285,19 @@ def place_pill(text):
     semibold = str(FONTS/'InterDisplay-SemiBold.otf')
     pin = pin_icon(34,(235,64,52,255),(255,255,255,255))
     padding, gap, height = 30, 14, 92
-    width = ImageFont.truetype(semibold,50).getlength(text)
+    width = measure(text,ImageFont.truetype(semibold,50))
     size = min(50,int(50*(900-2*padding-gap-pin.width)/max(1,width)))
     if size < round(50/76*44):
         raise Error('Place name cannot fit the story safe width')
     font = ImageFont.truetype(semibold,size)
-    text_width = round(font.getlength(text))
-    image = Image.new('RGBA',(2*padding+pin.width+gap+text_width,height),(0,0,0,0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0,0,image.width-1,height-1),radius=22,fill=(255,255,255,255))
+    text_width = round(measure(text,font))
+    full = (2*padding+pin.width+gap+text_width,height)
+    shape = Image.new('RGBA',(full[0]*4,full[1]*4),(0,0,0,0))
+    ImageDraw.Draw(shape).rounded_rectangle((0,0,full[0]*4-1,full[1]*4-1),radius=88,fill=(255,255,255,255))
+    image = shape.resize(full,Image.LANCZOS)
     image.alpha_composite(pin,(padding,(height-pin.height)//2))
-    draw.text((padding+pin.width+gap,height//2),text,font=font,fill=(20,20,20),anchor='lm')
+    ascent, descent = font.getmetrics()
+    draw_runs(image,padding+pin.width+gap,height//2+(ascent-descent)//2,text,font,(20,20,20))
     return soft_shadow(image,18,90)
 
 
@@ -203,7 +309,7 @@ def wrap_balanced(text, font, limit=900):
         for cuts in combinations(range(1, len(words)), count-1):
             edges = (0, *cuts, len(words))
             lines = [' '.join(words[i:j]) for i, j in zip(edges, edges[1:])]
-            widest = max(font.getlength(line) for line in lines)
+            widest = max(measure(line,font) for line in lines)
             if widest <= limit and (best is None or widest < best[0]):
                 best = (widest, lines)
         if best:
@@ -217,7 +323,7 @@ def is_light(region):
 
 
 def story_line(text, align, dark=False):
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageFont
     bold = str(FONTS/'InterDisplay-Bold.otf')
     size = 64
     while True:
@@ -229,12 +335,13 @@ def story_line(text, align, dark=False):
         if size < 32:
             raise Error('Story text cannot fit the safe width')
     pad, step = 24, round(size*1.2)
-    width = round(max(font.getlength(line) for line in lines))
+    width = round(max(measure(line,font) for line in lines))
     layer = Image.new('RGBA',(width+2*pad,step*len(lines)+2*pad),(0,0,0,0))
-    draw = ImageDraw.Draw(layer)
+    ascent = font.getmetrics()[0]
     for i, line in enumerate(lines):
-        x = {'left':pad,'center':pad+width/2,'right':pad+width}[align]
-        draw.text((x,pad+step*i),line,font=font,fill=(20,20,20) if dark else (255,255,255),anchor={'left':'la','center':'ma','right':'ra'}[align])
+        room = width - measure(line,font)
+        x = pad + {'left':0,'center':room/2,'right':room}[align]
+        draw_runs(layer,x,pad+step*i+ascent,line,font,(20,20,20) if dark else (255,255,255))
     if dark:
         return soft_shadow(layer,14,200,(255,255,255),0)
     return soft_shadow(layer,18,90)
@@ -245,15 +352,23 @@ def story_block(overlay, dark):
     align = overlay['align']
     parts = ([place_pill(overlay['place'])] if overlay.get('place') else []) + [story_line(overlay['text'],align,dark)]
     gap = 8
-    width = max(part.width for part in parts)
-    height = sum(part.height for part in parts) + gap*(len(parts)-1)
-    block = Image.new('RGBA',(width,height),(0,0,0,0))
-    y = 0
+    margin = max(part.info['margin'] for part in parts)
+    width = max(part.width - 2*part.info['margin'] for part in parts) + 2*margin
+    tops, y = [], margin
     for part in parts:
-        x = {'left':0,'center':(width-part.width)//2,'right':width-part.width}[align]
-        block.alpha_composite(part,(x,y))
-        y += part.height + gap
-    return block, height - parts[-1].height, parts[-1]
+        tops.append(y - part.info['margin'])
+        y += part.height - 2*part.info['margin'] + gap
+    height = y - gap + margin
+    block = Image.new('RGBA',(width,height),(0,0,0,0))
+    inner_max = width - 2*margin
+    for part, top in zip(parts,tops):
+        inner = part.width - 2*part.info['margin']
+        x = margin + {'left':0,'center':(inner_max-inner)//2,'right':inner_max-inner}[align] - part.info['margin']
+        block.alpha_composite(part,(x,top))
+    text = parts[-1]
+    box = (x + text.info['margin'], tops[-1] + text.info['margin'], x + text.width - text.info['margin'], tops[-1] + text.height - text.info['margin'])
+    block.info['margin'] = margin
+    return block, box
 
 
 def compose_story(source, destination, overlay):
@@ -265,22 +380,27 @@ def compose_story(source, destination, overlay):
     left, top = (photo.width*scale-1080)/2, (photo.height*scale-1920)/2
     canvas = ImageOps.fit(photo,(1080,1920)).convert('RGBA')
     align = overlay['align']
-    block, text_top, text = story_block(overlay,False)
-    width, height = block.size
     ax = overlay['anchor'][0]*photo.width*scale - left
     ay = overlay['anchor'][1]*photo.height*scale - top
-    x = ax - width/2
-    x = round(min(max(x,STORY_SAFE[0]),STORY_SAFE[2]-width))
-    y = round(min(max(ay-height/2,STORY_SAFE[1]),STORY_SAFE[3]-height))
-    text_x = x + {'left':0,'center':(width-text.width)//2,'right':width-text.width}[align]
-    if is_light(canvas.crop((text_x,y+text_top,text_x+text.width,y+height))):
+    def place(block):
+        margin = block.info['margin']
+        width, height = block.size
+        x = round(min(max(ax - width/2,STORY_SAFE[0]-margin),STORY_SAFE[2]-width+margin))
+        y = round(min(max(ay-height/2,STORY_SAFE[1]-margin),STORY_SAFE[3]-height+margin))
+        return x, y
+    block, box = story_block(overlay,False)
+    x, y = place(block)
+    if is_light(canvas.crop((x+box[0],y+box[1],x+box[2],y+box[3]))):
         block = story_block(overlay,True)[0]
+        x, y = place(block)
+    margin = block.info['margin']
+    width, height = block.size
     canvas.alpha_composite(block,(x,y))
     profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
     canvas.convert('RGB').save(destination,'JPEG',quality=90,icc_profile=profile)
     if destination.stat().st_size > 8_000_000:
         raise Error('Story image exceeds 8 MB')
-    return x, y, x+width, y+height
+    return x+margin, y+margin, x+width-margin, y+height-margin
 
 
 def transcribe(bucket, store, path, source_id, config):

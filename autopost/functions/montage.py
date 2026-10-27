@@ -12,11 +12,16 @@ def validate(edl, sources):
     errors = []
     if not isinstance(edl, dict) or not isinstance(sources, dict):
         return ['EDL and sources must be objects']
-    if set(edl) != {'version', 'kind', 'targets', 'copy', 'cover', 'fit'} or type(edl.get('version')) is not int or edl['version'] != 1:
+    if not {'version', 'kind', 'targets', 'copy', 'cover', 'fit'} <= set(edl) <= {'version', 'kind', 'targets', 'copy', 'cover', 'fit', 'threads_tag'} or type(edl.get('version')) is not int or edl['version'] != 1:
         errors.append('EDL requires version=1, kind, targets, copy, cover, fit')
     if edl.get('kind') not in ('work', 'personal') or edl.get('fit') not in ('crop', 'blur'):
         errors.append('Invalid kind or fit')
+    tag = edl.get('threads_tag')
+    if 'threads_tag' in edl and (not isinstance(tag, str) or not 1 <= len(tag) <= 50 or re.search(r'[#\s.&]', tag)):
+        errors.append('threads_tag must be 1–50 characters without #, spaces, periods or ampersands')
     targets = edl.get('targets')
+    if isinstance(targets, dict) and 'threads' in targets and 'threads_tag' not in edl:
+        errors.append('threads needs threads_tag')
     if not isinstance(targets, dict) or not targets:
         return errors + ['targets must be nonempty object']
     allowed = {'ig-reel':90, 'ig-story':60, 'tg-story':60, 'tg-channel':90, 'threads':90}
@@ -73,8 +78,8 @@ def validate(edl, sources):
                 errors.append('Title times overlap or exceed timeline')
             else:
                 previous_end = end
-            if not isinstance(text, str) or not 1 <= len(text) <= 28 or any(c in text for c in '\n\r{}\\') or EMOJI.search(text):
-                errors.append('Titles require plain text, <=28 characters')
+            if not isinstance(text, str) or not 1 <= len(text) <= 28 or any(c in text for c in '\n\r{}\\'):
+                errors.append('Titles require text without line breaks, <=28 characters')
     cover = edl.get('cover')
     if not isinstance(cover, dict) or set(cover) != {'target', 'time'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
         errors.append('Invalid cover target')

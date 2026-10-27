@@ -11,7 +11,14 @@ from platforms import Error, slug, when, media_files, image_size, text_for, unit
 HISTORY_BYTES = 200_000
 
 
-def validate(spec, prepared=True, copy_only=False, chosen=None):
+NOTE_TERMS = re.compile(r'schema|render|json|overlay|field|slug|api\b|\b(?:ig|tg)-[a-z]+|threads_tag|crop|validat', re.I)
+
+
+def foreign_emoji(text, owner):
+    return [e for e in EMOJI.findall(text) if e not in owner]
+
+
+def validate(spec, prepared=True, copy_only=False, chosen=None, owner=''):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
     size = None
@@ -26,10 +33,20 @@ def validate(spec, prepared=True, copy_only=False, chosen=None):
             raise Error('targets must be a nonempty unique list of supported targets')
         if chosen is not None and any(t not in chosen for t in targets):
             errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay', 'notes'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay', 'notes', 'threads_tag'}:
             errors.append('Unknown spec fields')
-        if 'notes' in spec and not (isinstance(spec['notes'], str) and len(spec['notes']) <= 500):
-            errors.append('notes must be a string of at most 500 characters')
+        if 'notes' in spec:
+            note = spec['notes']
+            letters = [c for c in note if c.isalpha()] if isinstance(note, str) else []
+            if not isinstance(note, str) or len(note) > 200:
+                errors.append('notes must be a string of at most 200 characters')
+            elif NOTE_TERMS.search(note) or letters and sum('\u0400' <= c <= '\u052f' for c in letters) / len(letters) < 0.8:
+                errors.append('notes must be short plain Russian with no technical words, or omitted')
+        tag = spec.get('threads_tag')
+        if 'threads' in targets and tag is None and not copy_only:
+            errors.append('threads needs threads_tag')
+        if tag is not None and (not isinstance(tag, str) or not 1 <= len(tag) <= 50 or re.search(r'[.&#\s]', tag)):
+            errors.append('threads_tag must be 1–50 characters without #, spaces, periods or ampersands')
         if not isinstance(spec.get('approval', {}), dict):
             errors.append('approval must be an object')
         media = spec.get('media', {})
@@ -118,14 +135,14 @@ def validate(spec, prepared=True, copy_only=False, chosen=None):
                 first = text.strip().splitlines()[0] if text.strip() else ''
                 if first.startswith(('#', 'http', '@')) or first.endswith('?'):
                     errors.append('threads: first line must be a situation or fact')
-            if EMOJI.search(text):
-                errors.append(t + ': no emoji in work copy')
+            if foreign_emoji(text, owner):
+                errors.append(t + ': no emoji unless Roman wrote it')
             if t == 'threads' and len(set(re.findall(r'(?:https?://|www\.)\S+', text))) > 5:
                 errors.append('threads: at most 5 unique links')
         if spec.get('kind') == 'personal' and 'tg-channel' in targets and 'threads' in targets and (spec.get('copy') or {}).get('tg-channel') != (spec.get('copy') or {}).get('threads'):
             errors.append('personal: tg-channel and threads copy must be identical')
         errors.extend(overlay_errors(spec, targets, images, size))
-        errors.extend(language_errors(spec))
+        errors.extend(language_errors(spec, owner))
         blog = spec.get('blog')
         if blog and spec.get('kind') != 'work':
             errors.append('blog is for work only')
@@ -166,12 +183,12 @@ def overlay_errors(spec, targets, images, size=None):
             errors.append(target + ': overlay needs text, place, anchor, align')
             continue
         text, place, anchor = value['text'], value['place'], value['anchor']
-        if not isinstance(text, str) or not 1 <= len(text) <= 60 or EMOJI.search(text) or re.search(r'[\x00-\x1f{}\\]', text):
-            errors.append(target + ': overlay text must be 1–60 plain characters without emoji')
+        if not isinstance(text, str) or not 1 <= len(text) <= 60 or re.search(r'[\x00-\x1f{}\\]', text):
+            errors.append(target + ': overlay text must be 1–60 plain characters')
         if isinstance(text, str) and target in spec.get('copy', {}) and text != spec['copy'][target]:
             errors.append(target + ': overlay text must equal the target copy')
-        if place is not None and (not isinstance(place, str) or not 1 <= len(place) <= 40 or EMOJI.search(place) or re.search(r'[\x00-\x1f{}\\]', place)):
-            errors.append(target + ': overlay place must be null or 1–40 plain characters without emoji')
+        if place is not None and (not isinstance(place, str) or not 1 <= len(place) <= 40 or re.search(r'[\x00-\x1f{}\\]', place)):
+            errors.append(target + ': overlay place must be null or 1–40 plain characters')
         if not isinstance(anchor, list) or len(anchor) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 <= n <= 1 for n in anchor):
             errors.append(target + ': overlay anchor must be [x, y] within 0..1')
         elif size:
@@ -189,7 +206,7 @@ def overlay_errors(spec, targets, images, size=None):
     return errors
 
 
-def language_errors(spec):
+def language_errors(spec, owner=''):
     errors = []
     blocks = dict(spec.get('copy', {}))
     if spec.get('blog'):
@@ -199,13 +216,23 @@ def language_errors(spec):
             errors.append(target + ': text required')
             continue
         letters = [c for c in re.sub(r'https?://\S+|(?<!\w)#\w+', '', text) if c.isalpha()]
-        if not letters:
+        if not letters or text.strip() and text.strip() in owner:
             continue
         ratio = sum('\u0400' <= c <= '\u052f' for c in letters) / len(letters)
         russian = target.startswith('tg-') or (spec.get('kind') == 'personal' and not target.startswith('blog'))
         if russian and ratio < 0.5 or not russian and ratio > 0.1:
             errors.append(target + ': copy language mismatch')
     return errors
+
+
+def answered(value):
+    return isinstance(value, dict) and set(value) == {'answer'}
+
+
+def answer_errors(value):
+    if isinstance(value.get('answer'), str) and 1 <= len(value['answer']) <= 600 and sum('\u0400' <= c <= '\u052f' for c in value['answer']) >= len(value['answer']) / 4:
+        return []
+    return ['answer must be a short Russian string of at most 600 characters']
 
 
 def wire(turns, pool):
@@ -239,6 +266,7 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
             turns = turns[:saved.get('base', 0)]
             before = saved.get('before', 0)
     base = len(turns)
+    mark = base
     known = {name for turn in turns for name in turn.get('images', [])}
     turns.append({'role':'user','text':json.dumps({**(follow if turns else payload),**stamp},ensure_ascii=False),'images':[name for name in pool if name not in known]})
     system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text(),'cache_control':{'type':'ephemeral'}}]
@@ -257,6 +285,8 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
         except (ValueError, TypeError, KeyError):
             errors = ['Return a valid JSON object matching the schema']
         if not errors:
+            if isinstance(value, dict) and set(value) == {'answer'}:
+                del turns[mark:]
             if thread:
                 while len(turns) > 4 and len(json.dumps(turns, ensure_ascii=False).encode()) > HISTORY_BYTES:
                     del turns[2:4]

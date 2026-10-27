@@ -13,6 +13,14 @@ class MontageTests(unittest.TestCase):
     def setUp(self):
         example = json.loads((FUNCTIONS.parent/'examples/example-montage.json').read_text())
         self.edl, self.sources = example['edl'], example['sources']
+        self.edl.setdefault('threads_tag','bali')
+
+    def test_threads_target_needs_threads_tag(self):
+        del self.edl['threads_tag']
+        self.assertIn('threads needs threads_tag',montage.validate(self.edl,self.sources))
+        self.edl['targets'].pop('threads')
+        self.edl['copy'].pop('threads')
+        self.assertNotIn('threads needs threads_tag',montage.validate(self.edl,self.sources))
 
     def test_invalid_source_times(self):
         self.assertEqual(montage.validate(self.edl,self.sources),[])

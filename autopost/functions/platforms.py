@@ -253,6 +253,32 @@ def ready(session, container, instagram):
     raise Error('Container processing timed out; retry polls saved container')
 
 
+def story_frame(path):
+    from PIL import Image
+    with Image.open(path) as image:
+        size = image.size
+    if size != (1080, 1920) or path.stat().st_size > 10 * 1024 * 1024:
+        raise Error('Картинка истории должна быть 1080x1920 и не больше 10 МБ.')
+
+
+def channel_post_url(spec, state):
+    if 'tg-channel' not in spec.get('targets', []):
+        return None
+    step = state.get('steps', {}).get('tg-channel:publish')
+    if not step or step.get('status') != 'done':
+        raise Error('История ждёт пост в канале: сначала публикуется канал.')
+    result = step['value']
+    result = result[0] if isinstance(result, list) else result
+    channel = config()['channels']['tg-channel']
+    chat = telegram('getChat', {'chat_id': channel})
+    prefix = chat.get('username') or ('c/' + str(chat['id']).removeprefix('-100'))
+    return f'https://t.me/{prefix}/{result["message_id"]}'
+
+
+def link_area(url):
+    return {'position': {'x_percentage': 50, 'y_percentage': 73, 'width_percentage': 83, 'height_percentage': 7, 'rotation_angle': 0, 'corner_radius_percentage': 4}, 'type': {'type': 'link', 'url': url}}
+
+
 def post_telegram(spec, state, target):
     identity = telegram_identity(target)
     files, text = media_files(spec), text_for(spec, target)
@@ -262,10 +288,18 @@ def post_telegram(spec, state, target):
         content = {'type': field, field: 'attach://asset'}
         if video:
             content['cover_frame_timestamp'] = 0.0
-        result = checkpoint(spec, state, target, 'publish', lambda: telegram('postStory', {
-            'business_connection_id': identity['id'], 'content': content, 'active_period': config().get('story_active_period', 21600),
-            'post_to_chat_page': True, 'caption': text,
-        }, {'asset': files['video' if video else 'image0']}))
+        else:
+            story_frame(files['image0'])
+        fields = {'business_connection_id': identity['id'], 'content': content, 'active_period': config().get('story_active_period', 21600),
+                  'post_to_chat_page': True, 'caption': text}
+        link = channel_post_url(spec, state)
+        if link:
+            fields['areas'] = [link_area(link)]
+        try:
+            result = checkpoint(spec, state, target, 'publish', lambda: telegram('postStory', fields, {'asset': files['video' if video else 'image0']}))
+        except Error as failure:
+            reason = getattr(failure, 'description', '')
+            raise Error('Telegram не принял историю' + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None
         username = identity['user'].get('username')
         return f'https://t.me/{username}/s/{result["id"]}' if username else f'tg://resolve?domain={identity["user"]["id"]}&story={result["id"]}'
     chat_id = identity['id']
@@ -307,6 +341,8 @@ def post_social(spec, state, target, urls, session):
         images = spec.get('media', {}).get('images', [])
         text = text_for(spec, target)
         caption = {'caption' if instagram else 'text': text}
+        if not instagram and spec.get('threads_tag'):
+            caption['topic_tag'] = spec['threads_tag']
         if target == 'ig-story':
             caption = {}
         if len(images) > 1 and target != 'ig-story':
@@ -444,6 +480,7 @@ def request(method, url, fields=None, token=None, data=None, headers=None, timeo
         safe = {'code': 'network', 'description': 'Outcome uncertain; inspect checkpoints'}
     logging.error(json.dumps(safe))
     failure = Error('API failure: ' + str(safe['code']), status_code=status)
+    failure.description = safe.get('description', '')
     failure.not_modified = status == 400 and 'message is not modified' in safe.get('description', '').lower()
     raise failure from None
 

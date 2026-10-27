@@ -152,6 +152,19 @@ def editing(saved, item):
     return 'Правлю черновик' + named(saved, item) + '. Новое превью пришлю сюда.'
 
 
+def asking(saved, item):
+    return 'Читаю по посту' + named(saved, item) + ': отвечу или пришлю превью правки.'
+
+
+def publishing(saved, item=None):
+    targets = (saved.get('spec') or {}).get('targets', [])
+    if saved.get('state') == 'rendering':
+        return 'Собираю пост' + named(saved, item) + ' в полном качестве, потом опубликую.'
+    lines = ['Публикую пост' + named(saved, item) + ': готово ' + str(sum(1 for x in targets if x in saved.get('results', {}))) + ' из ' + str(len(targets)) + '.']
+    lines += [NAMES[x] + ': ' + saved['errors'][x] for x in targets if x in saved.get('errors', {}) and x not in saved.get('results', {})]
+    return '\n'.join(lines)
+
+
 def fixing(saved, item):
     return 'Правлю опубликованный пост' + named(saved, item) + '. Превью изменений пришлю сюда.'
 
@@ -366,6 +379,15 @@ class Store:
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
                 return added(pending, edit)
+            if target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering', 'done', 'partial'):
+                held = self.get('items/' + target['item'], tx) if target.get('item') else None
+                self.put(update_path, {'received':time.time()}, tx)
+                if target['state'] in ('done', 'partial') and self.fixable(target) and note and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
+                    self.queue_fix(tx, slug, target, 'fix', note, identifier)
+                    return asking(target, held)
+                if target['state'] in ('approved', 'running', 'rendering'):
+                    return publishing(target, held)
+                return 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT

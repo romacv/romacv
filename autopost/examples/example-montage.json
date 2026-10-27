@@ -18,6 +18,7 @@
         "subtitles": [{"start":0.5,"end":3.0,"lines":["Сохранил два коротких момента."]}]
       }
     },
+    "threads_tag": "jakarta",
     "cover": {"target":"tg-channel","time":2.0},
     "copy": {
       "tg-channel":"Два коротких момента: оставил естественный звук и собрал их в одно видео.",

@@ -58,6 +58,50 @@ class EditFlowTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get('outbox/edit-42'))
 
 
+class PublishedMessageTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1}
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album'})
+        self.store.put('sessions/inbox',{'current':'album'})
+
+    def say(self, identifier, text):
+        return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
+
+    def test_message_during_publishing_gets_status_not_the_post_hint(self):
+        self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['ig-story','tg-story']},'results':{'ig-story':{}},'errors':{'tg-story':'API failure: 400'}})
+        reply = self.say(10,'ну как, опубликовал?')
+        self.assertIn('готово 1 из 2',reply)
+        self.assertIn('API failure: 400',reply)
+        self.assertIsNone(self.store.get('outbox/fix-10'))
+
+    def test_message_after_publishing_goes_to_the_model_once(self):
+        self.store.put('specs/album',{'state':'partial','item':'item-1','spec':{'targets':['tg-channel'],'copy':{'tg-channel':'x'}},'results':{},'errors':{}})
+        self.assertIn('Читаю по посту',self.say(10,'почему ошибка?'))
+        self.assertIsNotNone(self.store.get('outbox/fix-10'))
+        self.assertEqual(self.store.get('specs/album')['state'],'partial')
+        self.assertIsNone(self.say(10,'почему ошибка?'))
+
+
+class FixAnswerTests(unittest.TestCase):
+    def test_answer_is_sent_before_the_fix_is_closed(self):
+        store = Store(FakeFirestore())
+        spec = {'slug':'album','kind':'work','targets':['tg-channel'],'copy':{'tg-channel':'x'}}
+        store.put('items/item-1',{'slug':'album'})
+        store.put('specs/album',{'state':'done','item':'item-1','spec':spec,'results':{'tg-channel':{'url':'u','message_ids':[1],'copy':'x'}},'errors':{}})
+        store.put('specs/fix-1',{'operation':'fix','source':'album','item':'item-1','instruction':'почему?','state':'drafting','results':{},'errors':{},'hash':''})
+        with patch.object(app.drafter,'ask',return_value={'answer':'Потому что так.'}), patch.object(app,'tell',side_effect=RuntimeError('telegram down')):
+            with self.assertRaises(RuntimeError):
+                app.fix({'roman_chat_id':1},store,'fix-1')
+        self.assertEqual(store.get('specs/fix-1')['state'],'drafting')
+
+
+class PublishOrderTests(unittest.TestCase):
+    def test_channel_publishes_before_its_story_and_nothing_else_moves(self):
+        self.assertEqual(app.publish_order(['tg-story','ig-post','tg-channel','threads']),['ig-post','tg-channel','threads','tg-story'])
+        self.assertEqual(app.publish_order(['tg-story','ig-story']),['tg-story','ig-story'])
+
+
 class PreviewRaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
