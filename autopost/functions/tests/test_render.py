@@ -18,6 +18,20 @@ with patch.dict(sys.modules,{'google.cloud.tasks_v2':Mock()}):
     render = importlib.import_module('render')
 
 
+class BarTests(unittest.TestCase):
+    def test_bar_shows_the_rounded_share(self):
+        self.assertEqual(render.bar(0.4),'▰▰▰▰▱▱▱▱▱▱ 40%')
+        self.assertEqual((render.bar(-1),render.bar(2)),('▱▱▱▱▱▱▱▱▱▱ 0%','▰▰▰▰▰▰▰▰▰▰ 100%'))
+
+    def test_loader_text_adds_the_step_and_the_bar_only_when_known(self):
+        loader = render.Loader({'mode':'draft','loader':{'text':'Монтирую'}},Mock())
+        loader.stage('Рендерю черновик')
+        self.assertTrue(loader.text().startswith('Монтирую\nРендерю черновик: 0:0'))
+        self.assertNotIn('%',loader.text())
+        loader.progress(0.5)
+        self.assertTrue(loader.text().endswith('шаг 3 из 3\n▰▰▰▰▰▱▱▱▱▱ 50%'))
+
+
 class LoaderTests(unittest.TestCase):
     def test_stage_edits_the_status_message_and_failure_replaces_it(self):
         with patch.dict(render.os.environ,{'TELEGRAM_BOT_TOKEN':'t'}):

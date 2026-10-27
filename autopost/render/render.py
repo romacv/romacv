@@ -15,10 +15,32 @@ import uuid
 from google.cloud import storage, firestore, tasks_v2
 
 
-def run(arguments):
-    result = subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y',*map(str,arguments)],capture_output=True,timeout=1800)
-    if result.returncode:
+def run(arguments, seconds=None, span=(0,1)):
+    command = ['ffmpeg','-hide_banner','-loglevel','error','-nostdin','-y',*(['-progress','pipe:1','-nostats'] if seconds else []),*map(str,arguments)]
+    if not seconds:
+        if subprocess.run(command,capture_output=True,timeout=1800).returncode:
+            raise RuntimeError('Render failed')
+        return
+    process = subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+    timer = threading.Timer(1800,process.kill)
+    timer.start()
+    try:
+        for line in process.stdout:
+            name, _, value = line.strip().partition('=')
+            if name == 'out_time_us' and value.isdigit():
+                progress(span[0] + (span[1] - span[0])*min(1,int(value)/1e6/max(seconds,0.001)))
+        code = process.wait()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        timer.cancel()
+    if code:
         raise RuntimeError('Render failed')
+
+
+def bar(fraction, width=10):
+    filled = round(max(0,min(1,fraction))*width)
+    return '▰'*filled + '▱'*(width-filled) + f' {round(max(0,min(1,fraction))*100)}%'
 
 
 def ass_time(seconds):
@@ -176,7 +198,8 @@ def prepare(bucket,job,root):
     outputs = {'sources':{},'durations':{},'audio':{},'sheets':[]}
     if sum(m['size'] for m in job['sources'].values()) > 1024*1024*1024:
         raise RuntimeError('Batch exceeds 1 GiB')
-    for name, manifest in job['sources'].items():
+    count = len(job['sources'])
+    for position, (name, manifest) in enumerate(job['sources'].items()):
         path = root / name
         bucket.blob(manifest['object'],generation=int(manifest['generation'])).download_to_filename(str(path))
         if digest_file(path) != manifest['sha256']:
@@ -188,7 +211,7 @@ def prepare(bucket,job,root):
         outputs['audio'][name] = {'duration':duration,'audio':audio}
         if audio:
             flac = root / (path.stem + '.flac')
-            run(['-i',path,'-vn','-ac','1','-ar','16000','-map_metadata','-1',flac])
+            run(['-i',path,'-vn','-ac','1','-ar','16000','-map_metadata','-1',flac],duration,(position/count,(position+0.4)/count))
             outputs['audio'][name].update(put(bucket,flac,job['prefix'] + '/' + flac.name))
             flac.unlink()
         if path.suffix == '.mp4':
@@ -201,7 +224,7 @@ def prepare(bucket,job,root):
             clean.unlink()
             frames = root / path.stem
             frames.mkdir()
-            run(['-i',path,'-vf','fps=1,scale=320:-2','-q:v','4',frames/'%06d.jpg'])
+            run(['-i',path,'-vf','fps=1,scale=320:-2','-q:v','4',frames/'%06d.jpg'],duration,((position+0.4)/count,(position+0.9)/count))
             images = sorted(frames.glob('*.jpg'))
             for offset in range(0,len(images),16):
                 sheet = Image.new('RGB',(1280,880),'black')
@@ -220,6 +243,7 @@ def prepare(bucket,job,root):
                 if len(outputs['sheets']) > 100:
                     raise RuntimeError('Too many frames; split batch')
         path.unlink()
+        progress((position+1)/count)
     return outputs
 
 
@@ -272,8 +296,11 @@ def render(bucket, job, root):
         if digest_file(path) != manifest['sha256']:
             raise RuntimeError('Source hash changed')
         sources[source] = path
+        progress(len(sources)/len(referenced))
     stage('Рендерю черновик' if draft else 'Собираю финал')
     outputs, joined_files = {}, {}
+    length = {target:sum(clip['out']-clip['in'] for clip in job['edl']['targets'][target]['clips']) for target in groups}
+    work, finished = max(0.001,2*sum(length.values())), 0
     for target in groups:
         timeline = job['edl']['targets'][target]
         parts = []
@@ -287,7 +314,9 @@ def render(bucket, job, root):
             if not audio:
                 arguments += ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
             arguments += ['-filter_complex', filters + '[vout]', '-map','[vout]','-map','0:a:0' if audio else '1:a:0','-t',clip['out']-clip['in'],*part_codec(draft),'-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-map_metadata','-1',part]
-            run(arguments)
+            span = max(0.001,clip['out']-clip['in'])
+            run(arguments,span,(finished/work,(finished+span)/work))
+            finished += span
             parts.append(part)
         concat = root / (target + '.txt')
         concat.write_text(''.join("file '" + str(p) + "'\n" for p in parts))
@@ -336,7 +365,8 @@ def render(bucket, job, root):
             video_filter += ',scale=720:1280'
         arguments = ['-i',joined_files[target],'-i',cover,*title_inputs,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af',audio_filter(draft),*encode_arguments(target,draft)]
         arguments += ['-movflags','+faststart','-map_metadata','-1','-map_chapters','-1','-metadata','encoder=','-metadata:s:v','encoder=',output]
-        run(arguments)
+        run(arguments,max(0.001,length[target]),(finished/work,(finished+length[target])/work))
+        finished += length[target]
         joined_files[target].unlink()
         limit = min(30_000_000 if name == 'tg-story' else 50_000_000 for name in groups[target])
         if output.stat().st_size > limit:
@@ -374,6 +404,7 @@ def clip_arguments(source, fmt, output):
 def render_clips(bucket, job, root):
     stage('Режу клипы')
     outputs = {'clips':{}}
+    units, made = max(1,len(job['sources'])*len(job['formats'])), 0
     for stem, manifest in job['sources'].items():
         source = root / (stem + '.mp4')
         bucket.blob(manifest['object'],generation=int(manifest['generation'])).download_to_filename(str(source))
@@ -381,7 +412,8 @@ def render_clips(bucket, job, root):
             raise RuntimeError('Source hash changed')
         for fmt in job['formats']:
             output = root / (fmt + '-' + stem + '.mp4')
-            run(clip_arguments(source,fmt,output))
+            run(clip_arguments(source,fmt,output),max(0.001,min(CLIP_LIMIT,float(job['durations'][stem]))),(made/units,(made+1)/units))
+            made += 1
             if output.stat().st_size > CLIP_FORMATS[fmt]:
                 raise RuntimeError('Clip exceeds upload limit')
             measured = json.loads(subprocess.run(['ffprobe','-v','error','-show_format','-of','json',str(output)],capture_output=True,check=True).stdout)
@@ -404,6 +436,9 @@ class Loader:
         self.token = os.environ.get('TELEGRAM_BOT_TOKEN')
         self.reference = reference
         self.label = ''
+        self.percent = None
+        mode = job.get('mode')
+        self.step = {'prepare':1,'draft':3}.get(mode) if mode == 'draft' or mode == 'prepare' and job.get('montage') and not job.get('target') else None
         self.steps = []
         self.began = time.time()
         self.shown = None
@@ -416,7 +451,11 @@ class Loader:
 
     def text(self):
         seconds = int(time.time() - self.began)
-        return (self.settings.get('text','') + '\n' + self.label + ': ' + f'{seconds//60}:{seconds%60:02}').strip()
+        line = self.label + ': ' + f'{seconds//60}:{seconds%60:02}' + (f' · шаг {self.step} из 3' if self.step else '')
+        return (self.settings.get('text','') + '\n' + line + ('\n' + bar(self.percent) if self.percent is not None else '')).strip()
+
+    def progress(self, fraction):
+        self.percent = fraction
 
     def edit(self, text):
         if self.settings.get('message_id') and text != self.shown:
@@ -452,11 +491,12 @@ class Loader:
 
     def stage(self, label):
         self.label = label
+        self.percent = None
         now = time.time()
         self.close(now)
         self.steps.append({'label':label,'since':now})
         try:
-            self.reference.update({'progress':{'label':label,'since':self.began},'steps':self.steps,'started':self.began,'resources':{'cpu':CPU,'mem_gib':MEMORY_GIB},'usage':self.usage()})
+            self.reference.update({'progress':{'label':label,'since':self.began,**({'step':self.step,'total':3} if self.step else {})},'steps':self.steps,'started':self.began,'resources':{'cpu':CPU,'mem_gib':MEMORY_GIB},'usage':self.usage()})
         except Exception:
             pass
         try:
@@ -487,6 +527,11 @@ LOADER = None
 def stage(label):
     if LOADER:
         LOADER.stage(label)
+
+
+def progress(fraction):
+    if LOADER:
+        LOADER.progress(fraction)
 
 
 def enqueue(job, success):

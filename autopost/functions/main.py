@@ -650,7 +650,7 @@ def draft(config,store,bucket,payload,directory):
     if not item:
         return
     if item.get('montage') and item.get('status_message'):
-        edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа').strip())
+        edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа · шаг 2 из 3').strip())
     inputs = media.intake(bucket,payload['item'],item,config,directory)
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
@@ -880,6 +880,8 @@ def plan_montage(config,store,bucket,payload,directory):
         start_preparation(config,store,bucket,payload,item,inputs)
         return
     config = {**config,'prepared_audio':item.get('prepared',{}).get('audio',{})}
+    if item.get('status_message'):
+        edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа · шаг 2 из 3').strip())
     if item.get('prepared'):
         store.change('items/' + payload['item'],lambda value:value.update(uploads={a['name']:a['manifest'] for a in inputs}))
     sources,transcripts,notes,images,manifests = {},{},[],[],{}
@@ -934,7 +936,7 @@ def plan_montage(config,store,bucket,payload,directory):
 def start_preparation(config,store,bucket,payload,item,inputs,target=None):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
+    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),**({'montage':True} if item.get('montage') else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
