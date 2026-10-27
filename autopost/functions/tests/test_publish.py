@@ -9,6 +9,7 @@ FUNCTIONS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(FUNCTIONS))
 from fake_firestore import FakeFirestore
 import platforms as p
+import drafter
 import main as app
 from store import Store, StateError
 from blog_commit import GitHub
@@ -109,6 +110,79 @@ class PublisherTests(unittest.TestCase):
         before = p.fingerprint(self.spec)
         image.write_bytes(b'changed')
         self.assertNotEqual(before,p.fingerprint(self.spec))
+
+
+
+class PublishedTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_user_id':1,'roman_chat_id':1,'telegram_bot_id':2,'channels':{'tg-channel':-100123}}
+        self.temp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1])
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        p.configure(self.config,self.store,self.root)
+        keyboard = patch.object(app,'remove_keyboard')
+        self.keyboard = keyboard.start()
+        self.addCleanup(keyboard.stop)
+        self.spec = {'slug':'article','kind':'work','at':'2020-01-01T00:00:00+00:00','targets':['tg-channel','threads','ig-post'],'media':{},'copy':{'tg-channel':'Здесь ошибка в тексте.','threads':'A concrete fact.\nWhat next?','ig-post':'A concrete fact. #tools #coding #software'},'approval':{}}
+        self.results = {'tg-channel':{'url':'https://t.me/example/10','chat_id':-100123,'message_ids':[10,11],'caption':True,'copy':self.spec['copy']['tg-channel']},'threads':{'url':'https://www.threads.com/@romacv777/post/Abc','id':'123','copy':self.spec['copy']['threads']},'ig-post':{'url':'https://www.instagram.com/p/Abc/','id':'456','copy':self.spec['copy']['ig-post']}}
+        self.source = {'item':'item-1','state':'done','spec':self.spec,'results':self.results,'preview_message':20,'published_at':1,'hash':'abcdefgh1234'}
+        self.store.put('specs/article',self.source)
+        self.store.put('published-messages/20',{'slug':'article'})
+        self.store.put('items/item-1',{'status':'previewed','revision':1})
+
+    def intake(self, text, reply=None, identifier=100):
+        message = {'text':text,'message_id':identifier}
+        if reply:
+            message['reply_to_message'] = {'message_id':reply}
+        return self.store.intake({'update_id':identifier,'message':message},self.config)
+
+    def delete_tap(self, identifier=100, digest=None):
+        digest = digest or self.store.get('specs/article')['hash'][:8]
+        return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':'pdel:article:' + digest}},self.config)
+
+    def prepare(self, operation='fix'):
+        self.delete_tap() if operation == 'delete' else self.intake('ошибка в посте',20)
+        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Здесь исправленный текст.'},'blog':None}
+        with patch.object(app,'tell',return_value={'message_id':30}), patch.object(drafter,'ask',return_value=corrected):
+            app.fix(self.config,self.store,'fix-100')
+        return self.store.get('specs/fix-100')
+
+    def approve(self, saved, verb='fix', identifier=101):
+        return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':verb + ':fix-100:' + saved['hash'][:8]}},self.config)
+
+    def test_fix_edits_only_changed_targets_and_never_reposts(self):
+        saved = self.prepare()
+        self.assertTrue(self.approve(saved))
+        with patch.object(p,'change_published',return_value='исправлено') as change, patch.object(p,'post_social') as repost, patch.object(p,'post_telegram') as post, patch.object(app,'tell',return_value={'message_id':31}):
+            app.apply_fix(self.config,self.store,None,'fix-100',self.root)
+        self.assertEqual([call.args[0] for call in change.call_args_list],['tg-channel'])
+        repost.assert_not_called()
+        post.assert_not_called()
+        original = self.store.get('specs/article')
+        self.assertEqual(original['results']['tg-channel']['copy'],'Здесь исправленный текст.')
+        self.assertEqual(original['results']['threads'],self.results['threads'])
+        self.assertEqual(self.store.get('specs/fix-100')['state'],'done')
+
+    def test_delete_removes_each_target_once_and_partial_keeps_keyboard(self):
+        saved = self.prepare('delete')
+        self.approve(saved,'del')
+        def change(target,*args):
+            if target == 'threads':
+                raise p.Error('permission',403)
+            return 'удалено'
+        with patch.object(p,'change_published',side_effect=change) as action, patch.object(app,'tell',return_value={'message_id':31}) as tell:
+            app.apply_fix(self.config,self.store,None,'fix-100',self.root)
+            self.assertEqual(sorted(call.args[0] for call in action.call_args_list),['ig-post','tg-channel','threads'])
+            markup = json.dumps(tell.call_args.kwargs['reply_markup'])
+            self.assertIn('pfix:article',markup)
+            self.assertIn('pdel:article',markup)
+            self.assertIn('retry:fix-100',markup)
+            self.approve(saved,'retry',102)
+            app.apply_fix(self.config,self.store,None,'fix-100',self.root)
+            self.assertEqual([call.args[0] for call in action.call_args_list][3:],['threads'])
+        self.assertEqual(self.store.get('specs/article')['results']['tg-channel']['deleted'],True)
+        self.assertFalse(self.store.get('specs/article').get('deleted'))
 
 
 if __name__ == '__main__':
