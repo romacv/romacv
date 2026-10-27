@@ -5,20 +5,21 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://storage.googleapis.com/resromcom-493b4-autopost/ https://us-central1-resromcom-493b4.cloudfunctions.net/webhook; base-uri 'none'; form-action 'none'">
-<title>Загрузка видео</title>
+<title>Загрузка файлов</title>
 <style>body{font:18px system-ui;max-width:640px;margin:48px auto;padding:0 24px;color:#202124}button,input{font:inherit;margin:12px 0;max-width:100%}progress{width:100%}li{margin-bottom:16px}button{padding:12px 20px}p{line-height:1.5}</style>
 </head>
 <body>
-<h1>Загрузка видео</h1>
+<h1>Загрузка файлов</h1>
 <p>Выбери файлы в порядке, указанном в списке. Ссылка действует 15 минут.</p>
 <ol id="files"></ol>
-<input id="picker" type="file" accept="video/mp4" multiple>
+<input id="picker" type="file" accept="video/mp4,image/jpeg,image/png,image/webp,image/heic,.heic,.heif" multiple>
 <button id="start" disabled>Загрузить</button>
 <progress id="progress" value="0" max="100"></progress>
 <p id="status" role="status">Открой ссылку из чата.</p>
 <script>
 'use strict';
 const picker=document.getElementById('picker'), start=document.getElementById('start'), status=document.getElementById('status'), progress=document.getElementById('progress');
+const extensions={'video/mp4':['.mp4'],'image/jpeg':['.jpg','.jpeg'],'image/png':['.png'],'image/webp':['.webp'],'image/heic':['.heic','.heif']};
 let ticket;
 try {
   ticket=JSON.parse(decodeURIComponent(location.hash.slice(1)));
@@ -28,15 +29,17 @@ try {
   if(complete.href!=='https://us-central1-resromcom-493b4.cloudfunctions.net/webhook') throw Error();
   for(const upload of ticket.uploads){
     const url=new URL(upload.url);
+    upload.type=upload.type||'video/mp4';
+    if(!extensions[upload.type])throw Error();
     if(url.origin!=='https://storage.googleapis.com'||!url.pathname.startsWith('/resromcom-493b4-autopost/inbox/')||url.username||url.password) throw Error();
     const li=document.createElement('li'); li.textContent=upload.name; document.getElementById('files').append(li);
   }
   status.textContent='Выбери '+ticket.uploads.length+' файл(а).';
 } catch {ticket=null; status.textContent='Ссылка отсутствует, повреждена или истекла. Запроси новую в чате.';}
 picker.addEventListener('change',()=>{start.disabled=!ticket||picker.files.length!==ticket.uploads.length;});
-function put(url,file,onProgress){
+function put(url,type,file,onProgress){
   return new Promise((resolve,reject)=>{
-    const request=new XMLHttpRequest(); request.open('PUT',url); request.setRequestHeader('Content-Type','video/mp4');request.setRequestHeader('x-goog-if-generation-match','0');
+    const request=new XMLHttpRequest(); request.open('PUT',url); request.setRequestHeader('Content-Type',type);request.setRequestHeader('x-goog-if-generation-match','0');
     request.upload.onprogress=event=>{if(event.lengthComputable)onProgress(event.loaded/event.total);};
     request.onload=()=>request.status>=200&&request.status<300?resolve():reject(Error());
     request.onerror=()=>reject(Error()); request.send(file);
@@ -48,10 +51,10 @@ start.addEventListener('click',async()=>{
     if(ticket.receipt.expires*1000<Date.now())throw Error();
     const selected=Array.from(picker.files), total=selected.reduce((sum,file)=>sum+file.size,0);let uploaded=0;
     if(total>1024*1024*1024)throw Error();
-    if(selected.some(file=>!file.name.toLowerCase().endsWith('.mp4')||file.size>512*1024*1024))throw Error();
+    if(selected.some((file,index)=>!extensions[ticket.uploads[index].type].some(extension=>file.name.toLowerCase().endsWith(extension))||file.size>512*1024*1024))throw Error();
     for(let index=0;index<selected.length;index++){
       status.textContent='Загрузка '+(index+1)+' из '+selected.length;
-      await put(ticket.uploads[index].url,selected[index],fraction=>{progress.value=100*(uploaded+selected[index].size*fraction)/total;});
+      await put(ticket.uploads[index].url,ticket.uploads[index].type,selected[index],fraction=>{progress.value=100*(uploaded+selected[index].size*fraction)/total;});
       uploaded+=selected[index].size;
     }
     const response=await fetch(ticket.complete,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ticket.receipt),credentials:'omit',referrerPolicy:'no-referrer'});

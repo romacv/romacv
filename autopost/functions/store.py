@@ -47,7 +47,7 @@ def imaged(message):
     document = message.get('document')
     if message.get('photo') or not isinstance(document, dict) or document.get('mime_type') not in IMAGE_MIMES:
         return message
-    photo = {k:v for k,v in document.items() if k in ('file_id', 'file_unique_id', 'file_size')}
+    photo = {k:v for k,v in document.items() if k in ('file_id', 'file_unique_id', 'file_size', 'mime_type')}
     return {**{k:v for k,v in message.items() if k != 'document'}, 'photo':[photo]}
 
 
@@ -310,15 +310,12 @@ class Store:
                     return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».'
                 group = message.get('media_group_id')
                 joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
-                if filled and isinstance(body.get('photo'), list) and body['photo'] and isinstance(update.get('message', {}).get('document'), dict) and body['photo'][-1].get('file_size', 0) > 20*1024*1024:
-                    self.put(update_path, {'received':time.time()}, tx)
-                    return {'item':item_id, 'revision':item['revision'], 'text':'Картинка больше 20 МБ: пришли её как фото или сожми.', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else 'Картинка больше 20 МБ: пришли её как фото или сожми.'
                 if filled:
                     item['messages'].append(body)
                     item['revision'] += 1
                     item['updated'] = time.time()
                 session['collecting'] = item_id
-                large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}),))
+                large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
                 if large:
                     item['waiting_upload'] = True
                     session['upload_item'] = item_id

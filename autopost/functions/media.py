@@ -15,12 +15,12 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 
 
-def signed(bucket, name, config, method='GET', minutes=60, generation=None):
+def signed(bucket, name, config, method='GET', minutes=60, generation=None, content_type='video/mp4'):
     import google.auth
     from google.auth.transport.requests import Request
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
     credentials.refresh(Request())
-    return bucket.blob(name).generate_signed_url(version='v4', expiration=timedelta(minutes=minutes),method=method,content_type='video/mp4' if method == 'PUT' else None,service_account_email=config['runtime_service_account'], access_token=credentials.token, generation=generation, headers={'x-goog-if-generation-match':'0'} if method == 'PUT' else None)
+    return bucket.blob(name).generate_signed_url(version='v4', expiration=timedelta(minutes=minutes),method=method,content_type=content_type if method == 'PUT' else None,service_account_email=config['runtime_service_account'], access_token=credentials.token, generation=generation, headers={'x-goog-if-generation-match':'0'} if method == 'PUT' else None)
 
 
 def upload(bucket, path, name):
@@ -49,6 +49,10 @@ def download(bucket, manifest, destination):
         raise Error('Stored media hash mismatch')
 
 
+def upload_type(attachment):
+    return 'video/mp4' if attachment['kind'] == 'video' else attachment['mime_type']
+
+
 def attachments(item):
     result = []
     for message in item['messages']:
@@ -73,6 +77,8 @@ def intake(bucket, item_id, item, config, directory):
         if saved:
             if attachment['kind'] == 'photo':
                 download(bucket,saved,path)
+                if saved['size'] > 20*1024*1024:
+                    shrink(path)
         elif attachment.get('file_size',0) > 20*1024*1024:
             raise Error('Large media upload not complete')
         else:
@@ -95,6 +101,15 @@ def intake(bucket, item_id, item, config, directory):
         if attachment['kind'] != 'photo':
             path.unlink(missing_ok=True)
     return result
+
+
+def shrink(path):
+    from PIL import Image, ImageOps
+    with Image.open(path) as original:
+        original.draft('RGB',(2560,2560))
+        original.thumbnail((2560,2560))
+        image = ImageOps.exif_transpose(original).convert('RGB')
+    image.save(path,'JPEG',quality=90)
 
 
 def clean_image(source, destination, story=False, crop=False):

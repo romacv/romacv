@@ -403,7 +403,7 @@ def upload_prompt(config,store,bucket,payload):
     for attachment in media.attachments(item):
         if attachment.get('file_size',0) > 20*1024*1024 and attachment['name'] not in item.get('uploads',{}):
             name = 'inbox/' + payload['item'] + '/' + attachment['name']
-            uploads.append({'name':attachment['name'],'url':media.signed(bucket,name,config,'PUT',15)})
+            uploads.append({'name':attachment['name'],'type':media.upload_type(attachment),'url':media.signed(bucket,name,config,'PUT',15,content_type=media.upload_type(attachment))})
     fragment = {'uploads':uploads,'complete':'https://us-central1-resromcom-493b4.cloudfunctions.net/webhook','receipt':{'action':'uploaded','item':payload['item'],'revision':item['revision'],'expires':expires,'token':upload_mac(config,payload['item'],item['revision'],expires)}}
     tell(config,'Файл больше 20 МБ' + (' для' + item_name(item) if item_name(item) else '') + ', загрузи сюда (ссылка 15 минут):\nhttps://www.resrom.com/u/#' + quote(json.dumps(fragment,separators=(',',':')),safe=''))
 
@@ -425,8 +425,8 @@ def upload_complete(config,store,bucket,payload,directory):
         except NotFound:
             raise platforms.ExpiredMaterial('Материал истёк или не загружен. Пришли файлы заново.') from None
         total += blob.size
-        if total > 1024*1024*1024 or blob.size > 512*1024*1024 or blob.content_type != 'video/mp4':
-            raise Error('Пакет должен быть MP4 <=512 МБ на файл, <=1 ГБ всего.')
+        if total > 1024*1024*1024 or blob.size > 512*1024*1024 or blob.content_type != media.upload_type(attachment):
+            raise Error('Файл должен быть MP4 или изображением <=512 МБ, пакет <=1 ГБ.')
         pending.append((attachment,blob))
     for attachment, blob in pending:
         generation = blob.generation
