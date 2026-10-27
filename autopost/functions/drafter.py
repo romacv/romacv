@@ -18,7 +18,7 @@ def foreign_emoji(text, owner):
     return [e for e in EMOJI.findall(text) if e not in owner]
 
 
-def validate(spec, prepared=True, copy_only=False, chosen=None, owner=''):
+def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=False):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
     size = None
@@ -50,7 +50,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner=''):
         if not isinstance(spec.get('approval', {}), dict):
             errors.append('approval must be an object')
         media = spec.get('media', {})
-        if set(media) - {'images', 'video', 'cover'}:
+        if set(media) - {'images', 'clips', 'video', 'cover', 'sequence'}:
             errors.append('Unknown media fields')
         images = media.get('images', [])
         if not isinstance(images, list) or len(images) > 10:
@@ -88,7 +88,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner=''):
                         errors.append('cover must be 1080x1920 JPEG with embedded sRGB profile')
             if 'ig-post' in targets and (not images or media.get('video')):
                 errors.append('ig-post needs 1 image or 2–10 carousel images')
-            if 'ig-reel' in targets and not media.get('video'):
+            if 'ig-reel' in targets and not media.get('video') and not clips:
                 errors.append('ig-reel needs video')
             for t in ('ig-story', 'tg-story'):
                 if t in targets and not (media.get('video') or images):

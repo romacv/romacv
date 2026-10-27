@@ -65,12 +65,12 @@ def offered(config, business):
     return [key for key, label, targets in GROUPS if any(have[t] for t in targets)]
 
 
-UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужен текст без видео'}
+UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужны фото или текст'}
 SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
 
 
 def unsupported(targets, photos, video):
-    missing = {'ig-reel':not video,'ig-post':video or not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video}
+    missing = {'ig-reel':not video,'ig-post':not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video and not photos}
     return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
 
 
@@ -660,13 +660,13 @@ class Store:
         if verb == 'done' and offers and not [x for x in item.get('chosen', []) if x in offers]:
             return CHOICE_HINT
         video = any(m.get('video') for m in item['messages'])
+        photos = any(imaged(m).get('photo') for m in item['messages'])
         if verb == 'done' and item.get('chosen'):
             chosen = chosen_targets(item['chosen'], config or {}, business)
-            reasons = unsupported(chosen, not video and any(imaged(m).get('photo') for m in item['messages']), video)
+            reasons = unsupported(chosen, photos, video)
             if chosen and len(reasons) == len(chosen):
                 return ' '.join(skipped_lines(reasons))
-        if verb == 'done' and video and any(m.get('photo') for m in item['messages']):
-            return 'В монтаж идут видео, текст и голос. Фото пришли отдельным /post.'
+        montage = video and not photos
         if session.get('collecting') == item_id:
             session.pop('collecting')
         item['revision'] += 1
@@ -680,10 +680,10 @@ class Store:
         else:
             session['current'] = item['slug']
             item['status'] = 'queued'
-            item['montage'] = video
-            self.job(tx, {'item':item_id, 'step':'montage' if video else 'draft', 'revision':item['revision']}, 'draft-' + identifier)
-            result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.' if video else taken(item)
-            record = self.retire(taps, query, ('Монтирую ' + clips(item) if video else 'Готовлю превью') + titled(item) + '…')
+            item['montage'] = montage
+            self.job(tx, {'item':item_id, 'step':'montage' if montage else 'draft', 'revision':item['revision']}, 'draft-' + identifier)
+            result = 'Монтирую ' + clips(item) + titled(item) + '. Превью пришлю сюда.' if montage else taken(item)
+            record = self.retire(taps, query, ('Монтирую ' + clips(item) if montage else 'Готовлю превью') + titled(item) + '…')
             if record:
                 item['status_message'] = record
         self.put('items/' + item_id, item, tx)

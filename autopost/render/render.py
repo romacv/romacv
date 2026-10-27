@@ -346,6 +346,46 @@ def render(bucket, job, root):
     return {'videos':outputs,'cover':put(bucket,cover,job['prefix'] + '/cover.jpg')}
 
 
+CLIP_LIMIT = 60
+CLIP_FORMATS = {'square':50_000_000, 'channel':50_000_000, 'story-ig':50_000_000, 'story-tg':30_000_000}
+
+
+def clip_arguments(source, fmt, output):
+    seconds = min(CLIP_LIMIT, float(json.loads(subprocess.run(['ffprobe','-v','error','-show_format','-of','json',str(source)],capture_output=True,check=True).stdout)['format']['duration']))
+    if fmt == 'square':
+        graph = 'scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,setsar=1,fps=30'
+    elif fmt == 'channel':
+        graph = 'scale=1280:1280:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=30'
+    else:
+        graph = clip_filters('blur',False) + (',scale=720:1280' if fmt == 'story-tg' else '')
+    codec = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if fmt == 'story-tg' else ['-c:v','libx264','-preset','fast','-crf','22','-maxrate','5M','-bufsize','10M','-g','30']
+    audio = bool(json.loads(subprocess.run(['ffprobe','-v','error','-select_streams','a','-show_entries','stream=index','-of','json',str(source)],capture_output=True,check=True).stdout).get('streams'))
+    silence = [] if audio else ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
+    return ['-i',source,*silence,'-t',seconds,'-filter_complex',graph + '[vout]','-map','[vout]','-map','0:a:0' if audio else '1:a:0',*codec,'-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','128k','-ar','48000','-ac','2','-movflags','+faststart','-map_metadata','-1','-map_chapters','-1','-metadata','encoder=','-metadata:s:v','encoder=',output]
+
+
+def render_clips(bucket, job, root):
+    outputs = {'clips':{}}
+    for stem, manifest in job['sources'].items():
+        source = root / (stem + '.mp4')
+        bucket.blob(manifest['object'],generation=int(manifest['generation'])).download_to_filename(str(source))
+        if digest_file(source) != manifest['sha256']:
+            raise RuntimeError('Source hash changed')
+        for fmt in job['formats']:
+            output = root / (fmt + '-' + stem + '.mp4')
+            run(clip_arguments(source,fmt,output))
+            if output.stat().st_size > CLIP_FORMATS[fmt]:
+                raise RuntimeError('Clip exceeds upload limit')
+            measured = json.loads(subprocess.run(['ffprobe','-v','error','-show_format','-of','json',str(output)],capture_output=True,check=True).stdout)
+            seconds = float(measured['format']['duration'])
+            outputs['clips'].setdefault(fmt,{})[stem] = {**put(bucket,output,job['prefix'] + '/' + output.name),'seconds':seconds,'trimmed':float(job['durations'][stem]) > CLIP_LIMIT + 0.01}
+            output.unlink()
+        source.unlink()
+    if job.get('edl'):
+        outputs.update(render(bucket,job,root))
+    return outputs
+
+
 def enqueue(job, success):
     client = tasks_v2.CloudTasksClient()
     payload = {'data':{'step':'prepared' if job.get('mode') == 'prepare' else 'rendered','item':job['item'],'revision':job['revision'],'render':job['id'],'success':success}}
@@ -373,7 +413,7 @@ def main():
     success = False
     try:
         with tempfile.TemporaryDirectory() as directory:
-            outputs = (prepare if job.get('mode') == 'prepare' else render)(storage.Client().bucket(job['bucket']),job,Path(directory))
+            outputs = {'prepare':prepare,'clips':render_clips}.get(job.get('mode'),render)(storage.Client().bucket(job['bucket']),job,Path(directory))
         reference.update({'state':'done','outputs':outputs})
         success = True
     except Exception:

@@ -206,6 +206,44 @@ class CollectingTests(unittest.TestCase):
                 self.assertNotIn('collecting',store.get('sessions/inbox'))
                 self.assertIsNone(self.tap(store,'done','item-10',token,13))
 
+    def test_done_accepts_photos_with_clips_and_pins_then_unpins_the_status(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        self.video(store,11,'Jakarta Chinatown')
+        store.intake({'update_id':12,'message':{'message_id':12,'photo':[{'file_id':'p','file_size':5}]}},self.config)
+        calls = []
+        def telegram(method,fields=None,files=None):
+            calls.append((method,fields))
+            return {'message_id':500}
+        with patch.object(app.platforms,'telegram',side_effect=telegram):
+            app.sync_pin(self.config,store)
+            app.sync_pin(self.config,store)
+            self.assertEqual([m for m,f in calls],['sendMessage','pinChatMessage'])
+            self.assertIn('1 фото, 1 клип',calls[0][1]['text'])
+            self.assertTrue(calls[1][1]['disable_notification'])
+            token = store.get('items/item-10')['batch_token']
+            self.tap(store,'done','item-10',token,13)
+            app.sync_pin(self.config,store)
+        item = store.get('items/item-10')
+        self.assertEqual((item['status'],item['montage']),('queued',False))
+        self.assertEqual(store.get('outbox/draft-13')['payload']['step'],'draft')
+        self.assertEqual([m for m,f in calls][2:],['unpinChatMessage','deleteMessage'])
+        self.assertEqual(calls[2][1]['message_id'],500)
+
+    def test_pin_failure_keeps_the_status_message_and_retries_only_the_pin(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        calls = []
+        def telegram(method,fields=None,files=None):
+            calls.append(method)
+            if method == 'pinChatMessage' and calls.count(method) == 1:
+                raise p.Error('pin')
+            return {'message_id':500}
+        with patch.object(app.platforms,'telegram',side_effect=telegram):
+            app.sync_pin(self.config,store)
+            app.sync_pin(self.config,store)
+        self.assertEqual(calls,['sendMessage','pinChatMessage','pinChatMessage'])
+
     def test_cancel_drops_item_and_stale_tokens_are_rejected(self):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')

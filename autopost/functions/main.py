@@ -25,7 +25,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import media
 import montage
@@ -224,6 +224,54 @@ def send_collect(config, store, result, claim=None):
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
 
 
+def pin_text(item):
+    parts = contents(item)
+    return 'Открыт пост' + titled(item) + (': ' + ', '.join(parts) if parts else '')
+
+
+def sync_pin(config, store):
+    try:
+        session = store.get('sessions/inbox') or {}
+        item = store.get('items/' + session['collecting']) if session.get('collecting') else None
+        wanted = session['collecting'] if item and item.get('status') == 'collecting' else None
+        text = pin_text(item) if wanted else None
+        chat = config['roman_chat_id']
+        def claim(tx):
+            record = store.get('sessions/pin',tx) or {}
+            if record.get('item') == wanted and wanted and record.get('message_id'):
+                return record,'keep' if record.get('pinned') else 'pin'
+            if record.get('item') == wanted and not wanted:
+                return record,'keep'
+            if record.get('item') == wanted and time.time() - record.get('at',0) < 60:
+                return record,'keep'
+            store.put('sessions/pin',{'item':wanted,'text':text,'at':time.time()} if wanted else {},tx)
+            return record,'create' if wanted else 'retire'
+        record,action = store.atomic(claim)
+        if action != 'keep' and record.get('item') != wanted and record.get('message_id'):
+            for method in ('unpinChatMessage','deleteMessage'):
+                try:
+                    platforms.telegram(method,{'chat_id':chat,'message_id':record['message_id']})
+                except Error:
+                    pass
+        if action == 'create':
+            sent = platforms.telegram('sendMessage',{'chat_id':chat,'text':text})
+            store.change('sessions/pin',lambda value:value.update(message_id=sent['message_id']) if value.get('item') == wanted else None)
+            record = {**record,'message_id':sent['message_id']}
+            action = 'pin'
+        if action == 'pin':
+            platforms.telegram('pinChatMessage',{'chat_id':chat,'message_id':record['message_id'],'disable_notification':True})
+            store.change('sessions/pin',lambda value:value.update(pinned=True) if value.get('item') == wanted else None)
+        elif action == 'keep' and wanted and record.get('message_id') and record.get('text') != text:
+            try:
+                platforms.telegram('editMessageText',{'chat_id':chat,'message_id':record['message_id'],'text':text})
+            except Error as failure:
+                if not getattr(failure,'not_modified',False):
+                    raise
+            store.change('sessions/pin',lambda value:value.update(text=text) if value.get('item') == wanted else None)
+    except Exception:
+        logging.error(json.dumps({'code':'pin_status_failed'}))
+
+
 def tell(config, text, **extra):
     return platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
 
@@ -301,6 +349,7 @@ def webhook(request):
     store.flush(enqueue)
     query = value.get('callback_query')
     bounded(lambda:retire_taps(config,store,taps) if taps or result is not None or not query else resync_keyboard(config,store,query),WEBHOOK_EDIT_SECONDS)
+    bounded(lambda:sync_pin(config,store),WEBHOOK_EDIT_SECONDS)
     if query:
         return callback_reply(config,store,query,result,bool(taps))
     refresh = result.get('refresh') if isinstance(result,dict) else None
@@ -573,7 +622,7 @@ def draft(config,store,bucket,payload,directory):
     config = {**config,'prepared_audio':item.get('prepared',{}).get('audio',{})}
     if item.get('prepared'):
         store.change('items/' + payload['item'],lambda value:value.update(uploads={a['name']:a['manifest'] for a in inputs}))
-    transcripts,images,files = [],[],{}
+    transcripts,images,files,clips = [],[],{},[]
     for attachment in inputs:
         if attachment['kind'] == 'photo':
             destination = directory / ('clean-' + attachment['name'])
@@ -583,13 +632,13 @@ def draft(config,store,bucket,payload,directory):
         elif attachment['kind'] == 'voice':
             transcripts.append(transcript(config,store,bucket,payload,item,attachment,attachment['name']))
         else:
-            raise Error('Видео монтируется кнопкой «Готово».')
+            clips.append(attachment['path'].stem)
     heard = edit_media(config,store,bucket,payload,item,directory)
     if heard is None:
         return
     edits,shots = heard
-    allowed = restrict(config,store,payload,item,bool(files),False)
-    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'chosen_targets':allowed} if allowed else {})}
+    allowed = restrict(config,store,payload,item,bool(files),bool(clips))
+    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'clips':len(clips)} if clips else {}),**({'chosen_targets':allowed} if allowed else {})}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % len(shots)
@@ -597,7 +646,7 @@ def draft(config,store,bucket,payload,directory):
     def validate(value):
         if drafter.answered(value):
             return drafter.answer_errors(value) if follow is not None else ['Return a draft, not an answer']
-        errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner)
+        errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips))
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
         try:
@@ -625,7 +674,7 @@ def draft(config,store,bucket,payload,directory):
     composed = {}
     for target in spec['targets']:
         target_assets = {}
-        for index,image in enumerate(spec.get('media',{}).get('images',[])):
+        for index,image in enumerate([] if target == 'ig-reel' else spec.get('media',{}).get('images',[])):
             path = directory/image['path']
             overlay = spec.get('overlay',{}).get(target)
             if overlay and target in ('ig-story','tg-story') and index == 0:
@@ -642,7 +691,53 @@ def draft(config,store,bucket,payload,directory):
                 path = converted
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
+    if clips:
+        start_clips(config,store,bucket,payload,item,spec,assets,clips)
+        return
     preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
+
+
+CLIP_FORMATS = {'ig-post':'square','threads':'square','tg-channel':'channel','ig-story':'story-ig','tg-story':'story-tg'}
+CLIP_SECONDS = 60
+CLIP_MINIMUM = 3
+CAROUSEL_LIMIT = 20
+
+
+def reel_timeline(clips,durations):
+    left, timeline = 89.9, []
+    for stem in clips:
+        length = min(float(durations[stem]),left)
+        if length <= 0:
+            break
+        timeline.append({'source':stem,'in':0.0,'out':round(length,3)})
+        left -= length
+    return timeline
+
+
+def start_clips(config,store,bucket,payload,item,spec,assets,clips):
+    photos = [(int(Path(image['path']).stem.removeprefix('clean-')),index) for index,image in enumerate(spec['media']['images'])]
+    order = sorted([(mid,'image',index) for mid,index in photos] + [(int(stem),'clip',position) for position,stem in enumerate(sorted(clips,key=int))])
+    spec['media'] = {**spec['media'],'clips':[{'path':'clip' + str(position) + '.mp4'} for position in range(len(clips))],'sequence':[{'kind':kind,'index':index} for mid,kind,index in order]}
+    stems = sorted(clips,key=int)
+    prepared = item['prepared']
+    edl = None
+    if 'ig-reel' in spec['targets']:
+        timeline = reel_timeline(stems,prepared['durations'])
+        if sum(c['out'] - c['in'] for c in timeline) < CLIP_MINIMUM:
+            spec['targets'].remove('ig-reel')
+            assets.pop('ig-reel',None)
+            if not spec['targets']:
+                raise Error('Черновик не готов: для Reels нужно минимум 3 секунды видео.')
+            store.change('items/' + payload['item'],lambda value:value.setdefault('skipped',[]).append('Не пойдёт в Reels: клипов меньше 3 секунд.'))
+        else:
+            edl = {'version':1,'kind':spec['kind'],'fit':'crop','targets':{'ig-reel':{'clips':timeline,'subtitles':[]}},'cover':{'target':'ig-reel','time':0.0},'copy':{}}
+    identifier = secrets.token_hex(16)
+    project = firebase_admin.get_app().project_id
+    formats = sorted({CLIP_FORMATS[t] for t in spec['targets'] if t in CLIP_FORMATS})
+    job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued',**({'edl':edl} if edl else {})}
+    store.put('renders/' + identifier,job)
+    store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
+    start_job(project,identifier)
 
 
 def answer_edit(config,store,payload,item,answer):
@@ -856,6 +951,52 @@ def finish_final(config,store,payload,item,job):
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
+def clips_rendered(config,store,bucket,payload,directory,job):
+    spec,stems = job['spec'],job['clips']
+    made = job['outputs'].get('clips',{})
+    lines,assets = [],{}
+    total = len(spec['media']['sequence'])
+    for target in list(spec['targets']):
+        if target == 'ig-reel':
+            assets[target] = {'video.mp4':job['outputs']['videos'][target],'cover.jpg':job['outputs']['cover']}
+            continue
+        mine = dict(job['assets'][target])
+        if target == 'blog':
+            lines.append('Клипы не пойдут в Сайт: там только фото.')
+        else:
+            fmt = CLIP_FORMATS[target]
+            if target in ('ig-post','threads') and total > CAROUSEL_LIMIT:
+                lines.append('Не пойдёт в ' + SKIP_NAMES[target] + ': больше ' + str(CAROUSEL_LIMIT) + ' файлов в карусели.')
+                spec['targets'].remove(target)
+                spec['copy'].pop(target,None)
+                continue
+            for position,stem in enumerate(stems):
+                info = made[fmt][stem]
+                if target.startswith('ig-') and info['seconds'] < CLIP_MINIMUM:
+                    lines.append('Клип ' + str(position + 1) + ' не пойдёт в ' + SKIP_NAMES[target] + ': короче ' + str(CLIP_MINIMUM) + ' секунд.')
+                    continue
+                if info['trimmed']:
+                    note = 'Клип ' + str(position + 1) + ' длиннее ' + str(CLIP_SECONDS) + ' секунд: обрезан до ' + str(CLIP_SECONDS) + '.'
+                    if note not in lines:
+                        lines.append(note)
+                mine['clip' + str(position) + '.mp4'] = {key:info[key] for key in ('object','generation','sha256','size','content_type')}
+        if target != 'blog':
+            photos = sum(name.startswith('image') for name in mine)
+            moving = sum(name.startswith('clip') for name in mine)
+            if not photos + moving or not photos and moving == 1 and target in ('ig-post','threads'):
+                lines.append('Не пойдёт в ' + SKIP_NAMES[target] + ': для публикации не осталось файлов.')
+                spec['targets'].remove(target)
+                spec['copy'].pop(target,None)
+                continue
+        assets[target] = mine
+    if not spec['targets']:
+        raise Error('Черновик не готов: ' + ' '.join(lines))
+    if lines:
+        store.change('items/' + payload['item'],lambda value:value.update(skipped=value.get('skipped',[]) + [line for line in lines if line not in value.get('skipped',[])]))
+    preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
+    store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
+
+
 def rendered(config,store,bucket,payload,directory):
     item = store.get('items/' + payload['item'])
     job = store.get('renders/' + payload['render'])
@@ -877,6 +1018,9 @@ def rendered(config,store,bucket,payload,directory):
         return
     if job.get('state') != 'done':
         raise Error('Рендер не завершён. Материал сохранён.')
+    if job.get('mode') == 'clips':
+        clips_rendered(config,store,bucket,payload,directory,job)
+        return
     edl = job['edl']
     spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],**({'threads_tag':edl['threads_tag']} if 'threads_tag' in edl else {}),'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
@@ -909,6 +1053,23 @@ def start_final(config,store,bucket,saved):
         tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
     except Error:
         pass
+
+
+def target_media(spec,names):
+    if 'video.mp4' in names:
+        return {'video':'video.mp4','cover':'cover.jpg'},{'video':'video.mp4','cover':'cover.jpg'}
+    source = spec.get('media',{})
+    images = sorted((n for n in names if n.startswith('image')),key=lambda n:int(n[5:-4]))
+    clips = sorted((n for n in names if n.startswith('clip')),key=lambda n:int(n[4:-4]))
+    result = {'images':[{'path':n,'alt':source['images'][int(n[5:-4])]['alt']} for n in images]}
+    keys = {f'image{i}':n for i,n in enumerate(images)}
+    if source.get('sequence'):
+        if clips:
+            result['clips'] = [{'path':n} for n in clips]
+            keys.update({f'clip{i}':n for i,n in enumerate(clips)})
+        position = {'image':{int(n[5:-4]):i for i,n in enumerate(images)},'clip':{int(n[4:-4]):i for i,n in enumerate(clips)}}
+        result['sequence'] = [{'kind':e['kind'],'index':position[e['kind']][e['index']]} for e in source['sequence'] if e['index'] in position[e['kind']]]
+    return result,keys
 
 
 def publish_order(targets):
@@ -955,11 +1116,7 @@ def run(config,store,bucket,slug,directory):
         try:
             media.materialize(bucket,target_assets,directory)
             target_spec = json.loads(json.dumps(spec))
-            if 'video.mp4' in target_assets:
-                target_spec['media'] = {'video':'video.mp4','cover':'cover.jpg'}
-            else:
-                originals = spec.get('media',{}).get('images',[])
-                target_spec['media'] = {'images':[{'path':name,'alt':originals[index]['alt']} for index,name in enumerate(target_assets)]}
+            target_spec['media'],keys = target_media(spec,target_assets)
             state = {'steps':{}}
             for checkpoint in store.db.collection('specs/' + slug + '/checkpoints').stream():
                 step = checkpoint.to_dict()
@@ -975,11 +1132,10 @@ def run(config,store,bucket,slug,directory):
             else:
                 provider = 'instagram' if target.startswith('ig-') else 'threads'
                 session = platforms.social_session(provider)
-                urls = {name.removesuffix('.mp4').removesuffix('.jpg'):media.signed(bucket,manifest['object'],config,generation=manifest['generation']) for name,manifest in target_assets.items()}
-                for name,url in urls.items():
-                    path = directory/(name + ('.mp4' if name == 'video' else '.jpg'))
-                    manifest = target_assets[path.name]
-                    platforms.probe(url,path,manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
+                urls = {key:media.signed(bucket,target_assets[name]['object'],config,generation=target_assets[name]['generation']) for key,name in keys.items()}
+                for key,url in urls.items():
+                    manifest = target_assets[keys[key]]
+                    platforms.probe(url,directory/keys[key],manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
                 result = platforms.post_social(target_spec,state,target,urls,session)
                 verified = platforms.link_opens(result)
             publication = state['steps'].get(target + ':publish',{}).get('value')
@@ -1020,9 +1176,13 @@ def published_ids(config,spec,target,assets,publication):
         return {}
     if target == 'tg-channel':
         messages = publication if isinstance(publication,list) else [publication]
-        return {'chat_id':messages[0].get('chat',{}).get('id') or config['channels'][target],'message_ids':[m['message_id'] for m in messages],'caption':bool(spec.get('media',{}).get('images') or spec.get('media',{}).get('video'))}
+        return {'chat_id':messages[0].get('chat',{}).get('id') or config['channels'][target],'message_ids':[m['message_id'] for m in messages],'caption':bool(spec.get('media',{}).get('images') or spec.get('media',{}).get('clips') or spec.get('media',{}).get('video'))}
+    if target == 'tg-story' and isinstance(publication,list):
+        return {'id':publication[0]['id'],'ids':[story['id'] for story in publication],'business_connection_id':platforms.key('telegram-business.json')['business_connection_id'],'assets':assets}
     if target == 'tg-story':
         return {'id':publication['id'],'business_connection_id':platforms.key('telegram-business.json')['business_connection_id'],'assets':assets}
+    if isinstance(publication,list):
+        return {'id':publication[0],'ids':publication,'assets':assets}
     return {'id':publication,'assets':assets}
 
 
@@ -1322,6 +1482,7 @@ def maintenance(config,store,bucket):
     if info.get('url') != config['webhook_url'] or info.get('last_error_date'):
         platforms.telegram('setWebhook',{'url':config['webhook_url'],'secret_token':config['webhook_secret'],'allowed_updates':['message','callback_query','business_connection']})
     now = int(time.time())
+    sync_pin(config,store)
     for provider,host,prefix in [('instagram','https://graph.instagram.com','ig'),('threads','https://graph.threads.net','th')]:
         token = platforms.token(config,store,provider)
         if not token:

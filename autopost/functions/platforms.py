@@ -83,8 +83,21 @@ def slug(value):
 def media_files(spec):
     media = spec.get('media', {})
     files = {f'image{i}': local(item['path']) for i, item in enumerate(media.get('images', []))}
+    files.update({f'clip{i}': local(item['path']) for i, item in enumerate(media.get('clips', []))})
     files.update({name: local(media[name]) for name in ('video', 'cover') if media.get(name)})
     return files
+
+
+def sequence(spec):
+    media = spec.get('media', {})
+    if media.get('sequence'):
+        return [(x['kind'], x['index']) for x in media['sequence']]
+    return [('image', i) for i in range(len(media.get('images', [])))]
+
+
+def album_sizes(count):
+    groups = -(-count // 10)
+    return [count // groups + (1 if index < count % groups else 0) for index in range(groups)]
 
 
 def digest_file(path):
@@ -282,6 +295,30 @@ def link_area(url):
 def post_telegram(spec, state, target):
     identity = telegram_identity(target)
     files, text = media_files(spec), text_for(spec, target)
+    if target == 'tg-story' and spec.get('media', {}).get('sequence'):
+        link = channel_post_url(spec, state)
+        stories = []
+        for position, (kind, index) in enumerate(sequence(spec)):
+            name = ('image' if kind == 'image' else 'clip') + str(index)
+            content = {'type': 'photo', 'photo': 'attach://asset'}
+            if kind == 'clip':
+                content = {'type': 'video', 'video': 'attach://asset', 'cover_frame_timestamp': 0.0}
+            else:
+                story_frame(files[name])
+            fields = {'business_connection_id': identity['id'], 'content': content, 'active_period': config().get('story_active_period', 21600), 'post_to_chat_page': True}
+            if position == 0:
+                fields['caption'] = text
+                if link:
+                    fields['areas'] = [link_area(link)]
+            try:
+                stories.append(checkpoint(spec, state, target, 'story' + str(position), lambda fields=fields, name=name: telegram('postStory', fields, {'asset': files[name]})))
+            except Error as failure:
+                reason = getattr(failure, 'description', '')
+                raise Error('Telegram не принял историю ' + str(position + 1) + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None
+        result = checkpoint(spec, state, target, 'publish', lambda: [{'id': story['id']} for story in stories])
+        username = identity['user'].get('username')
+        first = result[0]['id']
+        return f'https://t.me/{username}/s/{first}' if username else f'tg://resolve?domain={identity["user"]["id"]}&story={first}'
     if target == 'tg-story':
         video = 'video' in files
         field = 'video' if video else 'photo'
@@ -313,6 +350,20 @@ def post_telegram(spec, state, target):
         if images:
             return telegram('sendPhoto', {'chat_id': chat_id, 'caption': text}, {'photo': files['image0']})
         return telegram('sendMessage', {'chat_id': chat_id, 'text': text})
+    if spec.get('media', {}).get('clips'):
+        items = [('photo', 'image' + str(index)) if kind == 'image' else ('video', 'clip' + str(index)) for kind, index in sequence(spec)]
+        sent, start = [], 0
+        for number, size in enumerate(album_sizes(len(items))):
+            chunk = items[start:start + size]
+            caption = {'caption': text} if start == 0 else {}
+            start += size
+            if len(chunk) == 1:
+                kind, name = chunk[0]
+                sent.extend(checkpoint(spec, state, target, 'album' + str(number), lambda kind=kind, name=name, caption=caption: [telegram('sendPhoto' if kind == 'photo' else 'sendVideo', {'chat_id': chat_id, **caption}, {kind: files[name]})]))
+                continue
+            group = [{'type': kind, 'media': 'attach://' + name, **({'supports_streaming': True} if kind == 'video' else {}), **(caption if position == 0 else {})} for position, (kind, name) in enumerate(chunk)]
+            sent.extend(checkpoint(spec, state, target, 'album' + str(number), lambda group=group, chunk=chunk: telegram('sendMediaGroup', {'chat_id': chat_id, 'media': group}, {name: files[name] for kind, name in chunk})))
+        send = lambda sent=sent: sent
     result = checkpoint(spec, state, target, 'publish', send)
     result = result[0] if isinstance(result, list) else result
     prefix = identity.get('username') or ('c/' + str(chat_id).removeprefix('-100'))
@@ -345,12 +396,34 @@ def post_social(spec, state, target, urls, session):
             caption['topic_tag'] = spec['threads_tag']
         if target == 'ig-story':
             caption = {}
-        if len(images) > 1 and target != 'ig-story':
+        order = sequence(spec)
+        stories = target == 'ig-story' and bool(spec.get('media', {}).get('sequence'))
+        if spec.get('media', {}).get('clips') and target != 'ig-story' and len(order) < 2:
+            raise Error('Для карусели нужно минимум два вложения')
+        if stories:
+            media_ids = []
+            for position, (kind, index) in enumerate(order):
+                fields = {'media_type': 'STORIES', ('image_url' if kind == 'image' else 'video_url'): urls[('image' if kind == 'image' else 'clip') + str(index)]}
+                story = create('container' + str(position), fields)
+                try:
+                    ready(session, story, instagram)
+                except Error as failure:
+                    if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
+                        CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(position))
+                    raise
+                quota(session, instagram)
+                media_ids.append(checkpoint(spec, state, target, 'publish' + str(position), lambda story=story: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': story}, token=token))))
+            media_id = checkpoint(spec, state, target, 'publish', lambda: media_ids)
+            container = None
+        elif len(order) > 1 and target != 'ig-story':
             children = []
-            for i, image in enumerate(images):
-                fields = {'image_url': urls[f'image{i}'], 'is_carousel_item': 'true', 'alt_text': image['alt']}
-                if not instagram:
-                    fields['media_type'] = 'IMAGE'
+            for i, (kind, index) in enumerate(order):
+                if kind == 'clip':
+                    fields = {'video_url': urls[f'clip{index}'], 'is_carousel_item': 'true', 'media_type': 'VIDEO'}
+                else:
+                    fields = {'image_url': urls[f'image{index}'], 'is_carousel_item': 'true', 'alt_text': images[index]['alt']}
+                    if not instagram:
+                        fields['media_type'] = 'IMAGE'
                 child = create('child' + str(i), fields)
                 try:
                     ready(session, child, instagram)
@@ -381,17 +454,20 @@ def post_social(spec, state, target, urls, session):
             else:
                 fields['media_type'] = 'TEXT'
             container = create('container', fields)
-        try:
-            ready(session, container, instagram)
-        except Error as failure:
-            if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
-                store = CONTEXT.get()[1]
-                for name in list(state['steps']):
-                    if name.startswith(target + ':') and name != target + ':publish':
-                        store.invalidate(spec['slug'], name)
-            raise
-        quota(session, instagram)
-        media_id = checkpoint(spec, state, target, 'publish', lambda: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': container}, token=token)))
+        if container is not None:
+            try:
+                ready(session, container, instagram)
+            except Error as failure:
+                if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
+                    store = CONTEXT.get()[1]
+                    for name in list(state['steps']):
+                        if name.startswith(target + ':') and name != target + ':publish':
+                            store.invalidate(spec['slug'], name)
+                raise
+            quota(session, instagram)
+            media_id = checkpoint(spec, state, target, 'publish', lambda: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': container}, token=token)))
+    if isinstance(media_id, list):
+        media_id = media_id[0]
     if not re.fullmatch(r'[0-9]+', str(media_id)):
         raise Error('Invalid saved media ID; reconcile')
     if instagram:
@@ -554,7 +630,12 @@ def manual_change(target, published, spec, operation):
         return 'уже удалено'
     if not published.get(required):
         return 'удали вручную: ID не сохранён' if operation == 'delete' else 'правь вручную: ID не сохранён'
-    if operation == 'delete' and target == 'tg-channel' and len(spec.get('media',{}).get('images',[])) > len(published['message_ids']):
+    if target == 'threads' and spec.get('media', {}).get('clips') and operation != 'delete':
+        return 'правь вручную: пост с клипами'
+    if target == 'tg-story' and published.get('ids') and operation != 'delete':
+        return 'правь вручную: несколько историй'
+    media = spec.get('media', {})
+    if operation == 'delete' and target == 'tg-channel' and len(media.get('images', [])) + len(media.get('clips', [])) > len(published['message_ids']):
         return 'удали вручную: сохранён только первый ID альбома'
     return None
 
@@ -580,7 +661,12 @@ def change_published(target, published, spec, operation, directory, bucket=None)
                 raise Error('Business connection changed; reconcile')
             fields = {'business_connection_id':identity['id'],'story_id':published['id']}
             if operation == 'delete':
-                telegram('deleteStory', fields)
+                for story_id in published.get('ids') or [published['id']]:
+                    try:
+                        telegram('deleteStory', {**fields, 'story_id': story_id})
+                    except Error as failure:
+                        if 'STORY_ID_INVALID' not in getattr(failure, 'description', '') and 'not found' not in getattr(failure, 'description', '').lower():
+                            raise
             else:
                 import media
                 media.materialize(bucket, published['assets'], directory)

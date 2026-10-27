@@ -54,6 +54,89 @@ class StoryTests(unittest.TestCase):
         self.assertIn("can't download",str(caught.exception))
 
 
+class MixedPostTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        from PIL import Image
+        Image.new('RGB',(1080,1920),(90,90,90)).save(self.root/'image0.jpg','JPEG')
+        for name in ('clip0.mp4','clip1.mp4'):
+            (self.root/name).write_bytes(b'mp4')
+        p.configure({'channels':{'tg-channel':-100123},'telegram_bot_token':'x'},Store(FakeFirestore()),self.root)
+        self.spec = {'slug':'trip','targets':['tg-channel'],'media':{'images':[{'path':'image0.jpg','alt':'a'}],'clips':[{'path':'clip0.mp4'},{'path':'clip1.mp4'}],'sequence':[{'kind':'clip','index':0},{'kind':'image','index':0},{'kind':'clip','index':1}]},'copy':{'tg-channel':'Дом','tg-story':'Дом','ig-post':'Home'}}
+        self.identity = {'id':'biz','user':{'id':1,'username':'romacv777'}}
+
+    def telegram(self, target):
+        calls = []
+        def fake(method, fields=None, files=None):
+            calls.append((method,fields))
+            if method == 'sendMediaGroup':
+                return [{'message_id':i} for i in range(1,len(fields['media'])+1)]
+            return {'username':'romacv777','id':-100123} if method == 'getChat' else {'id':7,'message_id':1}
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()), patch.object(p,'channel_post_url',return_value=None):
+            p.post_telegram(self.spec,{'steps':{}},target)
+        return calls
+
+    def test_channel_album_and_stories_keep_photos_and_clips_in_order(self):
+        album = self.telegram('tg-channel')[-1][1]['media']
+        self.assertEqual([(m['type'],m['media']) for m in album],[('video','attach://clip0'),('photo','attach://image0'),('video','attach://clip1')])
+        self.spec['targets'] = ['tg-story']
+        stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
+        self.assertEqual(stories,['video','photo','video'])
+
+    def test_album_checkpoints_are_saved_per_album_so_a_retry_never_reposts(self):
+        self.spec['media']['clips'] = [{'path':'clip0.mp4'},{'path':'clip1.mp4'}]
+        self.spec['media']['images'] = [{'path':'image0.jpg','alt':'a'}] * 10
+        self.spec['media']['sequence'] = [{'kind':'image','index':i} for i in range(10)] + [{'kind':'clip','index':0},{'kind':'clip','index':1}]
+        saved, sends = {}, []
+        def checkpoint(spec, state, target, step, action):
+            if step not in saved:
+                saved[step] = action()
+            return saved[step]
+        def fake(method, fields=None, files=None):
+            sends.append(method)
+            if method == 'sendMediaGroup' and len(sends) == 2 and not saved.get('retry'):
+                saved['retry'] = True
+                raise p.Error('429',status_code=429)
+            return [{'message_id':i} for i in range(len(fields['media']))] if method == 'sendMediaGroup' else {'username':'romacv777','id':-100123}
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',checkpoint):
+            with self.assertRaises(p.Error):
+                p.post_telegram(self.spec,{'steps':{}},'tg-channel')
+            p.post_telegram(self.spec,{'steps':{}},'tg-channel')
+        self.assertEqual(sends.count('sendMediaGroup'),3)
+        self.assertEqual({'album0','album1','publish'} - set(saved),set())
+
+    def test_instagram_story_keeps_every_photo_when_all_clips_are_dropped(self):
+        spec = {'slug':'trip','media':{'images':[{'path':'image0.jpg','alt':'a'}] * 3,'sequence':[{'kind':'image','index':0},{'kind':'clip','index':0},{'kind':'image','index':1},{'kind':'image','index':2}]}}
+        media, keys = app.target_media(spec,['image0.jpg','image1.jpg','image2.jpg'])
+        self.assertEqual([(e['kind'],e['index']) for e in media['sequence']],[('image',0),('image',1),('image',2)])
+        for name in ('image1.jpg','image2.jpg'):
+            (self.root/name).write_bytes((self.root/'image0.jpg').read_bytes())
+        requests = []
+        def fake(method, url, fields=None, token=None, **rest):
+            requests.append(fields or {})
+            return {'id':'1','shortcode':'abc'}
+        spec = {**spec,'media':media,'targets':['ig-story'],'copy':{'ig-story':'x'}}
+        urls = {key:'https://x/' + key for key in keys}
+        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
+            p.post_social(spec,{'steps':{}},'ig-story',urls,('tok','1','https://graph'))
+        self.assertEqual([f['image_url'] for f in requests if f.get('media_type') == 'STORIES'],['https://x/image0','https://x/image1','https://x/image2'])
+
+    def test_instagram_carousel_has_image_and_video_children_in_order(self):
+        requests = []
+        def fake(method, url, fields=None, token=None, **rest):
+            requests.append(fields or {})
+            return {'id':'1','shortcode':'abc'}
+        self.spec['targets'] = ['ig-post']
+        urls = {'image0':'https://x/i0','clip0':'https://x/c0','clip1':'https://x/c1'}
+        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()), patch.object(p,'text_for',return_value='Home'):
+            p.post_social(self.spec,{'steps':{}},'ig-post',urls,('tok','1','https://graph'))
+        children = [f for f in requests if f.get('is_carousel_item')]
+        self.assertEqual([f.get('video_url') or f.get('image_url') for f in children],['https://x/c0','https://x/i0','https://x/c1'])
+        self.assertEqual([f.get('media_type') for f in children if 'video_url' in f],['VIDEO','VIDEO'])
+
+
 class PublisherTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
