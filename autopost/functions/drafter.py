@@ -6,6 +6,7 @@ import struct
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+import skills
 from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
 
 HISTORY_BYTES = 200_000
@@ -287,9 +288,23 @@ def create(client, system, messages):
     return response
 
 
+def connect(config):
+    import anthropic
+    return anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
+
+
+def converse(config, system, text, tokens=4000):
+    import anthropic
+    try:
+        response = connect(config).messages.create(model=MODEL, max_tokens=tokens, system=system, messages=[{'role':'user','content':text}])
+    except anthropic.APIStatusError as failure:
+        raise Error('Provider rejected request: ' + str(failure.status_code)) from None
+    return final_text(response.content)
+
+
 def ask(config, payload, images, validator, montage=False, thread=None, follow=None):
     import anthropic
-    client = anthropic.Anthropic(api_key=config['anthropic_key'], max_retries=0, timeout=180)
+    client = connect(config)
     local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
     stamp = {'timezone':config.get('timezone','Asia/Makassar'),'current_time':local.isoformat()}
     pool = {path.name:path for path in images}
@@ -307,7 +322,10 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
     mark = base
     known = {name for turn in turns for name in turn.get('images', [])}
     turns.append({'role':'user','text':json.dumps({**(follow if turns else payload),**stamp},ensure_ascii=False),'images':[name for name in pool if name not in known]})
-    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\n' + Path(__file__).with_name('EXPERIENCE.md').read_text() + '\nYou run as Claude Sonnet 5.5 by Anthropic, model id ' + MODEL + '.','cache_control':{'type':'ephemeral'}}]
+    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\nYou run as Claude Sonnet 5.5 by Anthropic, model id ' + MODEL + '.','cache_control':{'type':'ephemeral'}}]
+    book = skills.render(skills.load(thread[0])) if thread else ''
+    if book:
+        system.append({'type':'text','text':book,'cache_control':{'type':'ephemeral'}})
     for attempt in range(2):
         try:
             response = create(client, system, wire(turns, pool))

@@ -20,8 +20,8 @@ GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram
 TOGGLES = {'tg' + str(index):group[0] for index,group in enumerate(GROUPS)}
 IMAGE_MIMES = ('image/jpeg', 'image/png', 'image/webp', 'image/heic')
 CHOICE_HINT = 'Отметь, куда пойдёт пост.'
-COMMANDS = ('/post',)
-COMMANDS_HINT = 'Команды: /post — новый пост.'
+COMMANDS = ('/post', '/skills')
+COMMANDS_HINT = 'Команды: /post — новый пост, /skills — навыки бота.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
@@ -286,7 +286,7 @@ class Store:
             reply_id = str(message.get('reply_to_message', {}).get('message_id', ''))
             text = message.get('text', '')
             name = command(message)
-            if name not in COMMANDS:
+            if name != '/post':
                 name = None
             replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
@@ -617,7 +617,7 @@ class Store:
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             if saved.get('item'):
-                self.forget(saved['item'], tx)
+                self.job(tx, {'step':'learn', 'item':saved['item'], 'slug':slug, 'outcome':'rejected', 'forget':True}, 'learn-' + hashlib.sha256(query['id'].encode()).hexdigest())
             payload['step'] = 'remove-keyboard'
             payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
             line = 'Отклонено.'

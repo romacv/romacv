@@ -27,6 +27,7 @@ import platforms
 from platforms import Error
 from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
+import learning
 import progress as progress_view
 import media
 import montage
@@ -76,7 +77,7 @@ def superseded(store, payload):
     return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
 
 
-ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document'}
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing'}
 
 
 def activity(config, kind, stop):
@@ -306,6 +307,13 @@ def upload_mac(config, item, revision, expires):
     return hmac.new(hmac.new(config['webhook_secret'].encode(), b'upload', hashlib.sha256).digest(),f'{item}:{revision}:{expires}'.encode(),hashlib.sha256).hexdigest()
 
 
+def received(saved):
+    if saved:
+        return False
+    saved['received'] = time.time()
+    return True
+
+
 @https_fn.on_request(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=60,min_instances=0,max_instances=2,invoker='public')
 def webhook(request):
     config, store, bucket = runtime()
@@ -343,13 +351,13 @@ def webhook(request):
     message = value.get('message')
     if isinstance(message,dict) and not any(message.get(key) for key in ('photo','video','voice','audio','document','animation','video_note','media_group_id')):
         name = command(message)
+        listed = str(message.get('reply_to_message',{}).get('message_id',''))
+        if isinstance(message.get('text'),str) and (name == '/skills' or listed and store.get('skills-messages/' + listed)):
+            parts = message['text'].split(None,1)
+            enqueue({'step':'skills','text':(parts[1] if len(parts) > 1 else '') if name == '/skills' else message['text']},'skills-' + str(value['update_id']))
+            return https_fn.Response('{}',content_type='application/json')
         if isinstance(message.get('text'),str) and name and name not in COMMANDS:
-            def receive(saved):
-                if saved:
-                    return False
-                saved['received'] = time.time()
-                return True
-            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':hint_for(name)} if store.change('updates/' + str(value['update_id']),receive) else {}
+            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':hint_for(name)} if store.change('updates/' + str(value['update_id']),received) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
     taps = []
     result = store.intake(value,config,taps)
@@ -1194,6 +1202,7 @@ def run(config,store,bucket,slug,directory):
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
     state = 'done' if len(saved['results']) == len(spec['targets']) else 'partial'
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
+    learning.schedule(store,saved['item'],slug,'published')
     store.forget(saved['item'],fix=False)
     lines = ['Пост' + post_name(store,saved) + ':']
     for index,target in enumerate(spec['targets'],1):
@@ -1413,6 +1422,8 @@ def apply_fix(config,store,bucket,slug,directory):
     deleted = saved['operation'] == 'delete' and state == 'done' and all(x.get('deleted') or platforms.manual_change(t,x,saved['spec'],'delete') for t,x in published_targets.items())
     store.change('specs/' + saved['source'],lambda value:value.update(deleted=deleted))
     store.change('items/' + saved['item'],lambda value:value.update(published=published_targets,deleted=deleted))
+    if state == 'done':
+        learning.schedule(store,saved['item'],slug,'fixed')
     if deleted:
         store.forget(saved['item'])
     lines = []
@@ -1483,6 +1494,10 @@ def handle_worker(request):
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
                     send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
+            elif step == 'learn':
+                learning.step(config,store,payload)
+            elif step == 'skills':
+                learning.command(config,store,payload,tell)
             elif step == 'fix-prompt':
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
