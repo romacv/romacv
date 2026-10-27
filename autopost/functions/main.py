@@ -253,7 +253,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         if not value or value.get('state') != 'drafting' or value.get('hash') != digest or revision is not None and item.get('revision') != revision:
             return False
         value.update(state='previewed',preview_message=message['message_id'],preview_targets=scoped)
-        item.update(status='previewed')
+        item.update(status='previewed',edits_applied=len(item.get('edits',[])),photos_applied=len(item.get('edit_photos',[])))
         session['current'] = spec['slug']
         store.put('specs/' + spec['slug'],value,tx)
         store.put('items/' + item_id,item,tx)
@@ -399,14 +399,18 @@ def draft(config,store,bucket,payload,directory):
 
 def edit_media(config,store,bucket,payload,item,directory):
     shots = []
-    for attachment in media.intake(bucket,payload['item'],{'messages':item.get('edit_photos',[])},config,directory) if item.get('edit_photos') else []:
+    fresh = item.get('edit_photos',[])[item.get('photos_applied',0):]
+    for attachment in media.intake(bucket,payload['item'],{'messages':fresh},config,directory) if fresh else []:
         destination = directory / ('edit-' + attachment['name'])
         media.clean_image(attachment['path'],destination)
         shots.append(destination)
+    applied = item.get('edits_applied',0)
+    def settle(notes):
+        return [note.replace('Правка на приложенном скриншоте.','Правка со скриншотом, уже применена.').replace('[см. приложенный скриншот]','[скриншот уже применён]') if index < applied else note for index,note in enumerate(notes)]
     edits = list(item.get('edits',[]))
     voices = item.get('edit_voices',[])
     if not voices:
-        return edits,shots
+        return settle(edits),shots
     attachments = media.intake(bucket,payload['item'],{'messages':voices},config,directory)
     audio = item.get('edit_prepared',{}).get('audio',{})
     missing = [a for a in attachments if a['name'] not in audio]
@@ -433,7 +437,7 @@ def edit_media(config,store,bucket,payload,item,directory):
         for name in spoken:
             value.get('edit_transcripts',{}).pop(name,None)
     store.change('items/' + payload['item'],save)
-    return [fill(note) for note in edits],shots
+    return settle([fill(note) for note in edits]),shots
 
 
 def start_job(project,identifier):
