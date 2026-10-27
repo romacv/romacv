@@ -47,12 +47,14 @@
     {
       "source": "autopost/functions",
       "codebase": "autopost",
-      "runtime": "python312"
+      "runtime": "python312",
+      "ignore": ["venv", "__pycache__", "tests", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"]
     },
     {
       "source": "autopost/budget",
       "codebase": "budget",
-      "runtime": "python312"
+      "runtime": "python312",
+      "ignore": ["venv", "__pycache__", "tests", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"]
     }
   ],
   "firestore": {

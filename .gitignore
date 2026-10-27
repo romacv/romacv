@@ -68,5 +68,6 @@ node_modules/
 # Personal autoposter private runtime data
 __pycache__/
 autopost/functions/venv/
+autopost/budget/venv/
 autopost/keys/*
 !autopost/keys/README.md
