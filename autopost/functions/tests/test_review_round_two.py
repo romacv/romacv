@@ -151,7 +151,8 @@ class RoundTwoTests(unittest.TestCase):
         self.tap('done','item-10',self.store.get('items/item-10')['batch_token'],12)
         self.assertEqual(self.store.get('sessions/inbox')['current'],'item-10')
         reply = self.message(13,text='правка')
-        self.assertEqual(reply,'Чтобы начать пост, отправь /post.')
+        self.assertEqual(reply,'Добавил к черновику «Новый пост»: правка.')
+        self.assertEqual(self.store.get('items/item-10')['edits'],['правка'])
         self.assertNotIn('edits',self.store.get('items/item-1'))
         self.assertEqual(self.store.get('specs/example')['state'],'previewed')
 
