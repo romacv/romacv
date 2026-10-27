@@ -63,7 +63,7 @@
             "cover": "usageguard.svg"
         },
         "usagebattery": {
-            "title": "Usage Battery for Cluade Code",
+            "title": "Usage Battery for Clode Code",
             "desc": "A macOS menu bar app that shows Claude Code subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claude Code already stores in the Keychain and talks only to Anthropic, so no data is collected. Built with SwiftUI for macOS.",
             "link": "https://apps.apple.com/app/id6757597561",
             "img": "usagebattery",
