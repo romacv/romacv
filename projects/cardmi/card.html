@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Business card</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;line-height:1.6;color:#1d1d1f;background:#fff;padding:20px;max-width:640px;margin:0 auto}
+@media (prefers-color-scheme:dark){body{color:#f5f5f7;background:#000}}
+a{color:#06c;text-decoration:none}
+a:hover{text-decoration:underline}
+@media (prefers-color-scheme:dark){a{color:#6cb4ff}}
+nav{margin-bottom:16px}
+.face{border-radius:20px;padding:28px 24px;color:#fff;background:#1F3A5F}
+.initial{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:1.8rem;font-weight:700;margin-bottom:18px}
+.name{font-size:1.6rem;line-height:1.2;font-weight:700;overflow-wrap:anywhere}
+.title,.company{font-size:1rem;opacity:.9;overflow-wrap:anywhere}
+.title{margin-top:6px}
+.actions{margin-top:20px;display:flex;flex-direction:column;gap:10px}
+.btn{display:block;text-align:center;padding:12px 20px;border-radius:10px;background:#1d1d1f;color:#fff;font:inherit;font-weight:600;border:0;cursor:pointer;overflow-wrap:anywhere}
+.btn:hover{text-decoration:none}
+@media (prefers-color-scheme:dark){.btn{background:#f5f5f7;color:#1d1d1f}}
+.btn.sec{background:transparent;color:inherit;border:1px solid #d2d2d7}
+@media (prefers-color-scheme:dark){.btn.sec{border-color:#3a3a3c}}
+.msg{margin-top:24px}
+.msg p{margin-bottom:14px}
+.footer{margin-top:36px;padding-top:16px;border-top:1px solid #e5e5e5;font-size:0.8rem;color:#86868b}
+@media (prefers-color-scheme:dark){.footer{border-color:#2c2c2e}}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<nav><a href="/projects/cardmi">Cardmi</a></nav>
+<main id="card" hidden>
+<div class="face" id="face">
+<div class="initial" id="initial"></div>
+<div class="name" id="name"></div>
+<div class="title" id="title"></div>
+<div class="company" id="company"></div>
+</div>
+<div class="actions" id="actions"></div>
+</main>
+<div class="msg" id="empty" hidden>
+<p>This link has no card.</p>
+<p><a href="/projects/cardmi">Get Cardmi</a></p>
+</div>
+<div class="footer">Made with <a href="https://apps.apple.com/app/id6817015127">Cardmi</a>. This page reads the card from the link itself and sends nothing anywhere.</div>
+<script>
+(function () {
+  function render() {
+    var empty = document.getElementById("empty");
+    var cardEl = document.getElementById("card");
+    var actions = document.getElementById("actions");
+    empty.hidden = true;
+    cardEl.hidden = true;
+    actions.textContent = "";
+    var p = new URLSearchParams(location.hash.replace(/^#/, ""));
+    var f = {};
+    ["n", "t", "o", "p", "e", "u", "c"].forEach(function (k) {
+      f[k] = (p.get(k) || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 64);
+    });
+    if (p.get("v") !== "1" || !f.n) {
+      empty.hidden = false;
+      return;
+    }
+    var color = /^#[0-9a-fA-F]{6}$/.test(f.c) ? f.c : "#1F3A5F";
+    document.title = f.n;
+    document.getElementById("face").style.background = color;
+    document.getElementById("initial").textContent = Array.from(f.n)[0].toUpperCase();
+    document.getElementById("name").textContent = f.n;
+    document.getElementById("title").textContent = f.t;
+    document.getElementById("company").textContent = f.o;
+    document.getElementById("title").hidden = !f.t;
+    document.getElementById("company").hidden = !f.o;
+
+    function add(node) { actions.appendChild(node); return node; }
+    function link(text, href, cls) {
+      var a = document.createElement("a");
+      a.className = "btn " + (cls || "sec");
+      a.textContent = text;
+      a.href = href;
+      return add(a);
+    }
+
+    var save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn";
+    save.textContent = "Save contact";
+    save.addEventListener("click", function () {
+      var blob = new Blob([vcard()], { type: "text/vcard;charset=utf-8" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (f.n.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "contact") + ".vcf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    });
+    add(save);
+
+    var tel = f.p.replace(/[^0-9+*#]/g, "");
+    if (tel) link("Call " + f.p, "tel:" + tel);
+    if (/^[^\s@<>]+@[^\s@<>]+$/.test(f.e)) link("Email " + f.e, "mailto:" + encodeURIComponent(f.e).replace(/%40/g, "@"));
+    var site = websiteURL(f.u);
+    if (site) link("Website " + f.u, site);
+
+    cardEl.hidden = false;
+
+    function websiteURL(v) {
+      if (!v) return "";
+      var s = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : "https://" + v;
+      try {
+        var u = new URL(s);
+        return u.protocol === "http:" || u.protocol === "https:" ? u.href : "";
+      } catch (e) { return ""; }
+    }
+
+    function esc(v) {
+      return v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/;/g, "\\;").replace(/,/g, "\\,");
+    }
+
+    function vcard() {
+      var i = f.n.lastIndexOf(" ");
+      var given = i > 0 ? f.n.slice(0, i) : f.n;
+      var family = i > 0 ? f.n.slice(i + 1) : "";
+      var l = ["BEGIN:VCARD", "VERSION:3.0",
+        "N:" + esc(family) + ";" + esc(given) + ";;;",
+        "FN:" + esc(f.n)];
+      if (f.o) l.push("ORG:" + esc(f.o));
+      if (f.t) l.push("TITLE:" + esc(f.t));
+      if (f.p) l.push("TEL;TYPE=VOICE:" + esc(f.p));
+      if (f.e) l.push("EMAIL;TYPE=INTERNET:" + esc(f.e));
+      if (site) l.push("URL:" + site);
+      l.push("END:VCARD");
+      return l.join("\r\n") + "\r\n";
+    }
+  }
+
+  render();
+  window.addEventListener("hashchange", render);
+})();
+</script>
+</body>
+</html>
