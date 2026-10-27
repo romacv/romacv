@@ -61,6 +61,9 @@ FREE = {'svc_cpu':180000,'svc_mem':360000,'svc_req':2000000,'cpu':240000,'mem':4
 PRICE = {'svc_cpu':0.000024,'svc_mem':0.0000025,'svc_req':0.4 / 1000000,'cpu':0.000018,'mem':0.000002,'reads':0.03 / 100000,'writes':0.09 / 100000,'deletes':0.01 / 100000,'gcs_bytes':0.02,'gcs_egress':0.12,'tasks':0.4 / 1000000,'ar':0.1,'log':0.5,'host_out':0.15,'host_size':0.026,'speech':0.024,'mon_reads':0.5 / 1000000}
 
 
+BALANCE = {'start':214.81,'at':1793113080,'credits':[{'usd':2.74,'expires':None},{'usd':96.97,'expires':'2026-11-19'},{'usd':115.08,'expires':'2026-11-24'}]}
+
+
 def user_of(init_data, token, now):
     pairs = dict(parse_qsl(init_data, keep_blank_values=True))
     received = pairs.pop('hash', '')
@@ -220,9 +223,24 @@ def billing(store, now):
         return None
 
 
+def months_between(start, now):
+    first = time.gmtime(start)
+    last = time.gmtime(now)
+    year, month = first.tm_year, first.tm_mon
+    names = []
+    while (year, month) <= (last.tm_year, last.tm_mon):
+        names.append('%04d-%02d' % (year, month))
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return names
+
+
 def anthropic_of(store, now):
-    doc = store.get('usage/anthropic-' + time.strftime('%Y-%m', time.gmtime(now))) or {}
-    return {**{field:doc.get(field, 0) for field in ANTHROPIC_FIELDS},'usd':round(doc.get('usd', 0), 4)}
+    names = months_between(BALANCE['at'], now)
+    docs = {s.id: s.to_dict() or {} for s in store.db.get_all([store.db.document('usage/anthropic-' + name) for name in names]) if s.exists}
+    doc = docs.get('anthropic-' + time.strftime('%Y-%m', time.gmtime(now))) or {}
+    spent = round(sum(docs.get('anthropic-' + name, {}).get('usd', 0) for name in names), 4)
+    balance = {'start':BALANCE['start'],'at':BALANCE['at'],'spent':spent,'left':round(BALANCE['start'] - spent, 4),'credits':BALANCE['credits']}
+    return {**{field:doc.get(field, 0) for field in ANTHROPIC_FIELDS},'usd':round(doc.get('usd', 0), 4),'balance':balance}
 
 
 def costs_of(store, ids, by_key):

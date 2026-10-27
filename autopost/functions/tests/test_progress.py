@@ -98,6 +98,12 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn('"secret"',json.dumps(body))
         self.assertNotIn('signed.example',json.dumps(body))
 
+    def test_anthropic_balance(self):
+        self.store.put('usage/anthropic-2026-10',{'usd':1.5})
+        self.store.put('usage/anthropic-2026-11',{'usd':2.25})
+        balance = app.anthropic_of(self.store,1793113080 + 40 * 86400)['balance']
+        self.assertEqual((balance['spent'],balance['left']),(3.75,211.06))
+
     def test_monitoring_failure_degrades(self):
         self.store.put('sessions/budget',{'costAmount':0.1,'budgetAmount':1,'at':1})
         with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=RuntimeError):

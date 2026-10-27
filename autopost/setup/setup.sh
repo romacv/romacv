@@ -70,7 +70,8 @@ def bind(group, account, role_name):
 
 def dataset_reader(account):
     say('Grant roles/bigquery.dataViewer to ' + account + ' on ' + DATASET)
-    result = subprocess.run(['bq', '--project_id=' + PROJECT, 'add-iam-policy-binding', '--dataset', '--member=serviceAccount:' + account, '--role=roles/bigquery.dataViewer', PROJECT + ':' + DATASET], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV)
+    grant = 'GRANT `roles/bigquery.dataViewer` ON SCHEMA `' + PROJECT + '.' + DATASET + '` TO "serviceAccount:' + account + '"'
+    result = subprocess.run(['bq', '--project_id=' + PROJECT, 'query', '--use_legacy_sql=false', '--location=US', grant], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=ENV)
     if result.returncode:
         raise RuntimeError('bq operation failed; output suppressed. Check owner access and prerequisites.')
 
