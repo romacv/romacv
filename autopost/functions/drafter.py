@@ -69,10 +69,6 @@ def validate(spec, prepared=True, copy_only=False):
                 for name, path in files.items():
                     if name != 'video' and (path.read_bytes()[:3] != b'\xff\xd8\xff' or path.stat().st_size > 8_000_000):
                         errors.append(name + ': Instagram requires JPEG at most 8 MB')
-                for i in range(len(images)):
-                    w, h = image_size(files[f'image{i}'])
-                    if 'ig-post' in targets and (not 320 <= w <= 1440 or not 0.8 <= w / h <= 1.91):
-                        errors.append('ig-post: image width 320–1440, ratio 4:5–1.91:1 required')
             if 'threads' in targets:
                 for i in range(len(images)):
                     if files[f'image{i}'].stat().st_size > 8_000_000:

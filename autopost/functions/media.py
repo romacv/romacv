@@ -91,18 +91,26 @@ def intake(bucket, item_id, item, config, directory):
     return result
 
 
-def clean_image(source, destination, story=False):
-    from PIL import Image, ImageOps, ImageCms
+def clean_image(source, destination, story=False, crop=False):
+    from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageCms
     with Image.open(source) as original:
         image = ImageOps.exif_transpose(original).convert('RGB')
         if story:
-            image = ImageOps.pad(image,(1080,1920),color='black')
+            background = ImageEnhance.Brightness(ImageOps.fit(image,(1080,1920)).filter(ImageFilter.GaussianBlur(40))).enhance(0.6)
+            front = ImageOps.contain(image,(1080,1920))
+            background.paste(front,((1080-front.width)//2,(1920-front.height)//2))
+            image = background
         else:
             image.thumbnail((1440,1800))
-            if image.width / image.height < 0.8:
-                image = ImageOps.pad(image,(max(320,image.width),int(max(320,image.width)/0.8)),color='black')
-            if image.width / image.height > 1.91:
-                image = ImageOps.pad(image,(image.width,math.ceil(image.width/1.91)),color='black')
+            if crop:
+                if image.width / image.height < 0.8:
+                    height = math.floor(image.width/0.8)
+                    top = (image.height-height)//2
+                    image = image.crop((0,top,image.width,top+height))
+                elif image.width / image.height > 1.91:
+                    width = math.floor(image.height*1.91)
+                    left = (image.width-width)//2
+                    image = image.crop((left,0,left+width,image.height))
             if image.width < 320:
                 image = image.resize((320,round(image.height*320/image.width)))
         clean = Image.new('RGB',image.size)

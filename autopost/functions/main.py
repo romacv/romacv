@@ -290,9 +290,9 @@ def draft(config,store,bucket,payload,directory):
         target_assets = {}
         for index,image in enumerate(spec.get('media',{}).get('images',[])):
             path = directory/image['path']
-            if target in ('ig-story','tg-story'):
+            if target in ('ig-story','tg-story','ig-post'):
                 converted = directory/(target + '-' + str(index) + '.jpg')
-                media.clean_image(path,converted,True)
+                media.clean_image(path,converted,target != 'ig-post',target == 'ig-post')
                 path = converted
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
