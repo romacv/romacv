@@ -528,6 +528,7 @@ class Store:
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if not item or not item.get('waiting_upload') or item.get('status') not in ('collecting', 'queued'):
+            self.retire(taps, query, 'Ссылка больше не нужна.')
             return None
         self.retire(taps, query, 'Готовлю новую ссылку…')
         self.job(tx, {'step':'upload-prompt', 'item':item_id, 'revision':item['revision']}, 'upload-link-' + update_path.split('/', 1)[1])

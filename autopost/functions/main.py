@@ -190,7 +190,6 @@ def webhook(request):
         def complete(saved):
             if not saved.get('waiting_upload'):
                 return 'stale' if saved.get('revision') != revision else False
-            saved['upload_complete_requested'] = True
             return {'revision':saved['revision']}
         outcome = store.change('items/' + item, complete)
         if outcome == 'stale':
