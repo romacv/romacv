@@ -9,7 +9,8 @@
 <style>
 :root{color-scheme:light dark}
 body{margin:0;padding:16px 16px 32px;font:16px/1.4 system-ui,-apple-system,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000)}
-header{display:flex;justify-content:flex-end}
+header{display:flex;justify-content:space-between;align-items:center}
+h1{margin:0;font-size:22px}
 #refresh{font:inherit;font-size:15px;border:0;background:none;padding:4px 0;color:var(--tg-theme-link-color,#2481cc)}
 #refresh:active{opacity:.5}
 h2{margin:24px 0 8px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--tg-theme-section-header-text-color,var(--tg-theme-hint-color,#6d6d72))}
@@ -29,13 +30,21 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 .more .done{color:var(--tg-theme-hint-color,#6d6d72)}
 .more .current{font-weight:600}
 .more a{color:var(--tg-theme-link-color,#2481cc);text-decoration:none;overflow-wrap:anywhere}
+.big{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.help{flex:none;width:44px;height:44px;margin:-8px -10px -8px 0;border:0;border-radius:50%;background:none;font:600 18px/1 system-ui,-apple-system,sans-serif;color:var(--tg-theme-link-color,#2481cc);-webkit-tap-highlight-color:transparent}
+.help>span{display:inline-block;width:28px;line-height:28px;border-radius:50%;background:var(--tg-theme-bg-color,#fff)}
+.help:active{opacity:.5}
+.bar{height:4px;margin-top:8px;border-radius:2px;overflow:hidden;background:var(--tg-theme-bg-color,#fff)}
+.bar>i{display:block;height:100%;border-radius:2px;background:var(--tg-theme-button-color,#2481cc)}
+.bar.warn>i{background:#e8a317}
+.bar.over>i{background:var(--tg-theme-destructive-text-color,#d93025)}
 .free{color:var(--tg-theme-hint-color,#6d6d72)}
 #state{margin-top:24px;text-align:center}
 .note{margin:8px 4px 0}
 </style>
 </head>
 <body>
-<header><button id="refresh" type="button">Обновить</button></header>
+<header><h1 id="heading">Прогресс</h1><button id="refresh" type="button">Обновить</button></header>
 <div id="active"></div>
 <div id="waiting"></div>
 <div id="published"></div>
@@ -44,14 +53,15 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 'use strict';
-const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state');
-let data=null, offset=0, busy=false, open=null;
+const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), view=new URLSearchParams(location.search).get('view')==='costs'?'costs':'progress';
+document.title=document.getElementById('heading').textContent=view==='costs'?'Расходы':'Прогресс';
+let data=null, offset=0, busy=false, open=null, balanceOpen=false;
 if(app){app.ready();app.expand()}
 const number=n=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1});
 const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 const stamp=t=>{const d=new Date(t*1000),today=new Date().toDateString()===d.toDateString();return (today?'':d.toLocaleDateString('ru-RU',{day:'numeric',month:'short'})+', ')+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})};
 const hour=t=>new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
-const money=(v,c)=>(c==='USD'||!c?'$':c+' ')+Number(v).toLocaleString('ru-RU',{maximumFractionDigits:v<1?4:2});
+const money=(v,c)=>{const p=c==='USD'||!c?'$':c+' ',n=Number(v);if(n>0&&n<0.01)return '<'+p+'0.01';const [i,f]=n.toFixed(2).split('.');return p+Number(i).toLocaleString('ru-RU')+'.'+f};
 const now=()=>Date.now()/1000+offset;
 const haptic=()=>{try{app.HapticFeedback.selectionChanged()}catch(e){}};
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
@@ -84,6 +94,7 @@ function costs(c){
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
 function render(){
   if(!data)return;
+  if(view==='costs'){limits();return}
   group('active','Сейчас',data.active.map((job,i)=>{
     const head=el('div'), time=el('span','time');
     head.append(line(el('span','title',job.title||'Без названия'),time));
@@ -121,7 +132,6 @@ function render(){
       return box;
     });
   }));
-  limits();
   tick();
 }
 function section(head,rows,notes){
@@ -138,17 +148,59 @@ function plain(left,right,sub){
   if(sub)r.append(el('div','hint',sub));
   return r;
 }
+function bar(label,percent){
+  const v=Math.min(100,Math.max(0,percent)),b=el('div','bar'+(percent>=100?' over':percent>=80?' warn':''));
+  b.setAttribute('role','progressbar');b.setAttribute('aria-label',label);b.setAttribute('aria-valuemin','0');b.setAttribute('aria-valuemax','100');b.setAttribute('aria-valuenow',String(Math.round(v)));
+  const f=el('i');f.style.width=v+'%';b.append(f);
+  return b;
+}
+function monthFrom(){
+  const day=new Date(now()*1000).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'}).split('-').map(Number);
+  return 'с '+new Date(Date.UTC(day[0],day[1]-1,1,12)).toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'UTC'});
+}
+function period(x){return x.period==='month'?monthFrom():x.period==='day'?'за сутки (PT)':x.period==='now'?'сейчас':''}
+function usage(x){
+  const r=el('div','row plain');
+  if(x.percent===null){r.append(line(el('span','',x.label),el('span','time','нет метрики')),el('div','hint','бесплатно '+number(x.free)+' '+x.unit));return r}
+  r.append(line(el('span','',x.label),el('span','time',x.paid>0?'≈'+money(x.paid)+' сверх':'')));
+  r.append(el('div','hint',[period(x),number(x.used)+' из '+number(x.free)+' '+x.unit+' ('+number(x.percent)+'%)'+(x.stale?' · устарело':'')].filter(Boolean).join(' · ')));
+  r.append(bar(x.label,x.percent));
+  return r;
+}
+function balance(a){
+  const k=a.balance,ru=d=>d.slice(8)+'.'+d.slice(5,7)+'.'+d.slice(0,4),prod={'Batch API':'Batch'};
+  const at=new Date(k.at*1000).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Makassar'}).replace(', ',' ');
+  const r=el('div','row plain'),left=el('div');
+  left.append(el('div','big','Осталось ≈ '+money(k.left)),el('div','hint','Потрачено '+money(k.spent)+' с '+at));
+  const help=el('button','help');help.type='button';help.setAttribute('aria-label','Подробности');help.setAttribute('aria-expanded',String(balanceOpen));
+  help.append(el('span','','?'));
+  help.addEventListener('click',()=>{haptic();balanceOpen=!balanceOpen;limits()});
+  r.append(line(left,help));
+  if(balanceOpen){
+    const box=el('div','more');
+    k.credits.forEach(x=>{
+      const n=x.name.replace(/^API credit \((.*)\)$/,'$1'),ap=(x.applies||[]).map(y=>prod[y]||y).join(', ');
+      const text=x.kind==='promo'?'Промо '+n+': '+money(x.left)+' из '+money(x.granted_total)+', выдан '+ru(x.granted)+', сгорает '+ru(x.expires)+' (через '+Math.ceil((Date.parse(x.expires+'T00:00:00Z')-Date.now())/864e5)+' дн.)':'Куплено: '+money(x.left)+(x.expires?', до '+ru(x.expires):', без срока');
+      const d=el('div');d.style.display='block';d.append(el('div','',text),el('div','hint',ap));box.append(d);
+    });
+    [ 'Лимит '+money(k.limit)+' в месяц, на момент записи потрачено '+money(k.month_spent)+'; автопополнение '+(k.auto_reload?'включено':'выключено'),
+      'За месяц: '+money(a.usd)+', '+number(a.calls)+' вызовов',
+      number(a.input_tokens)+' вх., '+number(a.output_tokens)+' исх., кэш '+number(a.cache_read_tokens)+' чт. / '+number(a.cache_write_tokens)+' зап., поиск '+number(a.web_searches)
+    ].forEach(t=>{const d=el('div','',t);d.style.display='block';box.append(d)});
+    r.append(box);
+  }
+  return r;
+}
 function limits(){
   document.getElementById('limits').replaceChildren();
   const b=data.budget, g=data.billing, a=data.anthropic, q=data.quota||[];
   if(b&&b.cost!==undefined&&b.cost!==null)section('Месяц',[plain('Месяц: счёт '+money(b.cost,b.currency)+' из бюджета '+money(b.budget,b.currency),'',b.at?'по данным на '+stamp(b.at):'')]);
   if(g)section('Google по сервисам',g.state==='ok'&&g.rows.length?g.rows.map(x=>plain(x.service,money(x.cost,x.currency))):[plain('Выгрузка счёта ещё не пришла','')],g.at?['по данным на '+stamp(g.at)]:[]);
-  if(a&&a.balance){const k=a.balance,usd=v=>'$'+v.toFixed(2),ru=d=>d.slice(8)+'.'+d.slice(5,7)+'.'+d.slice(0,4),prod={'Agent SDK':'Agent SDK','API':'API','Batch API':'Batch','Playground':'Playground','Managed Agents':'Managed Agents'};section('Баланс Anthropic',[plain('Баланс Anthropic ≈ '+usd(k.left)+' из '+usd(k.start)+' на '+new Date(k.at*1000).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Makassar'}).replace(', ',' ')+' · считает бот','','бот потратил '+usd(k.spent))].concat(k.credits.map(x=>{const n=x.name.replace(/^API credit \((.*)\)$/,'$1');const ap=(x.applies||[]).map(y=>prod[y]||y).join(', ');if(x.kind==='promo'){const d=Math.ceil((Date.parse(x.expires+'T00:00:00Z')-Date.now())/864e5);return plain('Промо '+n+': '+usd(x.left)+' из '+usd(x.granted_total)+', выдан '+ru(x.granted)+', сгорает '+ru(x.expires)+' (через '+d+' дн.)','',ap)}return plain('Куплено: '+usd(x.left)+(x.expires?', до '+ru(x.expires):', без срока'),'',ap)}),[plain('Лимит $'+k.limit+' в месяц, на момент записи потрачено '+usd(k.month_spent)+'; автопополнение '+(k.auto_reload?'включено':'выключено'),'')]))}
-  if(a)section('Anthropic',[plain('Anthropic за месяц: '+money(a.usd)+', '+number(a.calls)+' вызовов','',number(a.input_tokens)+' вх., '+number(a.output_tokens)+' исх., кэш '+number(a.cache_read_tokens)+' чт. / '+number(a.cache_write_tokens)+' зап., поиск '+number(a.web_searches))]);
-  section('Бесплатные лимиты',q.map(x=>x.percent===null?plain(x.label,'нет метрики','бесплатно '+number(x.free)+' '+x.unit):plain(x.label,x.paid>0?'≈'+money(x.paid):x.percent>=80?'≈бесплатно':'бесплатно',number(x.used)+' из '+number(x.free)+' '+x.unit+' ('+number(x.percent)+'%)'+(x.stale?' · устарело':''))),q.some(x=>x.key==='cpu'||x.key==='mem')?['Бесплатные лимиты Cloud Run и других сервисов общие на весь billing account; здесь считается только этот проект.']:[]);
+  if(a&&a.balance)section('Anthropic',[balance(a)]);
+  section('Использование',q.map(usage),q.some(x=>x.key==='cpu'||x.key==='mem')?['Бесплатные лимиты Cloud Run и других сервисов общие на весь billing account; здесь считается только этот проект.']:[]);
 }
 function tick(){
-  data&&data.active.forEach((job,i)=>{
+  data&&data.active&&data.active.forEach((job,i)=>{
     const rows=document.querySelectorAll('#active .row'), r=rows[i];
     if(!r)return;
     r.querySelector('.line .time').textContent=clock(Math.max(0,now()-job.since));
@@ -160,11 +212,11 @@ async function load(){
   if(busy||!app||!app.initData)return;
   busy=true;
   try{
-    const response=await fetch(endpoint,{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
+    const response=await fetch(endpoint+(view==='costs'?'?view=costs':''),{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
     if(!response.ok)throw Error(response.status);
     data=await response.json();
     offset=data.now-Date.now()/1000;
-    state.textContent=data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
+    state.textContent=view==='costs'||data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
     render();
   }catch(e){
     const code=e.message;

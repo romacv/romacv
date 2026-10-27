@@ -56,6 +56,7 @@ SPECS = (
     ('host_out','Firebase Hosting, трафик','ГБ','firebasehosting.googleapis.com/network/sent_bytes_count','firebase_domain','month',GB),
     ('host_size','Firebase Hosting, хранилище','ГБ','firebasehosting.googleapis.com/storage/total_bytes','firebase_domain','gauge',GB),
 )
+PERIODS = {'month':'month','day':'day','gauge':'now'}
 NO_METRIC = (('scheduler','Cloud Scheduler','заданий',3),('secrets','Secret Manager','версий',6),('build','Cloud Build','мин',2500),('pubsub','Pub/Sub','ГиБ',10))
 FREE = {'svc_cpu':180000,'svc_mem':360000,'svc_req':2000000,'cpu':240000,'mem':450000,'reads':50000,'writes':20000,'deletes':20000,'gcs_bytes':5,'gcs_egress':100,'tasks':1000000,'ar':0.5,'log':50,'host_out':10,'host_size':10,'speech':60,'mon_reads':1000000}
 PRICE = {'svc_cpu':0.000024,'svc_mem':0.0000025,'svc_req':0.4 / 1000000,'cpu':0.000018,'mem':0.000002,'reads':0.03 / 100000,'writes':0.09 / 100000,'deletes':0.01 / 100000,'gcs_bytes':0.02,'gcs_egress':0.12,'tasks':0.4 / 1000000,'ar':0.1,'log':0.5,'host_out':0.15,'host_size':0.026,'speech':0.024,'mon_reads':0.5 / 1000000}
@@ -130,9 +131,9 @@ def series_total(client, project, metric, resource, start, now, period, gauge=Fa
     return total
 
 
-def quota_row(key, label, unit, used, div=1):
+def quota_row(key, label, unit, used, div=1, period='month'):
     used = used / div
-    return {'key':key,'label':label,'unit':unit,'used':round(used, 3),'free':FREE[key],'percent':round(100 * used / FREE[key], 1),'paid':round(max(0, used - FREE[key]) * PRICE[key], 4)}
+    return {'key':key,'period':period,'label':label,'unit':unit,'used':round(used, 3),'free':FREE[key],'percent':round(100 * used / FREE[key], 1),'paid':round(max(0, used - FREE[key]) * PRICE[key], 4)}
 
 
 def monitoring_client():
@@ -162,13 +163,13 @@ def quota(store, now):
         client = None
     if client:
         pool = ThreadPoolExecutor(max_workers=8)
-        jobs = [(key, label, unit, div, metric, pool.submit(series_total, client, project, metric, resource, window_of(window, now)[0], now, window_of(window, now)[1], window == 'gauge')) for key, label, unit, metric, resource, window, div in SPECS]
+        jobs = [(key, label, unit, div, metric, window, pool.submit(series_total, client, project, metric, resource, window_of(window, now)[0], now, window_of(window, now)[1], window == 'gauge')) for key, label, unit, metric, resource, window, div in SPECS]
         wait([job for *_, job in jobs], timeout=QUOTA_DEADLINE)
         pool.shutdown(wait=False, cancel_futures=True)
-        for key, label, unit, div, metric, job in jobs:
+        for key, label, unit, div, metric, window, job in jobs:
             try:
                 if job.done():
-                    rows.append({**quota_row(key, label, unit, job.result(), div),**({'estimate':True} if key == 'gcs_egress' else {})})
+                    rows.append({**quota_row(key, label, unit, job.result(), div, PERIODS[window]),**({'estimate':True} if key == 'gcs_egress' else {})})
             except Exception:
                 logging.exception('monitoring read failed: ' + key + ' ' + metric)
     measured = bool(rows)
@@ -289,10 +290,28 @@ def targets_of(spec):
     return [NAMES.get(target, target) for target in spec.get('targets', [])]
 
 
-def snapshot(store, now):
+def costs_view(store, now):
     bills = ThreadPoolExecutor(max_workers=1)
     bill = bills.submit(billing, store, now)
     began = time.time()
+    rows = quota(store, now)
+    try:
+        invoice = bill.result(timeout=max(0, QUOTA_DEADLINE - (time.time() - began)))
+    except Exception:
+        logging.exception('billing wait failed')
+        invoice = None
+    bills.shutdown(wait=False, cancel_futures=True)
+    try:
+        spent = anthropic_of(store, now)
+    except Exception:
+        logging.exception('anthropic usage failed')
+        spent = None
+    return {'now':now,'view':'costs','quota':rows,'budget':budget_of(store),'billing':invoice,'anthropic':spent}
+
+
+def snapshot(store, now, view='progress'):
+    if view == 'costs':
+        return costs_view(store, now)
     jobs = [{**s.to_dict(),'id':s.id} for s in store.db.collection('renders').where('state', 'in', ['queued', 'running']).stream()]
     collecting = [(s.id, s.to_dict()) for s in store.db.collection('items').where('status', '==', 'collecting').stream()]
     previews = [s.to_dict() for s in store.db.collection('specs').where('state', 'in', ['previewed', 'needs-edit']).limit(PREVIEW_LIMIT).stream()]
@@ -318,7 +337,11 @@ def snapshot(store, now):
     active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
     active.sort(key=lambda row: row['since'])
     published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item'))),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
-    rows = quota(store, now)
+    try:
+        rows = (store.get('sessions/quota') or {}).get('rows') or []
+    except Exception:
+        logging.exception('quota cache failed')
+        rows = []
     by_key = {row['key']:row for row in rows}
     for job in active:
         for step in job['steps']:
@@ -333,18 +356,7 @@ def snapshot(store, now):
         costs = {}
     for row in active + waiting + published:
         row['cost'] = costs.get(row.get('item') or row['id'])
-    try:
-        invoice = bill.result(timeout=max(0, QUOTA_DEADLINE - (time.time() - began)))
-    except Exception:
-        logging.exception('billing wait failed')
-        invoice = None
-    bills.shutdown(wait=False, cancel_futures=True)
-    try:
-        spent = anthropic_of(store, now)
-    except Exception:
-        logging.exception('anthropic usage failed')
-        spent = None
-    return {'now':now,'active':active,'waiting':waiting,'published':published,'quota':rows,'budget':budget_of(store),'billing':invoice,'anthropic':spent}
+    return {'now':now,'view':'progress','active':active,'waiting':waiting,'published':published}
 
 
 def respond(request, config, store):
@@ -361,7 +373,8 @@ def respond(request, config, store):
     if not fresh:
         return https_fn.Response('',status=401,headers=cors)
     try:
-        body = json.dumps(snapshot(store, now))
+        view = 'costs' if request.args.get('view') == 'costs' else 'progress'
+        body = json.dumps(snapshot(store, now, view))
     except Exception:
         logging.exception('progress snapshot failed')
         return https_fn.Response('',status=503,headers=cors)

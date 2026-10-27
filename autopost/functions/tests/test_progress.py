@@ -48,8 +48,9 @@ class ProgressTests(unittest.TestCase):
         self.store = Store(Database())
         self.config = {'roman_user_id':'1','telegram_bot_token':TOKEN}
 
-    def call(self, init):
+    def call(self, init, view=None):
         request = Mock(method='GET')
+        request.args = {'view':view} if view else {}
         request.headers = {'Authorization':'tma ' + init}
         return app.respond(request,self.config,self.store)
 
@@ -79,24 +80,31 @@ class ProgressTests(unittest.TestCase):
         self.store.put('sessions/budget',{'costAmount':0.4,'budgetAmount':1,'costIntervalStart':'2026-10-01T07:00:00Z','currencyCode':'USD','at':now - 3600})
         used = {(app.RUN_CPU,'cloud_run_job'):250000,(app.RUN_MEMORY,'cloud_run_job'):1000,(app.FIRESTORE_READS,app.FIRESTORE_DATABASE):1200}
         with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=lambda client,project,metric,resource,*rest: used.get((metric,resource),0)), patch.object(app,'billing_rows',return_value=None):
+            costs = json.loads(self.call(signed(),'costs').get_data(as_text=True))
+        with patch.object(app,'monitoring_client',side_effect=AssertionError), patch.object(app,'billing_rows',side_effect=AssertionError):
             body = json.loads(self.call(signed()).get_data(as_text=True))
+        progress = body
         self.assertTrue(body['active'][0]['title'].startswith('Первый очень длинный') and not body['active'][0]['title'].endswith('…'))
         self.assertEqual([(s['label'],s['seconds'],s['done'],round(s['vcpu_s'])) for s in body['active'][0]['steps']],[('Скачиваю',10,True,20),('Рендерю',20,False,40)])
         self.assertAlmostEqual(body['active'][0]['steps'][1]['paid'],40 * 0.000018 + 40 * 0.000002,4)
         self.assertEqual([(w['title'],w['status'],w['targets']) for w in body['waiting']],[('Четвёртый','collecting',['Telegram-канал']),('Второй','previewed',['Telegram-канал'])])
         self.assertEqual(body['published'][0]['title'],'Третий')
         self.assertEqual(body['published'][0]['links'],[{'name':'Telegram-канал','url':'https://t.me/x/1'}])
+        self.assertNotIn('quota',body)
+        body = costs
         rows = {row['key']:row for row in body['quota']}
         self.assertEqual((rows['cpu']['percent'],rows['cpu']['paid']),(104.2,round(10000 * 0.000018,4)))
+        self.assertNotIn('active',body)
+        self.assertEqual((rows['cpu']['period'],rows['reads']['period'],rows['gcs_bytes']['period'],rows['speech']['period']),('month','day','now','month'))
         self.assertEqual((rows['reads']['used'],rows['speech']['used'],rows['speech']['paid']),(1200,30,0))
         self.assertEqual((body['budget']['cost'],body['budget']['budget']),(0.4,1))
         self.assertEqual((body['billing']['state'],body['billing']['rows']),('pending',[]))
         self.assertEqual((body['anthropic']['usd'],body['anthropic']['calls']),(0.1234,3))
-        cost = body['active'][0]['cost']
+        cost = progress['active'][0]['cost']
         self.assertEqual((cost['anthropic'],cost['speech_min'],cost['speech_paid'],cost['render_paid'],cost['total']),([{'kind':'draft','usd':0.05}],10,0,0.0008,0.0508))
-        self.assertEqual(body['waiting'][1]['cost'],None)
-        self.assertNotIn('"secret"',json.dumps(body))
-        self.assertNotIn('signed.example',json.dumps(body))
+        self.assertEqual(progress['waiting'][1]['cost'],None)
+        self.assertNotIn('"secret"',json.dumps(progress))
+        self.assertNotIn('signed.example',json.dumps(progress))
 
     def test_anthropic_balance(self):
         self.store.put('usage/anthropic-2026-10',{'usd':1.5})
@@ -109,7 +117,7 @@ class ProgressTests(unittest.TestCase):
     def test_monitoring_failure_degrades(self):
         self.store.put('sessions/budget',{'costAmount':0.1,'budgetAmount':1,'at':1})
         with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=RuntimeError):
-            response = self.call(signed())
+            response = self.call(signed(),'costs')
         body = json.loads(response.get_data(as_text=True))
         self.assertEqual(response.status_code,200)
         self.assertEqual([row['key'] for row in body['quota']],['speech','scheduler','secrets','build','pubsub'])
@@ -119,10 +127,10 @@ class ProgressTests(unittest.TestCase):
         now = time.time()
         self.store.put('sessions/quota',{'at':now - 60,'rows':[{'key':'reads','used':5}]})
         with patch.object(app,'monitoring_client',side_effect=RuntimeError), patch.object(app,'billing_rows',return_value=None):
-            self.assertEqual(app.snapshot(self.store,now)['quota'],[{'key':'reads','used':5}])
+            self.assertEqual(app.snapshot(self.store,now,'costs')['quota'],[{'key':'reads','used':5}])
         self.store.put('sessions/quota',{'at':now - 700,'rows':[{'key':'reads','used':5}]})
         with patch.object(app,'monitoring_client',side_effect=RuntimeError), patch.object(app,'billing_rows',return_value=None):
-            rows = app.snapshot(self.store,now)['quota']
+            rows = app.snapshot(self.store,now,'costs')['quota']
         self.assertEqual(rows,[{'key':'reads','used':5,'stale':True}])
 
 

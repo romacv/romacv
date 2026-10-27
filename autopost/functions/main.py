@@ -34,7 +34,7 @@ import montage
 
 AUTOPOST = SecretParam('AUTOPOST')
 PROGRESS_URL = 'https://www.resrom.com/p'
-PROGRESS_MARKUP = {'inline_keyboard':[[{'text':'Прогресс','web_app':{'url':PROGRESS_URL}}]]}
+PROGRESS_MARKUP = {'inline_keyboard':[[{'text':'Прогресс','web_app':{'url':PROGRESS_URL}},{'text':'Расходы','web_app':{'url':PROGRESS_URL + '?view=costs'}}]]}
 REGION = 'us-central1'
 RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.com'
 
