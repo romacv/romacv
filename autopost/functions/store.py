@@ -242,6 +242,9 @@ class Store:
                 name = None
             replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
+            if name != '/post' and not session.get('collecting') and isinstance(message.get('photo'), list) and message['photo'] and message['photo'][-1].get('file_size', 0) > 20*1024*1024:
+                self.put(update_path, {'received':time.time()}, tx)
+                return 'Скриншот больше 20 МБ: пришли его как фото, не файлом.'
             if name != '/post' and spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 head = (message['reply_to_message'].get('text') or message['reply_to_message'].get('caption', '')).split('\n', 1)[0]
                 names = spec['preview_targets'].get(reply_id, []) if 'preview_targets' in spec else [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
@@ -305,9 +308,11 @@ class Store:
                 body = without_command(message) if name == '/post' else message
                 filled = bool(body.get('text') or body.get('caption') or any(body.get(k) for k in MEDIA_KEYS))
                 sizes = [m.get(k, {}).get('file_size', 0) for m in item['messages'] + [body] for k in ('video', 'voice')]
-                if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20):
+                sizes += [(m.get('photo') or [{}])[-1].get('file_size', 0) for m in item['messages'] + [body]]
+                refusal = 'Файл больше 512 МБ: сожми его или раздели.' if filled and max(sizes) > 512*1024*1024 else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».' if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20) else None
+                if refusal:
                     self.put(update_path, {'received':time.time()}, tx)
-                    return {'item':item_id, 'revision':item['revision'], 'text':'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».', 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».'
+                    return {'item':item_id, 'revision':item['revision'], 'text':refusal, 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else refusal
                 group = message.get('media_group_id')
                 joined = bool(group) and bool(item['messages']) and item['messages'][-1].get('media_group_id') == group
                 if filled:

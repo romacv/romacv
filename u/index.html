@@ -19,7 +19,7 @@
 <script>
 'use strict';
 const picker=document.getElementById('picker'), start=document.getElementById('start'), status=document.getElementById('status'), progress=document.getElementById('progress');
-const extensions={'video/mp4':['.mp4'],'image/jpeg':['.jpg','.jpeg'],'image/png':['.png'],'image/webp':['.webp'],'image/heic':['.heic','.heif']};
+const images=['.jpg','.jpeg','.png','.webp','.heic','.heif'], extensions={'video/mp4':['.mp4'],'image/jpeg':images,'image/png':images,'image/webp':images,'image/heic':images};
 let ticket;
 try {
   ticket=JSON.parse(decodeURIComponent(location.hash.slice(1)));
@@ -46,12 +46,18 @@ function put(url,type,file,onProgress){
   });
 }
 start.addEventListener('click',async()=>{
+  const selected=Array.from(picker.files);
+  if(selected.some((file,index)=>!extensions[ticket.uploads[index].type].some(extension=>file.name.toLowerCase().endsWith(extension)))){
+    const videos=ticket.uploads.filter(upload=>upload.type==='video/mp4').length, photos=ticket.uploads.length-videos;
+    status.textContent='Нужно: '+[videos&&videos+' видео MP4',photos&&photos+' фото'].filter(Boolean).join(' и ')+', по порядку как в чате';
+    return;
+  }
   start.disabled=true;picker.disabled=true;
   try {
     if(ticket.receipt.expires*1000<Date.now())throw Error();
-    const selected=Array.from(picker.files), total=selected.reduce((sum,file)=>sum+file.size,0);let uploaded=0;
+    const total=selected.reduce((sum,file)=>sum+file.size,0);let uploaded=0;
     if(total>1024*1024*1024)throw Error();
-    if(selected.some((file,index)=>!extensions[ticket.uploads[index].type].some(extension=>file.name.toLowerCase().endsWith(extension))||file.size>512*1024*1024))throw Error();
+    if(selected.some(file=>file.size>512*1024*1024))throw Error();
     for(let index=0;index<selected.length;index++){
       status.textContent='Загрузка '+(index+1)+' из '+selected.length;
       await put(ticket.uploads[index].url,ticket.uploads[index].type,selected[index],fraction=>{progress.value=100*(uploaded+selected[index].size*fraction)/total;});

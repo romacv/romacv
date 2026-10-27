@@ -105,10 +105,17 @@ def intake(bucket, item_id, item, config, directory):
 
 def shrink(path):
     from PIL import Image, ImageOps
-    with Image.open(path) as original:
-        original.draft('RGB',(2560,2560))
-        original.thumbnail((2560,2560))
-        image = ImageOps.exif_transpose(original).convert('RGB')
+    limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = 150_000_000
+    try:
+        with Image.open(path) as original:
+            original.draft('RGB',(2560,2560))
+            original.thumbnail((2560,2560))
+            image = ImageOps.exif_transpose(original).convert('RGB')
+    except Image.DecompressionBombError:
+        raise Error('Картинка больше 300 Мп: уменьши её.') from None
+    finally:
+        Image.MAX_IMAGE_PIXELS = limit
     image.save(path,'JPEG',quality=90)
 
 
