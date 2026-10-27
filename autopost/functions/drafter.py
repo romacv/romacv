@@ -11,6 +11,7 @@ from platforms import Error, slug, when, media_files, image_size, text_for, unit
 def validate(spec, prepared=True, copy_only=False):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
+    size = None
     try:
         slug(spec.get('slug'))
         if when(spec) > datetime.now(timezone.utc) + timedelta(hours=36):
@@ -35,6 +36,8 @@ def validate(spec, prepared=True, copy_only=False):
                 raise Error('Each image needs path and alt (1–1000 characters)')
         if not copy_only:
             files = media_files(spec)
+            if images and 'image0' in files:
+                size = image_size(files['image0'])
             if images and media.get('video'):
                 errors.append('Choose images or video for a spec, not both')
             if media.get('cover') and not media.get('video'):
@@ -112,7 +115,9 @@ def validate(spec, prepared=True, copy_only=False):
                 errors.append(t + ': no emoji in work copy')
             if t == 'threads' and len(set(re.findall(r'(?:https?://|www\.)\S+', text))) > 5:
                 errors.append('threads: at most 5 unique links')
-        errors.extend(overlay_errors(spec, targets, images))
+        if spec.get('kind') == 'personal' and 'tg-channel' in targets and 'threads' in targets and (spec.get('copy') or {}).get('tg-channel') != (spec.get('copy') or {}).get('threads'):
+            errors.append('personal: tg-channel and threads copy must be identical')
+        errors.extend(overlay_errors(spec, targets, images, size))
         errors.extend(language_errors(spec))
         blog = spec.get('blog')
         if blog and spec.get('kind') != 'work':
@@ -141,7 +146,7 @@ def validate(spec, prepared=True, copy_only=False):
     return errors
 
 
-def overlay_errors(spec, targets, images):
+def overlay_errors(spec, targets, images, size=None):
     overlay = spec.get('overlay', {})
     if not isinstance(overlay, dict):
         return ['overlay must be an object']
@@ -160,6 +165,16 @@ def overlay_errors(spec, targets, images):
             errors.append(target + ': overlay place must be null or 1–40 plain characters without emoji')
         if not isinstance(anchor, list) or len(anchor) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 <= n <= 1 for n in anchor):
             errors.append(target + ': overlay anchor must be [x, y] within 0..1')
+        elif size:
+            width, height = size
+            if width * 16 > height * 9:
+                low = (1 - height * 9 / 16 / width) / 2
+                inside = low - 1e-9 <= anchor[0] <= 1 - low + 1e-9
+            else:
+                low = (1 - width * 16 / 9 / height) / 2
+                inside = low - 1e-9 <= anchor[1] <= 1 - low + 1e-9
+            if not inside:
+                errors.append(target + ': overlay anchor must lie inside the centered 9:16 crop of the photo (' + ('x' if width * 16 > height * 9 else 'y') + ' from %.2f to %.2f)' % (low, 1 - low))
         if value['align'] not in ('left', 'center', 'right'):
             errors.append(target + ': overlay align must be left, center or right')
     return errors

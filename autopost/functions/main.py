@@ -187,13 +187,17 @@ def pages(parts):
 
 
 def preview(config, store, bucket, item_id, spec, assets, directory, basis=None, revision=None):
-    def send(method, fields, files=None):
+    scoped = {}
+    def send(method, fields, files=None, targets=None):
         reply = platforms.telegram(method,fields,files)
-        for message in reply if isinstance(reply,list) else [reply]:
+        for position, message in enumerate(reply if isinstance(reply,list) else [reply]):
             store.put('published-messages/' + str(message['message_id']),{'slug':spec['slug']})
+            shown_for = targets[position] if targets else []
+            if shown_for:
+                scoped[str(message['message_id'])] = shown_for
         return reply
-    def say(text, **extra):
-        return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
+    def say(text, targets=None, **extra):
+        return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra},targets=[targets] if targets else None)
     previous = store.get('specs/' + spec['slug']) or {}
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
@@ -215,16 +219,16 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     for position, (name, manifest, targets) in enumerate(files):
         unique = 'preview-' + str(position) + Path(name).suffix
         media.materialize(bucket,{unique:manifest},directory)
-        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets)})
+        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets),'targets':targets})
     for start in range(0,len(shown),10):
         chunk = shown[start:start + 10]
         if len(chunk) == 1:
             method, field = ('sendVideo','video') if chunk[0]['video'] else ('sendPhoto','photo')
-            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption']},{field:chunk[0]['path']})
+            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption']},{field:chunk[0]['path']},[chunk[0]['targets']])
         else:
             attached = {'file' + str(index):value['path'] for index,value in enumerate(chunk)}
             group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),'caption':value['caption']} for index,value in enumerate(chunk)]
-            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},attached)
+            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},attached,[value['targets'] for value in chunk])
     title = config.get('channel_title')
     if not title and 'tg-channel' in spec['targets'] and config.get('channels',{}).get('tg-channel'):
         try:
@@ -234,19 +238,21 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     blocks = {}
     for target in spec['targets']:
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
-        blocks.setdefault(text,[]).append(NAMES[target] + (' «' + title + '»' if target == 'tg-channel' and title else ''))
+        blocks.setdefault(text,[]).append(target)
     note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
-    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note] + [', '.join(names) + '\n' + text for text,names in blocks.items()])
+    messages = pages(['Черновик' + post_name(store,saved) + ': куда пойдёт' + note] + [', '.join(NAMES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in members) + '\n' + text for text,members in blocks.items()])
+    def members_in(page):
+        return [t for text,members in blocks.items() if text[:100] in page or text[-100:] in page for t in members]
     for text in messages[:-1]:
-        say(text)
-    message = say(messages[-1],reply_markup=buttons(spec['slug'],digest))
+        say(text,members_in(text))
+    message = say(messages[-1],members_in(messages[-1]),reply_markup=buttons(spec['slug'],digest))
     def commit(tx):
         value = store.get('specs/' + spec['slug'],tx)
         item = store.get('items/' + item_id,tx) or {}
         session = store.get('sessions/inbox',tx) or {}
         if not value or value.get('state') != 'drafting' or value.get('hash') != digest or revision is not None and item.get('revision') != revision:
             return False
-        value.update(state='previewed',preview_message=message['message_id'])
+        value.update(state='previewed',preview_message=message['message_id'],preview_targets=scoped)
         item.update(status='previewed')
         item.pop('edit_photos',None)
         session['current'] = spec['slug']
@@ -911,6 +917,8 @@ def handle_worker(request):
         platforms.configure(config,store,directory)
         try:
             step = payload['step']
+            if payload.get('say'):
+                tell(config,payload['say'])
             if step == 'draft':
                 draft(config,store,bucket,payload,directory)
             elif step == 'montage':
@@ -933,7 +941,7 @@ def handle_worker(request):
                 saved = store.get('specs/' + payload['slug'])
                 remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved)
                 if step == 'edit-prompt' and saved['state'] == 'needs-edit':
-                    tell(config,'Напиши, что поправить.')
+                    tell(config,'Напиши, что поправить в черновике' + post_name(store,saved) + '.')
             elif step == 'collect-prompt':
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':

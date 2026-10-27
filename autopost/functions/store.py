@@ -110,6 +110,22 @@ def deleting(saved, item):
     return 'Готовлю удаление поста' + named(saved, item) + '. Превью пришлю сюда.'
 
 
+def added(item, note):
+    note = ' '.join(note.split())
+    return 'Добавил к черновику' + titled(item) + ': ' + (note[:80] + '…' if len(note) > 80 else note) + '.'
+
+
+def located(message):
+    venue, point = message.get('venue'), message.get('location')
+    if not venue and not point:
+        return message
+    if venue:
+        text = 'Место: ' + ', '.join(x for x in (venue.get('title'), venue.get('address')) if x)
+    else:
+        text = 'Место (координаты): ' + str(point['latitude']) + ', ' + str(point['longitude'])
+    return {**{k: v for k, v in message.items() if k not in ('venue', 'location')}, 'text': text}
+
+
 def titled(item):
     return snippet(next((m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')), ''))
 
@@ -154,7 +170,7 @@ class Store:
                 self.db.document('outbox/' + snapshot.id).delete()
 
     def intake(self, update, config):
-        message = update.get('message', {})
+        message = located(update.get('message', {}))
         query = update.get('callback_query')
         identifier = str(update['update_id'])
         def apply(tx):
@@ -175,7 +191,7 @@ class Store:
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
             if spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 head = (message['reply_to_message'].get('text') or message['reply_to_message'].get('caption', '')).split('\n', 1)[0]
-                names = [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
+                names = spec['preview_targets'].get(reply_id, []) if 'preview_targets' in spec else [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
                 quote = message.get('quote', {}).get('text')
                 body, shot = self.edit_note(message)
                 note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + body
@@ -260,6 +276,13 @@ class Store:
                 return {'item':item_id, 'revision':item['revision'], 'text':reply, 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
             slug = session.get('current')
             target = self.get('specs/' + slug, tx) if slug else None
+            pending = self.get('items/' + slug, tx) if slug and not target else None
+            if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
+                edit, shot = self.edit_note(message)
+                self.add_edit(tx, pending, slug, edit, shot, identifier)
+                self.put('sessions/inbox', session, tx)
+                self.put(update_path, {'received':time.time()}, tx)
+                return added(pending, edit)
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
@@ -290,19 +313,22 @@ class Store:
             return note, None
         return (note + ' [см. приложенный скриншот]' if note else 'Правка на приложенном скриншоте.'), {'message_id':message['message_id'], 'photo':photo[-1:]}
 
-    def queue_edit(self, tx, slug, spec, note, shot, identifier, session):
-        item = self.get('items/' + spec['item'], tx)
+    def add_edit(self, tx, item, item_id, note, shot, identifier):
         item.setdefault('edits', []).append(note)
         if shot:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
         item['revision'] += 1
+        self.put('items/' + item_id, item, tx)
+        self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
+
+    def queue_edit(self, tx, slug, spec, note, shot, identifier, session):
+        item = self.get('items/' + spec['item'], tx)
+        self.add_edit(tx, item, spec['item'], note, shot, identifier)
         spec['state'] = 'drafting'
         spec['hash'] = ''
         self.put('specs/' + slug, spec, tx)
-        self.put('items/' + spec['item'], item, tx)
         self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
-        self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
         session['current'] = slug
         return item
 
@@ -352,6 +378,7 @@ class Store:
         elif verb == 'pub' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'approved'
             saved['approved_hash'] = saved['hash']
+            payload['say'] = 'Публикую' + named(saved, item) + '.'
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'previewed':
             saved['state'] = 'needs-edit'
             payload['step'] = 'edit-prompt'
@@ -367,6 +394,7 @@ class Store:
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             payload['step'] = 'remove-keyboard'
+            payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
@@ -433,6 +461,7 @@ class Store:
             if session.get('upload_item') == item_id:
                 session.pop('upload_item')
             result = 'Пост отменён.'
+            self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)
         else:
             session['current'] = item['slug']
             item['status'] = 'queued'
