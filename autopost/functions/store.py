@@ -171,14 +171,15 @@ class Store:
             session = self.get('sessions/inbox', tx) or {}
             reply_id = str(message.get('reply_to_message', {}).get('message_id', ''))
             text = message.get('text', '')
-            replied = self.get('published-messages/' + reply_id, tx) if reply_id and text else None
+            replied = self.get('published-messages/' + reply_id, tx) if reply_id else None
             spec = self.get('specs/' + replied['slug'], tx) if replied else None
-            if spec and spec['state'] == 'previewed' and not spec.get('operation'):
+            if spec and spec['state'] == 'previewed' and not spec.get('operation') and (text or message.get('photo') or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 head = (message['reply_to_message'].get('text') or message['reply_to_message'].get('caption', '')).split('\n', 1)[0]
                 names = [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
                 quote = message.get('quote', {}).get('text')
-                note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + text
-                item = self.queue_edit(tx, replied['slug'], spec, note, None, identifier, session)
+                body, shot = self.edit_note(message)
+                note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + body
+                item = self.queue_edit(tx, replied['slug'], spec, note, shot, identifier, session)
                 if spec.get('preview_message'):
                     self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec['preview_message']}, 'unkey-' + identifier)
                 self.put('sessions/inbox', session, tx)
@@ -200,6 +201,8 @@ class Store:
             text = message.get('text', message.get('caption', ''))
             note = text.strip()
             photo = message.get('photo')
+            if name == '/post':
+                session.pop('awaiting', None)
             waiting = session.get('awaiting')
             if waiting and not name and (message.get('text') or waiting['kind'] == 'edit' and (photo or message.get('voice'))):
                 session.pop('awaiting')
@@ -257,8 +260,10 @@ class Store:
                 return {'item':item_id, 'revision':item['revision'], 'text':reply, 'reply_markup':collect_keyboard(item_id, item['batch_token'])}
             slug = session.get('current')
             target = self.get('specs/' + slug, tx) if slug else None
-            if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice'):
+            if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
+                if slug and not target:
+                    return 'Черновик ещё готовится. Правку пришли, когда придёт превью.'
                 return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
             label = note or ('голосовое' if message.get('voice') else 'скриншот')
@@ -280,9 +285,9 @@ class Store:
         note = (message.get('text') or message.get('caption') or '').strip()
         photo = message.get('photo')
         voice = message.get('voice')
-        if voice and not note:
+        if voice:
             placeholder = '[голосовое сообщение ' + str(message['message_id']) + ']'
-            return placeholder, {'message_id':message['message_id'], 'voice':voice, 'note':placeholder}
+            return (note + ' ' + placeholder if note else placeholder), {'message_id':message['message_id'], 'voice':voice, 'note':placeholder}
         if not photo:
             return note, None
         return (note + ' [см. приложенный скриншот]' if note else 'Правка на приложенном скриншоте.'), {'message_id':message['message_id'], 'photo':photo[-1:]}
@@ -366,10 +371,16 @@ class Store:
             payload['step'] = 'remove-keyboard'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
+        elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
+            return 'Жду правку: напиши, что поменять.'
+        elif verb == 'pfix' and not saved.get('operation') and session.get('awaiting') == {'kind':'fix','slug':slug}:
+            return 'Жду правку: напиши, что поменять.'
         else:
             return None
         self.put(path, saved, tx)
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
+        if verb == 'edit':
+            return 'Напиши, что поменять в черновике' + named(saved, item) + '.'
         return True
 
     def new_post_callback(self, tx, update_path, callback_path, identifier, token):
@@ -411,6 +422,9 @@ class Store:
             return None
         if verb == 'done' and not item['messages']:
             return 'Пост пустой. Пришли текст, фото, видео или голос.'
+        video = any(m.get('video') for m in item['messages'])
+        if verb == 'done' and video and any(m.get('photo') for m in item['messages']):
+            return 'В монтаж идут видео, текст и голос. Фото пришли отдельным /post.'
         if session.get('collecting') == item_id:
             session.pop('collecting')
         item['revision'] += 1
@@ -422,7 +436,7 @@ class Store:
                 session.pop('upload_item')
             result = 'Пост отменён.'
         else:
-            video = any(m.get('video') for m in item['messages'])
+            session['current'] = item['slug']
             item['status'] = 'queued'
             item['montage'] = video
             self.job(tx, {'item':item_id, 'step':'montage' if video else 'draft', 'revision':item['revision']}, 'draft-' + identifier)

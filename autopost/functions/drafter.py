@@ -20,7 +20,7 @@ def validate(spec, prepared=True, copy_only=False):
         targets = spec.get('targets')
         if not isinstance(targets, list) or not targets or any(t not in TARGETS for t in targets) or len(set(targets)) != len(targets):
             raise Error('targets must be a nonempty unique list of supported targets')
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay'}:
             errors.append('Unknown spec fields')
         if not isinstance(spec.get('approval', {}), dict):
             errors.append('approval must be an object')
@@ -112,6 +112,7 @@ def validate(spec, prepared=True, copy_only=False):
                 errors.append(t + ': no emoji in work copy')
             if t == 'threads' and len(set(re.findall(r'(?:https?://|www\.)\S+', text))) > 5:
                 errors.append('threads: at most 5 unique links')
+        errors.extend(overlay_errors(spec, targets, images))
         errors.extend(language_errors(spec))
         blog = spec.get('blog')
         if blog and spec.get('kind') != 'work':
@@ -137,6 +138,30 @@ def validate(spec, prepared=True, copy_only=False):
                 errors.append('blog contains a banned phrase')
     except (Error, TypeError, KeyError, ValueError, AttributeError, struct.error) as e:
         errors.append(str(e) if isinstance(e, Error) else 'Invalid spec field type or media header')
+    return errors
+
+
+def overlay_errors(spec, targets, images):
+    overlay = spec.get('overlay', {})
+    if not isinstance(overlay, dict):
+        return ['overlay must be an object']
+    errors = []
+    for target, value in overlay.items():
+        if target not in ('ig-story', 'tg-story') or target not in targets or not images:
+            errors.append('overlay: only for photo story targets in targets')
+            continue
+        if not isinstance(value, dict) or set(value) != {'text', 'place', 'anchor', 'align'}:
+            errors.append(target + ': overlay needs text, place, anchor, align')
+            continue
+        text, place, anchor = value['text'], value['place'], value['anchor']
+        if not isinstance(text, str) or not 1 <= len(text) <= 60 or EMOJI.search(text) or re.search(r'[\x00-\x1f{}\\]', text):
+            errors.append(target + ': overlay text must be 1–60 plain characters without emoji')
+        if place is not None and (not isinstance(place, str) or not 1 <= len(place) <= 40 or EMOJI.search(place) or re.search(r'[\x00-\x1f{}\\]', place)):
+            errors.append(target + ': overlay place must be null or 1–40 plain characters without emoji')
+        if not isinstance(anchor, list) or len(anchor) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not 0 <= n <= 1 for n in anchor):
+            errors.append(target + ': overlay anchor must be [x, y] within 0..1')
+        if value['align'] not in ('left', 'center', 'right'):
+            errors.append(target + ': overlay align must be left, center or right')
     return errors
 
 

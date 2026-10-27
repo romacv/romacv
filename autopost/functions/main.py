@@ -34,6 +34,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 
 RENDER_SETTINGS = 'final-v1'
+FINAL_DEADLINE = 1800
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
 
@@ -185,7 +186,7 @@ def pages(parts):
     return result + [current]
 
 
-def preview(config, store, bucket, item_id, spec, assets, directory, basis=None):
+def preview(config, store, bucket, item_id, spec, assets, directory, basis=None, revision=None):
     def send(method, fields, files=None):
         reply = platforms.telegram(method,fields,files)
         for message in reply if isinstance(reply,list) else [reply]:
@@ -239,10 +240,25 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None)
     for text in messages[:-1]:
         say(text)
     message = say(messages[-1],reply_markup=buttons(spec['slug'],digest))
-    saved.update(state='previewed',preview_message=message['message_id'])
-    store.put('specs/' + spec['slug'],saved)
-    store.change('items/' + item_id,lambda value:value.update(status='previewed'))
-    store.change('sessions/inbox',lambda value:value.update(current=spec['slug']))
+    def commit(tx):
+        value = store.get('specs/' + spec['slug'],tx)
+        item = store.get('items/' + item_id,tx) or {}
+        session = store.get('sessions/inbox',tx) or {}
+        if not value or value.get('state') != 'drafting' or value.get('hash') != digest or revision is not None and item.get('revision') != revision:
+            return False
+        value.update(state='previewed',preview_message=message['message_id'])
+        item.update(status='previewed')
+        item.pop('edit_photos',None)
+        session['current'] = spec['slug']
+        store.put('specs/' + spec['slug'],value,tx)
+        store.put('items/' + item_id,item,tx)
+        store.put('sessions/inbox',session,tx)
+        return True
+    if not store.atomic(commit):
+        try:
+            remove_keyboard(config,{'preview_message':message['message_id']})
+        except Error:
+            pass
 
 
 def upload_prompt(config,store,bucket,payload):
@@ -300,6 +316,15 @@ def upload_complete(config,store,bucket,payload,directory):
     tell(config,'Загрузка завершена' + (' для' + item_name(item) if item_name(item) else '') + '.' + (' Нажми «Готово», когда всё отправлено.' if item['status'] == 'collecting' else ' Готовлю черновик.'),**extra)
 
 
+def transcript(config,store,bucket,payload,item,attachment,key):
+    value = item.get('transcripts',{}).get(key)
+    if value is None:
+        value = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],config)
+        item.setdefault('transcripts',{})[key] = value
+        store.change('items/' + payload['item'],lambda saved:saved.setdefault('transcripts',{}).update({key:value}))
+    return value
+
+
 def draft(config,store,bucket,payload,directory):
     item = store.claim_item(payload['item'],payload['revision'])
     if not item:
@@ -319,12 +344,7 @@ def draft(config,store,bucket,payload,directory):
             images.append(destination)
             files[destination.name] = destination
         elif attachment['kind'] == 'voice':
-            transcript = item.get('transcripts',{}).get(attachment['name'])
-            if transcript is None:
-                transcript = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],config)
-                item.setdefault('transcripts',{})[attachment['name']] = transcript
-                store.change('items/' + payload['item'],lambda value:value.update(transcripts=item['transcripts']))
-            transcripts.append(transcript)
+            transcripts.append(transcript(config,store,bucket,payload,item,attachment,attachment['name']))
         else:
             raise Error('Видео монтируется кнопкой «Готово».')
     heard = edit_media(config,store,bucket,payload,item,directory)
@@ -349,17 +369,27 @@ def draft(config,store,bucket,payload,directory):
     if superseded(store,payload):
         return
     assets = {}
+    composed = {}
     for target in spec['targets']:
         target_assets = {}
         for index,image in enumerate(spec.get('media',{}).get('images',[])):
             path = directory/image['path']
-            if target in ('ig-story','tg-story','ig-post'):
+            overlay = spec.get('overlay',{}).get(target)
+            if overlay and target in ('ig-story','tg-story'):
+                key = (json.dumps(overlay,sort_keys=True),index)
+                if key not in composed:
+                    cleaned = directory/(target + '-overlay-source-' + str(index) + '.jpg')
+                    media.clean_image(path,cleaned)
+                    composed[key] = directory/(target + '-overlay-' + str(index) + '.jpg')
+                    media.compose_story(cleaned,composed[key],overlay)
+                path = composed[key]
+            elif target in ('ig-story','tg-story','ig-post'):
                 converted = directory/(target + '-' + str(index) + '.jpg')
                 media.clean_image(path,converted,target != 'ig-post',target == 'ig-post')
                 path = converted
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
-    preview(config,store,bucket,payload['item'],spec,assets,directory)
+    preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
 
 
 def edit_media(config,store,bucket,payload,item,directory):
@@ -380,14 +410,25 @@ def edit_media(config,store,bucket,payload,item,directory):
         return None
     spoken = {}
     for attachment in attachments:
-        result = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],{**config,'prepared_audio':audio})
-        spoken[attachment['name']] = result['text'].strip() or 'Голосовое сообщение без распознанной речи.'
+        name = attachment['name']
+        text = item.get('edit_transcripts',{}).get(name)
+        if text is None:
+            result = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + name,{**config,'prepared_audio':audio})
+            text = result['text'].strip() or 'Голосовое сообщение без распознанной речи.'
+            store.change('items/' + payload['item'],lambda saved:saved.setdefault('edit_transcripts',{}).update({name:text}))
+        spoken[name] = text
     texts = {'[голосовое сообщение ' + str(voice['message_id']) + ']':spoken[str(voice['message_id']) + '.ogg'] for voice in voices}
+    def fill(note):
+        for placeholder,text in texts.items():
+            note = note.replace(placeholder,text)
+        return note
     def save(value):
-        value['edits'] = [texts.get(note,note) for note in value.get('edits',[])]
+        value['edits'] = [fill(note) for note in value.get('edits',[])]
         value['edit_voices'] = [voice for voice in value.get('edit_voices',[]) if voice['message_id'] not in {v['message_id'] for v in voices}]
+        for name in spoken:
+            value.get('edit_transcripts',{}).pop(name,None)
     store.change('items/' + payload['item'],save)
-    return [texts.get(note,note) for note in edits],shots
+    return [fill(note) for note in edits],shots
 
 
 def start_job(project,identifier):
@@ -406,16 +447,17 @@ def plan_montage(config,store,bucket,payload,directory):
     config = {**config,'prepared_audio':item.get('prepared',{}).get('audio',{})}
     if item.get('prepared'):
         store.change('items/' + payload['item'],lambda value:value.update(uploads={a['name']:a['manifest'] for a in inputs}))
-    sources,transcripts,images,manifests = {},{},[],{}
+    sources,transcripts,notes,images,manifests = {},{},[],[],{}
     for attachment in inputs:
+        if attachment['kind'] == 'voice':
+            spoken = transcript(config,store,bucket,payload,item,attachment,attachment['name'])['text'].strip()
+            if spoken:
+                notes.append(spoken)
         if attachment['kind'] != 'video':
             continue
         name = attachment['path'].stem
         sources[name] = item['prepared']['durations'][name]
-        transcripts[name] = item.get('transcripts',{}).get(name)
-        if transcripts[name] is None:
-            transcripts[name] = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],config)
-            store.change('items/' + payload['item'],lambda value:value.update(transcripts=transcripts))
+        transcripts[name] = transcript(config,store,bucket,payload,item,attachment,name)
         manifests[name] = item['prepared']['sources'][name]
     for index, manifest in enumerate(item['prepared']['sheets']):
         path = directory / ('sheet-' + str(index) + '.jpg')
@@ -430,7 +472,7 @@ def plan_montage(config,store,bucket,payload,directory):
         raise Error('Нет клипов для монтажа.')
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
-    edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources),True)
+    edl = drafter.ask(config,{'mode':'montage','sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:montage.validate(value,sources),True)
     if superseded(store,payload):
         return
     identifier = secrets.token_hex(16)
@@ -441,7 +483,7 @@ def plan_montage(config,store,bucket,payload,directory):
     start_job(project,identifier)
     name = item_name(item)
     if edits and item.get('edl'):
-        tell(config,'Перемонтирую' + name + ' с правкой: ' + edits[-1] + '. Рендерю черновик в низком качестве. Превью пришлю сюда.')
+        tell(config,'Перемонтирую' + name + ' с правкой: ' + (' '.join(edits[-1].split())[:200] + '…' if len(' '.join(edits[-1].split())) > 200 else edits[-1]) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.')
     else:
         tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 
@@ -476,6 +518,18 @@ def prepared(config,store,bucket,payload):
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
+def fail_final(config,store,slug,render,after=0):
+    def fail(value):
+        if value.get('final_render') != render or value.get('state') != 'rendering' or after and time.time() - value.get('started_at',time.time()) < after:
+            return False
+        value['state'] = 'partial'
+        return value
+    saved = store.change('specs/' + slug,fail)
+    if saved:
+        tell(config,'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.',reply_markup=buttons(slug,saved['hash'],True))
+    return bool(saved)
+
+
 def finish_final(config,store,payload,item,job):
     slug = item['slug']
     saved = store.get('specs/' + slug)
@@ -483,9 +537,8 @@ def finish_final(config,store,payload,item,job):
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
         return
     if job.get('state') != 'done':
-        store.change('specs/' + slug,lambda value:value.update(state='partial'))
+        fail_final(config,store,slug,payload['render'])
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
-        tell(config,'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.',reply_markup=buttons(slug,saved['hash'],True))
         return
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
     def finish(tx):
@@ -504,7 +557,12 @@ def rendered(config,store,bucket,payload,directory):
     job = store.get('renders/' + payload['render'])
     if job.get('mode') == 'final':
         if item:
-            finish_final(config,store,payload,item,job)
+            try:
+                finish_final(config,store,payload,item,job)
+            except Exception:
+                if not fail_final(config,store,item['slug'],payload['render']):
+                    raise
+                logging.error(json.dumps({'code':'final_failed'}))
         else:
             store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
         return
@@ -518,7 +576,7 @@ def rendered(config,store,bucket,payload,directory):
     edl = job['edl']
     spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
-    preview(config,store,bucket,payload['item'],spec,assets,directory,{'edl':edl,'render':RENDER_SETTINGS} if job.get('mode') == 'draft' else None)
+    preview(config,store,bucket,payload['item'],spec,assets,directory,{'edl':edl,'render':RENDER_SETTINGS} if job.get('mode') == 'draft' else None,payload['revision'])
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
@@ -537,10 +595,13 @@ def start_final(config,store,bucket,saved):
     draft = store.get('renders/' + item['render'])
     identifier = secrets.token_hex(16)
     job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued'}
-    store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier))
     store.put('renders/' + identifier,job)
+    store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier))
     start_job(job['project'],identifier)
-    tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
+    try:
+        tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
+    except Error:
+        pass
 
 
 def run(config,store,bucket,slug,directory):
@@ -971,6 +1032,10 @@ def recover_running(config,store):
         saved = store.change('specs/' + snapshot.id,recover)
         if saved:
             tell(config,'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.',reply_markup=buttons(snapshot.id,saved['hash'],True))
+    for snapshot in store.db.collection('specs').where('state', '==', 'rendering').stream():
+        render = snapshot.to_dict().get('final_render')
+        if render and (store.get('renders/' + render) or {}).get('state') != 'done':
+            fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
 
 
 @scheduler_fn.on_schedule(schedule='every 15 minutes',timezone='UTC',region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=540,min_instances=0,max_instances=1)
