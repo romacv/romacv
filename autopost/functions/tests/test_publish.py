@@ -206,6 +206,26 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(self.store.get('items/item-1')['edits'],['Make shorter'])
         self.assertIsNotNone(self.store.get('outbox/edit-42'))
 
+    def test_quoted_reply_to_preview_copy_queues_edit_with_target(self):
+        self.store.put('published-messages/7',{'slug':'example'})
+        reply = {'message_id':7,'text':'tg-channel\nБольшой портрет в раме'}
+        self.store.intake({'update_id':50,'message':{'message_id':11,'text':'убери это','quote':{'text':'портрет в раме','position':8},'reply_to_message':reply}},self.config)
+        self.assertEqual(self.store.get('items/item-1')['edits'],['[tg-channel] цитата: "портрет в раме" — правка: убери это'])
+        self.assertEqual(self.store.get('specs/example')['state'],'drafting')
+        self.assertIsNotNone(self.store.get('outbox/edit-50'))
+        self.store.put('published-messages/8',{'slug':'example'})
+        self.store.put('specs/example',{**self.store.get('specs/example'),'state':'previewed'})
+        self.store.intake({'update_id':51,'message':{'message_id':12,'text':'короче','reply_to_message':{'message_id':8,'text':'Черновик example'}}},self.config)
+        self.assertEqual(self.store.get('items/item-1')['edits'][-1],'короче')
+        self.store.put('published-messages/9',{'slug':'example'})
+        self.store.put('specs/example',{**self.store.get('specs/example'),'state':'previewed'})
+        self.store.intake({'update_id':53,'message':{'message_id':14,'text':'ярче','reply_to_message':{'message_id':9,'caption':'tg-channel, threads'}}},self.config)
+        self.assertEqual(self.store.get('items/item-1')['edits'][-1],'[tg-channel, threads] ярче')
+
+    def test_reply_to_unknown_message_stays_new_material(self):
+        result = self.store.intake({'update_id':52,'message':{'message_id':13,'text':'идея','reply_to_message':{'message_id':99,'text':'x'}}},self.config)
+        self.assertEqual(result['text'],'Принял, готовлю черновик.')
+
     def test_album_revision_and_speech_limit(self):
         for identifier in (10,11):
             self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config)

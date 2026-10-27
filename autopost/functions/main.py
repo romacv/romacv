@@ -719,7 +719,7 @@ def handle_worker(request):
                 upload_complete(config,store,bucket,payload,directory)
             elif step in ('edit-prompt','remove-keyboard'):
                 saved = store.get('specs/' + payload['slug'])
-                remove_keyboard(config,saved)
+                remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved)
                 if step == 'edit-prompt' and saved['state'] == 'needs-edit':
                     message = tell(config,'Что поправить? Ответь на это сообщение.',reply_markup={'force_reply':True,'selective':True})
                     reply_id = str(message['message_id'])

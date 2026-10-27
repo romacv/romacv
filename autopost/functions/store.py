@@ -70,22 +70,23 @@ class Store:
             if edit and message.get('text'):
                 path = 'specs/' + edit['slug']
                 spec = self.get(path, tx)
-                accepted = False
-                if spec and spec['state'] == 'needs-edit' and spec.get('edit_prompt') == reply_id:
-                    accepted = True
-                    item = self.get('items/' + spec['item'], tx)
-                    item.setdefault('edits', []).append(message['text'])
-                    item['status'] = 'queued'
-                    item['revision'] += 1
-                    spec['state'] = 'drafting'
-                    spec['hash'] = ''
-                    self.put(path, spec, tx)
-                    self.put('items/' + spec['item'], item, tx)
-                    self.put('specs/' + edit['slug'] + '/edits/' + identifier, {'text':message['text']}, tx)
-                    self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier)
+                accepted = bool(spec and spec['state'] == 'needs-edit' and spec.get('edit_prompt') == reply_id)
+                if accepted:
+                    self.queue_edit(tx, edit['slug'], spec, message['text'], identifier)
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Правки приняты.' if accepted else 'Кнопка устарела'
             text = message.get('text', '')
+            replied = self.get('published-messages/' + reply_id, tx) if reply_id and text else None
+            spec = self.get('specs/' + replied['slug'], tx) if replied else None
+            if spec and spec['state'] == 'previewed' and not spec.get('operation'):
+                head = (message['reply_to_message'].get('text') or message['reply_to_message'].get('caption', '')).split('\n', 1)[0]
+                names = [x.strip() for x in head.replace(' cover', '').split(',') if x.strip() in spec['spec']['targets']]
+                quote = message.get('quote', {}).get('text')
+                note = ('[' + ', '.join(names) + '] ' if names else '') + ('цитата: "' + quote + '" — правка: ' if quote else '') + text
+                self.queue_edit(tx, replied['slug'], spec, note, identifier)
+                self.job(tx, {'slug':replied['slug'], 'step':'remove-keyboard', 'message':spec.get('preview_message')}, 'unkey-' + identifier)
+                self.put(update_path, {'received':time.time()}, tx)
+                return 'Правки приняты.'
             command = re.match(r'^\s*(поправь|исправь|отредактируй|удали|fix|delete)\b', text, re.I)
             published = self.published_match(message, tx, command)
             if text and command:
@@ -146,6 +147,18 @@ class Store:
             self.put('sessions/inbox', session, tx)
             return {'item':item_id, 'revision':item['revision'], 'text':'Клипы сохранены. Пришли ещё или напиши «монтаж».' if item['status'] == 'collecting' else None if joined else 'Принял, готовлю черновик.'}
         return self.atomic(apply)
+
+    def queue_edit(self, tx, slug, spec, note, identifier):
+        item = self.get('items/' + spec['item'], tx)
+        item.setdefault('edits', []).append(note)
+        item['status'] = 'queued'
+        item['revision'] += 1
+        spec['state'] = 'drafting'
+        spec['hash'] = ''
+        self.put('specs/' + slug, spec, tx)
+        self.put('items/' + spec['item'], item, tx)
+        self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
+        self.job(tx, {'item':spec['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier)
 
     def published_match(self, message, tx, command=False):
         text = message.get('text', '')
