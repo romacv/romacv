@@ -14,8 +14,7 @@
       "**/*.map",
       "**/.*",
       "**/node_modules/**",
-      "autopost/**",
-      "docs/**"
+      "autopost/**"
     ],
     "rewrites": [
       {
