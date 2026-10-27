@@ -649,11 +649,12 @@ def draft(config,store,bucket,payload,directory):
         errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips))
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
-        try:
-            if any(path.name not in files for path in platforms.media_files(value).values()):
-                errors.append('Use supplied clean media only')
-        except Error:
-            errors.append('Invalid media path')
+        if 'Unknown media fields' not in errors:
+            try:
+                if any(path.name not in files for path in platforms.media_files(value).values()):
+                    errors.append('Use supplied clean media only')
+            except Error:
+                errors.append('Invalid media path')
         if 'Invalid media path' in errors:
             media_spec = value.get('media') if isinstance(value.get('media'),dict) else {}
             offered_paths = [x.get('path') if isinstance(x,dict) else x for x in media_spec.get('images',[]) if isinstance(media_spec.get('images'),list)] + [media_spec[k] for k in ('video','cover') if media_spec.get(k)]

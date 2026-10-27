@@ -39,6 +39,11 @@ class ValidatorTests(unittest.TestCase):
         spec['copy']['threads'] = 'Привет'
         self.assertNotIn('personal: tg-channel and threads copy must be identical',drafter.validate(spec,copy_only=True))
 
+    def test_model_output_may_not_carry_clips_or_sequence(self):
+        spec = self.valid(media={'sequence':[{'kind':'x','index':0}],'clips':[{'path':'clip0.mp4'}]})
+        self.assertIn('Unknown media fields',drafter.validate(spec,prepared=False,clips=True))
+        self.assertNotIn('Unknown media fields',drafter.validate(spec,copy_only=True))
+
     def test_target_outside_chosen_is_rejected(self):
         errors = drafter.validate(self.valid(),prepared=False,chosen=['tg-channel'])
         self.assertTrue(any('chosen' in e for e in errors))

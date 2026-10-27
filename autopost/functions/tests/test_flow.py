@@ -46,6 +46,16 @@ class EditFlowTests(unittest.TestCase):
         self.assertTrue(self.store.claim_item('job',2))
         self.assertFalse(self.store.claim_item('job',2))
 
+    def test_draft_validation_returns_malformed_model_media_instead_of_crashing(self):
+        self.store.put('items/item-2',{'status':'queued','revision':1,'slug':'example','messages':[]})
+        seen = []
+        def ask(config,source,images,validate,**kwargs):
+            seen.append(validate({**self.spec,'media':{'clips':True}}))
+            return {'answer':'x'}
+        with patch.object(app.media,'intake',return_value=[]), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app.drafter,'ask',side_effect=ask), patch.object(app,'superseded',return_value=True):
+            app.draft(self.config,self.store,None,{'item':'item-2','revision':1},self.root)
+        self.assertIn('Unknown media fields',seen[0])
+
     def test_edit_invalidates_approval_and_queues_revision(self):
         self.callback('edit')
         self.assertEqual(self.store.get('sessions/inbox')['awaiting'],{'kind':'edit','slug':'example'})

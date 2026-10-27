@@ -50,8 +50,9 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
         if not isinstance(spec.get('approval', {}), dict):
             errors.append('approval must be an object')
         media = spec.get('media', {})
-        if set(media) - {'images', 'clips', 'video', 'cover', 'sequence'}:
+        if set(media) - ({'images', 'clips', 'video', 'cover', 'sequence'} if copy_only else {'images', 'video', 'cover'}):
             errors.append('Unknown media fields')
+            return errors
         images = media.get('images', [])
         if not isinstance(images, list) or len(images) > 10:
             raise Error('media.images must be a list of up to 10 images')
