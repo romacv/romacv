@@ -91,5 +91,6 @@ Read every row before drafting or sending a preview. Dates record the original l
 | 2026-10-26 | Long rendering does not fit a short function invocation | Use the private Cloud Run render job; immutable object generations and SHA-256 tie outputs to approval. |
 | 2026-10-26 | Different platforms need different encodes | Preview each derivative: Reel H.264 1080x1920, Telegram story H.265 720x1280, keyframe each second and <=30 MB; stories <=60 s. |
 | 2026-10-26 | Replacing a secret can leave deployed functions on an older version | Redeploy every bound function before cleanup; preserve versions referenced by deployed functions as well as latest. |
+| 2026-10-27 | A deploy shut down the worker mid-preview; with max_attempts=1 nothing retried | Before deploy, check the worker queue is empty and no item is drafting; a lost montage preview is resent by enqueueing step `rendered` with its render id. |
 
 Firebase runtime clarification: historical references above to queue files and review sidecars describe the original workflow. The worker now cleans metadata in memory/local temporary derivatives, stores manifests and checkpoints in Firestore, and previews exact immutable output bytes. No Mac tool or local sidecar is required. Human review of every final derivative remains required before approval.
