@@ -246,7 +246,7 @@ class ReviewFixTests(unittest.TestCase):
     def test_montage_plan_message_names_the_draft(self):
         item = {'status':'queued','revision':1,'slug':'example','messages':[{'video':{},'caption':'Jakarta Chinatown'}],'prepared':{'durations':{'clip':5},'sheets':[],'sources':{'clip':{}}},'transcripts':{'clip':''}}
         inputs = [{'kind':'video','path':Path('clip.mp4'),'name':'clip.mp4','manifest':{}}]
-        for edits,expected in (([],'Монтирую «Jakarta Chinatown»: план готов, рендерю видео, обычно 3–5 минут. Превью пришлю сюда.'),(['короче'],'Перемонтирую «Jakarta Chinatown» с правкой: короче. Рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')):
+        for edits,expected in (([],'Монтирую «Jakarta Chinatown»: план готов, рендерю черновик в низком качестве. Превью пришлю сюда.'),(['короче'],'Перемонтирую «Jakarta Chinatown» с правкой: короче. Рендерю черновик в низком качестве. Превью пришлю сюда.')):
             with self.subTest(edits=edits):
                 self.store.put('items/item-1',{**item,'edits':edits,'edl':{'kind':'video'} if edits else None})
                 config = {**self.config,'worker_url':'test','runtime_service_account':'test'}

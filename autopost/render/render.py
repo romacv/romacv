@@ -109,7 +109,45 @@ def prepare(bucket,job,root):
     return outputs
 
 
+def frame_size(draft):
+    return (540,960) if draft else (1080,1920)
+
+
+def clip_filters(fit, draft):
+    width, height = frame_size(draft)
+    if fit == 'blur':
+        return f'split=2[bg][fg];[bg]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},boxblur=30:10[back];[fg]scale={width}:{height}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30'
+    return f'scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,fps=30'
+
+
+def part_codec(draft):
+    return ['-c:v','libx264','-preset','ultrafast','-crf','28'] if draft else ['-c:v','libx264','-preset','fast']
+
+
+def audio_filter(draft):
+    return 'adelay=33.333:all=1' if draft else 'adelay=33.333:all=1,loudnorm=I=-16:TP=-1.5:LRA=11'
+
+
+def encode_arguments(target, draft):
+    if draft:
+        return ['-c:v','libx264','-preset','ultrafast','-crf','32','-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','96k']
+    video = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if target == 'tg-story' else ['-c:v','libx264','-preset','fast','-crf','22']
+    return video + ['-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','128k']
+
+
+def timeline_groups(targets, draft):
+    groups = {}
+    for target, timeline in targets.items():
+        key = json.dumps({name:timeline.get(name,[]) for name in ('clips','subtitles','titles')},sort_keys=True) if draft else target
+        groups.setdefault(key,[]).append(target)
+    return {names[0]:names for names in groups.values()}
+
+
 def render(bucket, job, root):
+    draft = job.get('mode') == 'draft'
+    width, height = frame_size(draft)
+    groups = timeline_groups(job['edl']['targets'],draft)
+    leaders = {name:leader for leader,names in groups.items() for name in names}
     sources = {}
     referenced = {clip['source'] for timeline in job['edl']['targets'].values() for clip in timeline['clips']}
     for source in sorted(referenced):
@@ -120,20 +158,19 @@ def render(bucket, job, root):
             raise RuntimeError('Source hash changed')
         sources[source] = path
     outputs, joined_files = {}, {}
-    for target, timeline in job['edl']['targets'].items():
+    for target in groups:
+        timeline = job['edl']['targets'][target]
         parts = []
         for index, clip in enumerate(timeline['clips']):
             source = sources[clip['source']]
             part = root / f'{target}-{index}.mp4'
-            filters = 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30'
-            if job['edl']['fit'] == 'blur':
-                filters = 'split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30:10[back];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30'
+            filters = clip_filters(job['edl']['fit'],draft)
             probe = subprocess.run(['ffprobe','-v','error','-select_streams','a','-show_entries','stream=index','-of','json',str(source)],capture_output=True,check=True)
             audio = bool(json.loads(probe.stdout).get('streams'))
             arguments = ['-ss',clip['in'],'-t',clip['out']-clip['in'],'-i',source]
             if not audio:
                 arguments += ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
-            arguments += ['-filter_complex', filters + '[vout]', '-map','[vout]','-map','0:a:0' if audio else '1:a:0','-t',clip['out']-clip['in'],'-c:v','libx264','-preset','fast','-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-map_metadata','-1',part]
+            arguments += ['-filter_complex', filters + '[vout]', '-map','[vout]','-map','0:a:0' if audio else '1:a:0','-t',clip['out']-clip['in'],*part_codec(draft),'-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-map_metadata','-1',part]
             run(arguments)
             parts.append(part)
         concat = root / (target + '.txt')
@@ -146,14 +183,15 @@ def render(bucket, job, root):
         joined_files[target] = joined
     cover = root / 'cover.jpg'
     settings = job['edl']['cover']
-    run(['-ss',settings['time'],'-i',joined_files[settings['target']],'-frames:v','1','-vf','scale=1080:1920','-map_metadata','-1',cover])
+    run(['-ss',settings['time'],'-i',joined_files[leaders[settings['target']]],'-frames:v','1','-vf',f'scale={width}:{height}','-map_metadata','-1',cover])
     from PIL import Image, ImageCms, ImageFont
     with Image.open(cover) as image:
         clean = Image.new('RGB',image.size)
         clean.paste(image)
         clean.save(cover,'JPEG',quality=90,icc_profile=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes())
     font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',44)
-    for target, timeline in job['edl']['targets'].items():
+    for target in groups:
+        timeline = job['edl']['targets'][target]
         subtitles = root / (target + '.ass')
         header = Path('/app/subtitles.ass').read_text()
         lines = []
@@ -171,28 +209,29 @@ def render(bucket, job, root):
         for index, cue in enumerate(timeline.get('titles',[])):
             image = root / f'{target}-title-{index}.png'
             title_image(cue['text'],image)
+            if draft:
+                with Image.open(image) as full:
+                    full.resize((full.width//2,full.height//2)).save(image)
             title_inputs += ['-i',image]
-            video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x=(W-w)/2:y=260:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
-        if target == 'tg-story':
+            video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x=(W-w)/2:y={height*260//1920}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
+        if target == 'tg-story' and not draft:
             video_filter += ',scale=720:1280'
-        arguments = ['-i',joined_files[target],'-i',cover,*title_inputs,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af','adelay=33.333:all=1,loudnorm=I=-16:TP=-1.5:LRA=11']
-        if target == 'tg-story':
-            arguments += ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k']
-        else:
-            arguments += ['-c:v','libx264','-preset','fast','-crf','22']
-        arguments += ['-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','128k','-movflags','+faststart','-map_metadata','-1','-map_chapters','-1','-metadata','encoder=','-metadata:s:v','encoder=',output]
+        arguments = ['-i',joined_files[target],'-i',cover,*title_inputs,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af',audio_filter(draft),*encode_arguments(target,draft)]
+        arguments += ['-movflags','+faststart','-map_metadata','-1','-map_chapters','-1','-metadata','encoder=','-metadata:s:v','encoder=',output]
         run(arguments)
         joined_files[target].unlink()
-        limit = 30_000_000 if target == 'tg-story' else 50_000_000
+        limit = min(30_000_000 if name == 'tg-story' else 50_000_000 for name in groups[target])
         if output.stat().st_size > limit:
             raise RuntimeError('Video exceeds preview upload limit')
         probe = subprocess.run(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(output)],capture_output=True,check=True)
         measured = json.loads(probe.stdout)
         duration = float(measured['format']['duration'])
-        maximum = 60 if target in ('ig-story','tg-story') else 90
+        maximum = min(60 if name in ('ig-story','tg-story') else 90 for name in groups[target])
         if duration > maximum + 0.01:
             raise RuntimeError('Encoded duration exceeds target limit')
-        outputs[target] = put(bucket,output,job['prefix'] + '/' + output.name)
+        manifest = put(bucket,output,job['prefix'] + '/' + output.name)
+        for name in groups[target]:
+            outputs[name] = manifest
     return {'videos':outputs,'cover':put(bucket,cover,job['prefix'] + '/cover.jpg')}
 
 

@@ -33,6 +33,9 @@ REGION = 'us-central1'
 RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.com'
 
 
+RENDER_SETTINGS = 'final-v1'
+
+
 def runtime():
     if not firebase_admin._apps:
         firebase_admin.initialize_app()
@@ -159,7 +162,7 @@ def buttons(slug, digest, retry=False, published=False):
     return {'inline_keyboard':[values]}
 
 
-def preview(config, store, bucket, item_id, spec, assets, directory):
+def preview(config, store, bucket, item_id, spec, assets, directory, basis=None):
     def send(method, fields, files=None):
         reply = platforms.telegram(method,fields,files)
         for message in reply if isinstance(reply,list) else [reply]:
@@ -174,8 +177,10 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
     previous = store.get('specs/' + spec['slug']) or {}
     if previous.get('state') not in (None,'drafting','needs-edit'):
         raise StateError('Existing preview or publication cannot be overwritten')
-    digest = asset_hash(spec,assets)
+    digest = asset_hash(spec,assets if basis is None else basis)
     saved = {'item':item_id,'spec':spec,'assets':assets,'hash':digest,'state':'drafting','results':{},'errors':{},'attempts':{}}
+    if basis is not None:
+        saved['basis'] = basis
     store.put('specs/' + spec['slug'],saved)
     platforms.telegram_identity()
     groups = {}
@@ -207,7 +212,8 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
             chunk += char
         if chunk:
             say(chunk)
-    message = say('Черновик' + post_name(store,saved) + ' готов. Опубликовать, править или отклонить?',reply_markup=buttons(spec['slug'],digest))
+    note = ' готов (превью в низком качестве; финальное видео соберу после «Опубликовать»).' if basis is not None else ' готов.'
+    message = say('Черновик' + post_name(store,saved) + note + ' Опубликовать, править или отклонить?',reply_markup=buttons(spec['slug'],digest))
     saved.update(state='previewed',preview_message=message['message_id'])
     store.put('specs/' + spec['slug'],saved)
     store.change('items/' + item_id,lambda value:value.update(status='previewed'))
@@ -324,6 +330,11 @@ def draft(config,store,bucket,payload,directory):
     preview(config,store,bucket,payload['item'],spec,assets,directory)
 
 
+def start_job(project,identifier):
+    from google.cloud import run_v2
+    run_v2.JobsClient().run_job(request=run_v2.RunJobRequest(name=f'projects/{project}/locations/us-central1/jobs/autopost-render',overrides=run_v2.RunJobRequest.Overrides(container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=[{'name':'RENDER_ID','value':identifier}])],task_count=1)))
+
+
 def plan_montage(config,store,bucket,payload,directory):
     item = store.claim_item(payload['item'],payload['revision'])
     if not item:
@@ -359,18 +370,16 @@ def plan_montage(config,store,bucket,payload,directory):
         return
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
+    job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
-    from google.cloud import run_v2
-    client = run_v2.JobsClient()
-    client.run_job(request=run_v2.RunJobRequest(name=f'projects/{project}/locations/us-central1/jobs/autopost-render',overrides=run_v2.RunJobRequest.Overrides(container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=[{'name':'RENDER_ID','value':identifier}])],task_count=1)))
+    start_job(project,identifier)
     name = item_name(item)
     edits = item.get('edits',[])
     if edits and item.get('edl'):
-        tell(config,'Перемонтирую' + name + ' с правкой: ' + edits[-1] + '. Рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')
+        tell(config,'Перемонтирую' + name + ' с правкой: ' + edits[-1] + '. Рендерю черновик в низком качестве. Превью пришлю сюда.')
     else:
-        tell(config,'Монтирую' + name + ': план готов, рендерю видео, обычно 3–5 минут. Превью пришлю сюда.')
+        tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 
 
 def start_preparation(config,store,bucket,payload,item,inputs):
@@ -379,8 +388,7 @@ def start_preparation(config,store,bucket,payload,item,inputs):
     job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued'}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
-    from google.cloud import run_v2
-    run_v2.JobsClient().run_job(request=run_v2.RunJobRequest(name=f'projects/{project}/locations/us-central1/jobs/autopost-render',overrides=run_v2.RunJobRequest.Overrides(container_overrides=[run_v2.RunJobRequest.Overrides.ContainerOverride(env=[{'name':'RENDER_ID','value':identifier}])],task_count=1)))
+    start_job(project,identifier)
 
 
 def prepared(config,store,bucket,payload):
@@ -400,9 +408,38 @@ def prepared(config,store,bucket,payload):
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
+def finish_final(config,store,payload,item,job):
+    slug = item['slug']
+    saved = store.get('specs/' + slug)
+    if not saved or saved.get('final_render') != payload['render'] or saved.get('state') != 'rendering' or item['revision'] != payload['revision']:
+        store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
+        return
+    if job.get('state') != 'done':
+        store.change('specs/' + slug,lambda value:value.update(state='partial'))
+        store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
+        tell(config,'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.',reply_markup=buttons(slug,saved['hash'],True))
+        return
+    assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
+    def finish(tx):
+        value = store.get('specs/' + slug,tx)
+        if value.get('final_render') != payload['render'] or value.get('state') != 'rendering':
+            return
+        value.update(assets=assets,final=True,state='approved')
+        store.put('specs/' + slug,value,tx)
+        store.job(tx,{'step':'run','slug':slug},'final-' + payload['render'])
+    store.atomic(finish)
+    store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
+
+
 def rendered(config,store,bucket,payload,directory):
     item = store.get('items/' + payload['item'])
     job = store.get('renders/' + payload['render'])
+    if job.get('mode') == 'final':
+        if item:
+            finish_final(config,store,payload,item,job)
+        else:
+            store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
+        return
     if job.get('state') == 'failed':
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
     if not item or item.get('render') != payload['render'] or item['revision'] != payload['revision'] or item.get('status') != 'drafting':
@@ -413,7 +450,7 @@ def rendered(config,store,bucket,payload,directory):
     edl = job['edl']
     spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
-    preview(config,store,bucket,payload['item'],spec,assets,directory)
+    preview(config,store,bucket,payload['item'],spec,assets,directory,{'edl':edl,'render':RENDER_SETTINGS} if job.get('mode') == 'draft' else None)
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
@@ -424,6 +461,18 @@ def remove_keyboard(config,saved):
         except Error as failure:
             if not getattr(failure, 'not_modified', False):
                 raise
+
+
+def start_final(config,store,bucket,saved):
+    slug = saved['spec']['slug']
+    item = store.get('items/' + saved['item'])
+    draft = store.get('renders/' + item['render'])
+    identifier = secrets.token_hex(16)
+    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued'}
+    store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier))
+    store.put('renders/' + identifier,job)
+    start_job(job['project'],identifier)
+    tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
 
 
 def run(config,store,bucket,slug,directory):
@@ -438,8 +487,11 @@ def run(config,store,bucket,slug,directory):
         remove_keyboard(config,saved)
         store.change('specs/' + slug,lambda value:value.update(keyboard_removed=True))
     spec,assets = saved['spec'],saved['assets']
-    if asset_hash(spec,assets) != saved['approved_hash']:
+    if asset_hash(spec,saved.get('basis',assets)) != saved['approved_hash']:
         raise StateError('Approval hash mismatch')
+    if saved.get('basis') and not saved.get('final'):
+        start_final(config,store,bucket,saved)
+        return
     for manifests in assets.values():
         for manifest in manifests.values():
             if not bucket.blob(manifest['object'],generation=int(manifest['generation'])).exists():
