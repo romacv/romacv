@@ -217,6 +217,31 @@ class PublisherTests(unittest.TestCase):
         with self.assertRaises(StateError):
             self.store.reserve_speech(1,'source')
 
+    def test_album_acknowledged_once(self):
+        replies = [self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'media_group_id':'123','photo':[{'file_id':'photo'}]}},self.config) for identifier in (10,11)]
+        self.assertEqual(replies[0]['text'],'Принял, готовлю черновик.')
+        self.assertIsNone(replies[1]['text'])
+        self.assertEqual(self.store.get('items/album-123')['revision'],2)
+        self.assertIsNotNone(self.store.get('outbox/draft-11'))
+
+    def test_preview_sends_shared_photos_once(self):
+        photos = {'image0.jpg':{'object':'a'},'image1.jpg':{'object':'b'}}
+        spec = {**self.spec,'slug':'album','targets':['tg-channel','threads'],'copy':{'tg-channel':'Channel copy','threads':'Threads copy'}}
+        sent = []
+        def telegram(method,fields,files=None):
+            sent.append((method,fields,files))
+            base = 100 + len(sent)
+            return [{'message_id':base},{'message_id':base + 50}] if method == 'sendMediaGroup' else {'message_id':base}
+        with patch.object(app.platforms,'telegram',side_effect=telegram), patch.object(app.platforms,'telegram_identity'), patch.object(app.media,'materialize'):
+            app.preview(self.config,self.store,None,'item-1',spec,{'tg-channel':photos,'threads':photos},self.root)
+        self.assertEqual([call[0] for call in sent[:-1]],['sendMediaGroup','sendMessage','sendMessage'])
+        group = sent[0][1]['media']
+        self.assertEqual((len(group),group[0]['caption']),(2,'tg-channel, threads'))
+        self.assertEqual(sorted(sent[0][2]),['photo0','photo1'])
+        self.assertEqual([call[1]['text'] for call in sent[1:3]],['tg-channel\nChannel copy','threads\nThreads copy'])
+        for identifier in (101,151,102,103,104):
+            self.assertEqual(self.store.get('published-messages/' + str(identifier)),{'slug':'album'})
+
     def test_transaction_failure_rolls_back(self):
         def operation(tx):
             self.store.put('specs/rollback',{'state':'approved'},tx)

@@ -273,7 +273,7 @@ def post_telegram(spec, state, target):
         if 'video' in files:
             return telegram('sendVideo', {'chat_id': chat_id, 'caption': text, 'cover': 'attach://cover'}, {'video': files['video'], 'cover': files['cover']})
         images = spec.get('media', {}).get('images', [])
-        if len(images) > 1:
+        if len(images) > 1 and target != 'ig-story':
             media = [{'type': 'photo', 'media': 'attach://image' + str(i), **({'caption': text} if i == 0 else {})} for i in range(len(images))]
             return telegram('sendMediaGroup', {'chat_id': chat_id, 'media': media}, {k: v for k, v in files.items() if k.startswith('image')})
         if images:
@@ -309,7 +309,7 @@ def post_social(spec, state, target, urls, session):
         caption = {'caption' if instagram else 'text': text}
         if target == 'ig-story':
             caption = {}
-        if len(images) > 1:
+        if len(images) > 1 and target != 'ig-story':
             children = []
             for i, image in enumerate(images):
                 fields = {'image_url': urls[f'image{i}'], 'is_carousel_item': 'true', 'alt_text': image['alt']}

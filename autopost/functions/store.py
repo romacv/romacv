@@ -123,6 +123,7 @@ class Store:
             if sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20:
                 self.put(update_path, {'received':time.time()}, tx)
                 return 'Пакет превышает лимит 1 ГБ или 20 файлов. Раздели материал.'
+            joined = item_id.startswith('album-') and bool(item['messages'])
             item['messages'].append(message)
             item['revision'] += 1
             item['updated'] = time.time()
@@ -143,7 +144,7 @@ class Store:
             self.put(update_path, {'received':time.time()}, tx)
             self.put('items/' + item_id, item, tx)
             self.put('sessions/inbox', session, tx)
-            return {'item':item_id, 'revision':item['revision'], 'text':'Клипы сохранены. Пришли ещё или напиши «монтаж».' if item['status'] == 'collecting' else 'Принял, готовлю черновик.'}
+            return {'item':item_id, 'revision':item['revision'], 'text':'Клипы сохранены. Пришли ещё или напиши «монтаж».' if item['status'] == 'collecting' else None if joined else 'Принял, готовлю черновик.'}
         return self.atomic(apply)
 
     def published_match(self, message, tx, command=False):

@@ -143,9 +143,10 @@ def buttons(slug, digest, retry=False):
 
 def preview(config, store, bucket, item_id, spec, assets, directory):
     def send(method, fields, files=None):
-        message = platforms.telegram(method,fields,files)
-        store.put('published-messages/' + str(message['message_id']),{'slug':spec['slug']})
-        return message
+        reply = platforms.telegram(method,fields,files)
+        for message in reply if isinstance(reply,list) else [reply]:
+            store.put('published-messages/' + str(message['message_id']),{'slug':spec['slug']})
+        return reply
     def say(text, **extra):
         return send('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
     previous = store.get('specs/' + spec['slug']) or {}
@@ -155,16 +156,26 @@ def preview(config, store, bucket, item_id, spec, assets, directory):
     saved = {'item':item_id,'spec':spec,'assets':assets,'hash':digest,'state':'drafting','results':{},'errors':{},'attempts':{}}
     store.put('specs/' + spec['slug'],saved)
     platforms.telegram_identity()
+    groups = {}
     for target in spec['targets']:
         target_assets = assets.get(target,{})
+        if target_assets:
+            groups.setdefault(json.dumps(target_assets,sort_keys=True),(target_assets,[]))[1].append(target)
+    for target_assets, names in groups.values():
         media.materialize(bucket,target_assets,directory)
+        caption = ', '.join(names)
         if 'video.mp4' in target_assets:
-            send('sendVideo',{'chat_id':config['roman_chat_id'],'caption':target},{'video':directory/'video.mp4'})
+            send('sendVideo',{'chat_id':config['roman_chat_id'],'caption':caption},{'video':directory/'video.mp4'})
             if 'cover.jpg' in target_assets:
-                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target + ' cover'},{'photo':directory/'cover.jpg'})
+                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':caption + ' cover'},{'photo':directory/'cover.jpg'})
+        elif len(target_assets) == 1:
+            send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':caption},{'photo':directory/next(iter(target_assets))})
         else:
-            for name in target_assets:
-                send('sendPhoto',{'chat_id':config['roman_chat_id'],'caption':target},{'photo':directory/name})
+            photos = {'photo' + str(index):directory/name for index,name in enumerate(target_assets)}
+            group = [{'type':'photo','media':'attach://' + key} for key in photos]
+            group[0]['caption'] = caption
+            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},photos)
+    for target in spec['targets']:
         text = json.dumps(spec['blog'],ensure_ascii=False,indent=2) if target == 'blog' else spec['copy'][target]
         chunk = target + '\n'
         for char in text:

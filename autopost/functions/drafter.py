@@ -63,8 +63,8 @@ def validate(spec, prepared=True, copy_only=False):
             if 'ig-reel' in targets and not media.get('video'):
                 errors.append('ig-reel needs video')
             for t in ('ig-story', 'tg-story'):
-                if t in targets and not (media.get('video') or len(images) == 1):
-                    errors.append(t + ' needs one image or video')
+                if t in targets and not (media.get('video') or images):
+                    errors.append(t + ' needs an image or video')
             if any(t.startswith('ig-') for t in targets):
                 for name, path in files.items():
                     if name != 'video' and (path.read_bytes()[:3] != b'\xff\xd8\xff' or path.stat().st_size > 8_000_000):
