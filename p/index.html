@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src https://us-central1-resromcom-493b4.cloudfunctions.net/progress; base-uri 'none'; form-action 'none'">
-<title>Прогресс</title>
+<title>Автопостер</title>
 <style>
 :root{color-scheme:light dark}
 body{margin:0;padding:16px 16px 32px;font:16px/1.4 system-ui,-apple-system,sans-serif;background:var(--tg-theme-bg-color,#fff);color:var(--tg-theme-text-color,#000)}
@@ -54,7 +54,7 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 </style>
 </head>
 <body>
-<header><h1 id="heading">Прогресс</h1><button id="refresh" type="button">Обновить</button></header>
+<header><h1 id="heading">Автопостер</h1><button id="refresh" type="button">Обновить</button></header>
 <div class="switch" role="group" aria-label="Раздел"><button type="button" id="tab-progress" aria-pressed="false">Прогресс</button><button type="button" id="tab-costs" aria-pressed="false">Расходы</button><button type="button" id="tab-skills" aria-pressed="false">Навыки</button></div>
 <div id="active"></div>
 <div id="waiting"></div>
@@ -68,7 +68,6 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), views={progress:'Прогресс',costs:'Расходы',skills:'Навыки'}, query=new URLSearchParams(location.search);
 let view=query.get('view') in views?query.get('view'):'progress', skill=view==='skills'?query.get('skill')||null:null;
 function mark(){
-  document.title=document.getElementById('heading').textContent=views[view];
   Object.keys(views).forEach(k=>document.getElementById('tab-'+k).setAttribute('aria-pressed',String(k===view)));
 }
 mark();
