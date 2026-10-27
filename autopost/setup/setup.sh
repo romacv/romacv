@@ -14,6 +14,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.parse
 import urllib.request
 
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -227,6 +229,95 @@ def ids():
     write_id('channels.json', {'tg-channel': channel['id']})
 
 
+def meta_request(provider, url, **params):
+    request = urllib.request.Request(url + '?' + urllib.parse.urlencode(params))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.load(response)
+    except Exception:
+        raise IdsError(provider + ' API request failed; check token, permissions and network.') from None
+    if not isinstance(result, dict) or 'error' in result:
+        raise IdsError(provider + ' API request rejected.')
+    return result
+
+
+def meta_identity(provider, base, token):
+    field = 'user_id' if provider == 'instagram' else 'id'
+    result = meta_request(provider, base + '/me', fields=field + ',username', access_token=token)
+    if 'data' in result:
+        if not isinstance(result['data'], list) or len(result['data']) != 1:
+            raise IdsError(provider + ' must return exactly one identity.')
+        result = result['data'][0]
+    if not isinstance(result, dict) or result.get('username') != 'romacv777' or not re.fullmatch(r'[0-9]+', str(result.get(field, ''))):
+        raise IdsError(provider + ' must belong to romacv777 with a valid user ID.')
+    return str(result[field])
+
+
+def meta_times(provider, metadata, now):
+    issued = metadata.get('issued_at')
+    expires = metadata.get('expires_at')
+    if type(issued) is not int or type(expires) is not int or not 0 < issued <= now < expires:
+        raise IdsError(provider + ' token issue/expiry times are missing, invalid or expired.')
+    return issued, expires
+
+
+def meta():
+    directory = KEYS.lstat()
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or stat.S_IMODE(directory.st_mode) != 0o700:
+        raise IdsError('Keys directory must be owner-owned, mode 700, without symlinks.')
+    platforms = Path('autopost/functions/platforms.py').read_text()
+    instagram_base = re.search(r"^IG = '(https://graph\.instagram\.com/v[0-9]+\.[0-9]+)'$", platforms, re.M)
+    if not instagram_base:
+        raise IdsError('Cannot determine Instagram API version from platforms.py.')
+    present = False
+    for provider, base, prefix in (('threads', 'https://graph.threads.net/v1.0', 'th'), ('instagram', instagram_base[1], 'ig')):
+        raw_name = provider + '_token.txt'
+        name = provider + '.json'
+        if not os.path.lexists(KEYS / raw_name):
+            continue
+        present = True
+        token = key(raw_name)
+        original_token = token
+        saved = key(name, True) if os.path.lexists(KEYS / name) else None
+        if saved is not None and (not isinstance(saved, dict) or saved.get('access_token') != token):
+            raise IdsError(name + ' differs; refusing to overwrite. Delete it before rerunning meta to replace the token.')
+        user_id = meta_identity(provider, base, token)
+        now = int(time.time())
+        if provider == 'threads':
+            metadata = meta_request(provider, base + '/debug_token', input_token=token, access_token=token).get('data', {})
+            if not isinstance(metadata, dict) or metadata.get('is_valid') is not True or str(metadata.get('user_id')) != user_id:
+                raise IdsError('threads token metadata is invalid or belongs to another user.')
+            issued, expires = meta_times(provider, metadata, now)
+        elif saved is not None:
+            issued, expires = meta_times(provider, saved, now)
+        else:
+            issued, expires = now, now + 60 * 86400
+        if expires - issued <= 3600:
+            if saved is not None:
+                raise IdsError(name + ' contains a short-lived token; delete it before rerunning meta.')
+            secret_name = provider + '_app_secret.txt'
+            if not os.path.lexists(KEYS / secret_name):
+                raise IdsError('Short-lived ' + provider + ' token requires ' + secret_name + '; save it privately and rerun meta.')
+            secret_value = key(secret_name)
+            issued = int(time.time())
+            reply = meta_request(provider, base.rsplit('/', 1)[0] + '/access_token', grant_type=prefix + '_exchange_token', client_secret=secret_value, access_token=token)
+            new_token = reply.get('access_token')
+            lifetime = reply.get('expires_in')
+            if not isinstance(new_token, str) or not new_token or type(lifetime) is not int or lifetime <= 3600:
+                raise IdsError(provider + ' exchange did not return a long-lived token and expiry.')
+            token = new_token
+            expires = issued + lifetime
+            if meta_identity(provider, base, token) != user_id:
+                raise IdsError(provider + ' exchanged token identity changed.')
+        value = {'access_token': token, 'user_id': user_id, 'issued_at': issued, 'expires_at': expires}
+        write_id(name, value)
+        if key(name, True).get('access_token') == token and key(raw_name) == original_token:
+            (KEYS / raw_name).unlink()
+        say(provider + ' setup complete.')
+    if not present:
+        say('No raw Meta token files present; save threads_token.txt or instagram_token.txt privately, then rerun meta.')
+
+
 def config():
     result = {name: key(name + '.txt') for name in ('telegram_bot_token', 'webhook_secret', 'github_pat', 'github_noreply', 'anthropic_key', 'webhook_url', 'worker_url')}
     result.update({name: key(name + '.json', True) for name in ('channels', 'instagram', 'threads')})
@@ -298,9 +389,9 @@ def publish_budget_sample():
     say('Sample published. Inspect disable-billing logs for the simulated result; local source does not prove deployed simulation mode.')
 
 
-commands = {'apis': apis, 'infra': infra, 'iam': iam, 'ids': ids, 'secret': secret, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
+commands = {'apis': apis, 'infra': infra, 'iam': iam, 'ids': ids, 'meta': meta, 'secret': secret, 'render': render, 'webhook': webhook, 'budget-test': budget_test}
 if len(sys.argv) != 2 or sys.argv[1] not in commands:
-    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|ids|secret|render|webhook|budget-test}')
+    sys.exit('Usage: autopost/setup/setup.sh {apis|infra|iam|ids|meta|secret|render|webhook|budget-test}')
 try:
     commands[sys.argv[1]]()
 except IdsError as error:
