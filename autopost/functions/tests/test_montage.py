@@ -44,7 +44,8 @@ class MontageTests(unittest.TestCase):
         timeline = self.edl['targets']['tg-story']
         timeline['titles'] = [{'start':0,'end':1,'text':'Jakarta Chinatown'},{'start':1,'end':2,'text':'Old Town'}]
         self.assertEqual(montage.validate(self.edl,self.sources),[])
-        for titles in ([{'start':0,'end':2,'text':'a'},{'start':1,'end':3,'text':'b'}], [{'start':0,'end':1,'text':'x'*29}], [{'start':0,'end':1,'text':'\U0001F4CD Jakarta'}], [{'start':0,'end':1,'text':''}], [{'start':0,'end':99,'text':'a'}], [{'start':0,'end':1,'text':'a'}]*21):
+        cue = {'start':0,'end':1,'text':'a'}
+        for titles in ([dict(cue,end=2),dict(cue,start=1,end=3)], [dict(cue,text='x'*29)], [dict(cue,text='\U0001F4CD Jakarta')], [dict(cue,text='')], [dict(cue,end=99)], [cue]*21, [dict(cue,position='top-left')]):
             with self.subTest(titles=titles):
                 edl = copy.deepcopy(self.edl)
                 edl['targets']['tg-story']['titles'] = titles

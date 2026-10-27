@@ -20,25 +20,51 @@ def ass_time(seconds):
     return f'{centiseconds//360000}:{centiseconds//6000%60:02}:{centiseconds//100%60:02}.{centiseconds%100:02}'
 
 
+def title_pin(size, color, hole):
+    from PIL import Image, ImageDraw
+    big = size*4
+    image = Image.new('RGBA',(big,int(big*1.3)),(0,0,0,0))
+    draw = ImageDraw.Draw(image)
+    radius = big//2
+    draw.ellipse((0,0,big,big),fill=color)
+    draw.polygon([(big*0.12,radius*1.45),(big*0.88,radius*1.45),(radius,int(big*1.3))],fill=color)
+    inner = big*0.19
+    draw.ellipse((radius-inner,radius-inner,radius+inner,radius+inner),fill=hole)
+    return image.resize((size,int(size*1.3)),Image.LANCZOS)
+
+
+def title_shadow(layer, radius, alpha):
+    from PIL import Image, ImageFilter
+    mask = layer.split()[3].point(lambda value: value*alpha//255)
+    shadow = Image.new('RGBA',layer.size,(0,0,0,0))
+    shadow.putalpha(mask.filter(ImageFilter.GaussianBlur(radius)))
+    image = Image.new('RGBA',layer.size,(0,0,0,0))
+    image.alpha_composite(shadow,(0,6))
+    image.alpha_composite(layer)
+    return image
+
+
 def title_image(text, path):
     from PIL import Image, ImageDraw, ImageFont
-    bold = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-    with Image.new('RGBA',(136,128)) as canvas:
-        ImageDraw.Draw(canvas).text((0,0),'\U0001F4CD',font=ImageFont.truetype('/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',109),embedded_color=True)
-        pin = canvas.crop(canvas.getbbox()).resize((56,56))
-    padding, gap = 32, 16
-    width = ImageFont.truetype(bold,56).getlength(text)
-    size = min(56,int(56*(900-2*padding-gap-pin.width)/max(1,width)))
-    if size < 24:
+    semibold = '/usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf'
+    pin = title_pin(34,(235,64,52,255),(255,255,255,255))
+    padding, gap, height = 30, 14, 92
+    width = ImageFont.truetype(semibold,50).getlength(text)
+    size = min(50,int(50*(900-2*padding-gap-pin.width)/max(1,width)))
+    if size < round(50/76*44):
         raise RuntimeError('Title cannot fit safe width')
-    font = ImageFont.truetype(bold,size)
+    font = ImageFont.truetype(semibold,size)
     text_width = round(font.getlength(text))
-    image = Image.new('RGBA',(2*padding+pin.width+gap+text_width,96),(0,0,0,0))
+    image = Image.new('RGBA',(2*padding+pin.width+gap+text_width,height),(0,0,0,0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((0,0,image.width-1,image.height-1),radius=48,fill=(0,0,0,140))
-    image.alpha_composite(pin,(padding,(image.height-pin.height)//2))
-    draw.text((padding+pin.width+gap,image.height//2),text,font=font,fill='white',anchor='lm',stroke_width=1,stroke_fill=(0,0,0,200))
-    image.save(path)
+    draw.rounded_rectangle((0,0,image.width-1,height-1),radius=22,fill=(255,255,255,255))
+    image.alpha_composite(pin,(padding,(height-pin.height)//2))
+    draw.text((padding+pin.width+gap,height//2),text,font=font,fill=(20,20,20),anchor='lm')
+    title_shadow(image,18,90).save(path)
+
+
+def title_origin(image_size, frame):
+    return (frame[0]-image_size[0])//2, round(590*frame[0]/1080)
 
 
 def digest_file(path):
@@ -212,8 +238,10 @@ def render(bucket, job, root):
             if draft:
                 with Image.open(image) as full:
                     full.resize((full.width//2,full.height//2)).save(image)
+            with Image.open(image) as placed:
+                x, y = title_origin(placed.size,(width,height))
             title_inputs += ['-i',image]
-            video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x=(W-w)/2:y={height*260//1920}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
+            video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x={x}:y={y}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story' and not draft:
             video_filter += ',scale=720:1280'
         arguments = ['-i',joined_files[target],'-i',cover,*title_inputs,'-filter_complex',video_filter + '[vout]','-map','[vout]','-map','0:a:0','-af',audio_filter(draft),*encode_arguments(target,draft)]

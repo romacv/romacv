@@ -44,6 +44,14 @@ class RenderSettingsTests(unittest.TestCase):
         self.assertEqual(list(render.timeline_groups(targets,False)),['ig-reel','tg-channel','ig-story'])
 
 
+class TitlePlacementTests(unittest.TestCase):
+    def test_final_title_is_centered_at_590(self):
+        self.assertEqual(render.title_origin((600,92),(1080,1920)),(240,590))
+
+    def test_draft_title_is_proportional(self):
+        self.assertEqual(render.title_origin((300,46),(540,960)),(120,295))
+
+
 class FinalRenderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
