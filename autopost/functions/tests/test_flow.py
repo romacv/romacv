@@ -93,6 +93,46 @@ class PublishedMessageTests(unittest.TestCase):
         self.assertIsNone(self.say(10,'почему ошибка?'))
 
 
+class AlbumWithoutPostTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_chat_id':1}
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[],'slug':'album'})
+        self.store.put('sessions/inbox',{'current':'album'})
+
+    def album(self, first):
+        return [self.store.intake({'update_id':first + n,'message':{'message_id':first + n,'media_group_id':'g1','photo':[{'file_id':'f' + str(n),'file_size':10}]}},self.config) for n in range(3)]
+
+    def test_album_after_publishing_starts_one_post_with_one_collect_message(self):
+        self.store.put('specs/album',{'state':'done','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        replies = self.album(10)
+        self.assertEqual(self.store.get('sessions/inbox')['collecting'],'item-10')
+        self.assertEqual(len(self.store.get('items/item-10')['messages']),3)
+        self.assertEqual([bool(r and r.get('text')) for r in replies],[True,False,False])
+
+    def test_album_while_publishing_gets_one_status_reply(self):
+        self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        replies = self.album(10)
+        self.assertIn('готово',replies[0])
+        self.assertEqual(replies[1:],[None,None])
+
+    def test_album_starting_a_post_drops_a_pending_fix_wait(self):
+        self.store.put('specs/album',{'state':'done','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        self.store.put('sessions/inbox',{'current':'album','awaiting':{'kind':'fix','slug':'album'}})
+        replies = self.album(10)
+        self.assertNotIn('awaiting',self.store.get('sessions/inbox'))
+        self.assertEqual([bool(r and r.get('text')) for r in replies],[True,False,False])
+
+    def test_one_tap_moves_every_photo_of_an_album_sent_to_a_draft(self):
+        self.store.put('specs/album',{'state':'previewed','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        replies = self.album(10)
+        self.assertEqual(replies[1:],[None,None])
+        data = replies[0]['reply_markup']['inline_keyboard'][0][0]['callback_data']
+        self.store.intake({'update_id':99,'callback_query':{'id':'99','data':data}},self.config)
+        self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
+        self.assertEqual([m['message_id'] for m in self.store.get('items/item-gg1')['messages']],[10,11,12])
+
+
 class FixAnswerTests(unittest.TestCase):
     def test_answer_is_sent_before_the_fix_is_closed(self):
         store = Store(FakeFirestore())

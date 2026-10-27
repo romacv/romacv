@@ -335,7 +335,24 @@ class Store:
                     return fixing(target, item)
             opened = session.get('collecting')
             offers = offered(config, business)
-            if name == '/post' or opened:
+            slug = session.get('current')
+            target = self.get('specs/' + slug, tx) if slug else None
+            pending = self.get('items/' + slug, tx) if slug and not target else None
+            group = message.get('media_group_id')
+            drafting = bool(pending and pending.get('status') in ('queued', 'drafting')) or bool(target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'))
+            running = bool(target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering'))
+            starts = not name and not opened and not drafting and not running and not (group and session.get('answered_group') == group) and any(message.get(k) for k in MEDIA_KEYS)
+            if starts:
+                session.pop('awaiting', None)
+            def once(write=True):
+                if group and session.get('answered_group') == group:
+                    return True
+                if group:
+                    session['answered_group'] = group
+                    if write:
+                        self.put('sessions/inbox', session, tx)
+                return False
+            if name == '/post' or opened or starts:
                 item_id = opened or 'item-' + identifier
                 item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
                 body = without_command(message) if name == '/post' else message
@@ -345,8 +362,9 @@ class Store:
                 refusal = 'Файл больше 512 МБ: сожми его или раздели.' if filled and max(sizes) > 512*1024*1024 else 'Пакет превышает лимит 1 ГБ или 20 файлов. Нажми «Готово» или «Отменить».' if filled and (sum(sizes) > 1024*1024*1024 or len(item['messages']) >= 20) else None
                 if refusal:
                     self.put(update_path, {'received':time.time()}, tx)
+                    if once():
+                        return None
                     return {'item':item_id, 'revision':item['revision'], 'text':refusal, 'reply_markup':collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))} if opened else refusal
-                group = message.get('media_group_id')
                 continuing = False
                 if filled:
                     item['messages'].append(body)
@@ -378,15 +396,13 @@ class Store:
                         return {'item':item_id, 'revision':item['revision'], 'text':None, 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers), 'reply_markup':markup}}
                     return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
                 return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers), 'reply_markup':markup}
-            slug = session.get('current')
-            target = self.get('specs/' + slug, tx) if slug else None
-            pending = self.get('items/' + slug, tx) if slug and not target else None
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 edit, shot = self.edit_note(message)
+                silent = once(False)
                 self.add_edit(tx, pending, slug, edit, shot, identifier)
                 self.put('sessions/inbox', session, tx)
                 self.put(update_path, {'received':time.time()}, tx)
-                return added(pending, edit)
+                return None if silent else added(pending, edit)
             if target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering', 'done', 'partial'):
                 held = self.get('items/' + target['item'], tx) if target.get('item') else None
                 self.put(update_path, {'received':time.time()}, tx)
@@ -394,25 +410,32 @@ class Store:
                     self.queue_fix(tx, slug, target, 'fix', note, identifier)
                     return asking(target, held)
                 if target['state'] in ('approved', 'running', 'rendering'):
-                    return publishing(target, held)
-                return 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
+                    return None if once() else publishing(target, held)
+                return None if once() else 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
-                return 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
+                return None if once() else 'К черновику принимаю текст, фото и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
             label = note or ('голосовое' if message.get('voice') else 'скриншот')
-            token = uuid.uuid4().hex[:8]
-            markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + identifier + ':' + token}]]}
+            key = 'g' + group if group else identifier
+            followup = self.get('followups/' + key, tx) if group else None
+            if not followup or followup.get('moved') or followup.get('slug') != slug:
+                followup = {'slug':slug, 'item':target['item'], 'notes':[], 'messages':[], 'token':uuid.uuid4().hex[:8]}
+            token = followup['token']
+            markup = {'inline_keyboard':[[{'text':'Это новый пост','callback_data':'newp:' + key + ':' + token}]]}
             if len(markup['inline_keyboard'][0][0]['callback_data'].encode()) > 64:
                 raise StateError('Callback exceeds 64 bytes')
+            silent = once(False)
             previewed = target['state'] == 'previewed'
             item = self.queue_edit(tx, slug, target, edit, shot, identifier, session)
             if previewed and target.get('preview_message'):
                 self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
-            self.put('followups/' + identifier, {'slug':slug, 'item':target['item'], 'note':edit, 'message':message, 'token':token}, tx)
+            followup['notes'].append(edit)
+            followup['messages'].append(message)
+            self.put('followups/' + key, followup, tx)
             self.put('sessions/inbox', session, tx)
             self.put(update_path, {'received':time.time()}, tx)
-            return {'text':feedback(target, item, label), 'reply_markup':markup}
+            return None if silent else {'text':feedback(target, item, label), 'reply_markup':markup}
         return self.atomic(apply)
 
     def draft_ids(self):
@@ -615,12 +638,15 @@ class Store:
         opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
-        if not valid or fresh or not item or not spec or spec['state'] != 'drafting' or item.get('status') not in ('queued', 'drafting') or followup['note'] not in item.get('edits', []):
+        if not valid or fresh or not item or not spec or spec['state'] != 'drafting' or item.get('status') not in ('queued', 'drafting'):
             return None
-        edits = item['edits']
-        edits.pop(len(edits) - 1 - edits[::-1].index(followup['note']))
+        edits = item.get('edits', [])
+        for note in followup.get('notes') or [followup['note']]:
+            if note in edits:
+                edits.pop(len(edits) - 1 - edits[::-1].index(note))
+        moved = {m['message_id'] for m in followup.get('messages') or [followup['message']]}
         for key in ('edit_photos', 'edit_voices'):
-            item[key] = [x for x in item.get(key, []) if x['message_id'] != followup['message']['message_id']]
+            item[key] = [x for x in item.get(key, []) if x['message_id'] not in moved]
         item['status'] = 'queued'
         item['revision'] += 1
         followup['moved'] = True
@@ -628,7 +654,7 @@ class Store:
         self.job(tx, {'item':followup['item'], 'step':step, 'revision':item['revision']}, 'unmove-' + identifier, 10)
         target = session['collecting'] if opened and opened.get('status') == 'collecting' else 'item-' + identifier
         created = opened if target == session.get('collecting') else {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':target[:40], 'batch_token':uuid.uuid4().hex[:8]}
-        created['messages'].append(followup['message'])
+        created['messages'].extend(followup.get('messages') or [followup['message']])
         created['revision'] += 1
         created['updated'] = time.time()
         session['collecting'] = target
