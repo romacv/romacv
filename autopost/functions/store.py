@@ -224,6 +224,7 @@ class Store:
         message = imaged(located(update.get('message', {})))
         query = update.get('callback_query')
         identifier = str(update['update_id'])
+        found = self.draft_ids() if command(message) == '/post' else None
         def apply(tx):
             if taps is not None:
                 del taps[:]
@@ -276,7 +277,7 @@ class Store:
             dropped = []
             if name == '/post':
                 session.pop('awaiting', None)
-                dropped = self.open_drafts(tx, session)
+                dropped = self.open_drafts(tx, session, found)
                 if dropped:
                     session.pop('current', None)
                     session.pop('collecting', None)
@@ -360,21 +361,30 @@ class Store:
             return {'text':feedback(target, item, label), 'reply_markup':markup}
         return self.atomic(apply)
 
-    def open_drafts(self, tx, session):
+    def draft_ids(self):
+        items, specs = set(), set()
+        for status in ('queued', 'drafting'):
+            items.update(snapshot.id for snapshot in self.db.collection('items').where('status', '==', status).stream())
+        for state in ('drafting', 'previewed', 'needs-edit'):
+            specs.update(snapshot.id for snapshot in self.db.collection('specs').where('state', '==', state).stream())
+        return items, specs
+
+    def open_drafts(self, tx, session, found):
         posts = {}
         def post(item_id, item):
             return posts.setdefault(item_id, {'id':item_id, 'item':item, 'specs':[]})
         opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
         if opened and opened.get('messages'):
             post(session['collecting'], opened)
-        for status in ('queued', 'drafting'):
-            for snapshot in self.db.collection('items').where('status', '==', status).stream():
-                post(snapshot.id, snapshot.to_dict())
-        for state in ('drafting', 'previewed', 'needs-edit'):
-            for snapshot in self.db.collection('specs').where('state', '==', state).stream():
-                saved = snapshot.to_dict()
-                if not saved.get('operation') and saved.get('item'):
-                    post(saved['item'], None)['specs'].append((snapshot.id, saved))
+        current = {session['current']} if session.get('current') else set()
+        for item_id in sorted(found[0] | current):
+            saved = self.get('items/' + item_id, tx)
+            if saved and saved.get('status') in ('queued', 'drafting'):
+                post(item_id, saved)
+        for slug in sorted(found[1] | current):
+            saved = self.get('specs/' + slug, tx)
+            if saved and saved.get('state') in ('drafting', 'previewed', 'needs-edit') and not saved.get('operation') and saved.get('item'):
+                post(saved['item'], None)['specs'].append((slug, saved))
         for entry in posts.values():
             if entry['item'] is None:
                 entry['item'] = self.get('items/' + entry['id'], tx)
@@ -584,7 +594,8 @@ class Store:
             chosen = item.get('chosen', [])
             item['chosen'] = [x for x in chosen if x != key] if key in chosen else chosen + [key]
             self.put('items/' + item_id, item, tx)
-            self.retire(taps, query, None, collect_keyboard(item_id, token, offers, item['chosen']))
+            if self.retire(taps, query, None, collect_keyboard(item_id, token, offers, item['chosen'])):
+                taps[-1].update(item=item_id, token=token, offers=list(offers))
             label = next(x[1] for x in GROUPS if x[0] == key)
             return ('Отмечено: ' if key in item['chosen'] else 'Снято: ') + label
         if verb == 'done' and not item['messages']:

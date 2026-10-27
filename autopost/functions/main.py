@@ -112,6 +112,11 @@ def retire_taps(config, store, taps):
     for tap in taps:
         if tap['line'] is None:
             try:
+                if tap.get('item'):
+                    current = store.get('items/' + tap['item']) or {}
+                    if current.get('status') != 'collecting':
+                        continue
+                    tap['markup'] = collect_keyboard(tap['item'],tap['token'],tap['offers'],current.get('chosen',[]))
                 platforms.telegram('editMessageReplyMarkup',{'chat_id':config['roman_chat_id'],'message_id':tap['message_id'],'reply_markup':tap['markup']})
             except Exception:
                 pass
