@@ -73,7 +73,8 @@ class SkillsTests(unittest.TestCase):
     def test_skill_keyboard_and_split_text(self):
         found = skills.load(self.store)
         rows = skills.keyboard(found)['inline_keyboard']
-        self.assertEqual([r[0]['callback_data'] for r in rows], ['skill:' + k for k in sorted(found)])
+        self.assertEqual([r[0]['web_app']['url'] for r in rows], ['https://www.resrom.com/p?view=skills&skill=' + k for k in sorted(found)])
+        self.assertEqual([r[0]['text'] for r in rows], sorted(found))
         pages = skills.split(skills.full('x', {'title': 'T', 'body': 'a' * 3000 + '\n' + 'b' * 3000, 'examples': [{'verdict': 'bad', 'feedback': 'f'}]}))
         self.assertTrue(len(pages) > 1 and all(len(p.encode('utf-16-le')) // 2 <= 4096 for p in pages) and pages[-1].endswith('bad: «f»'))
 

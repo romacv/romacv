@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from firebase_functions import https_fn
 
+import skills
 from store import GROUPS, NAMES
 
 PROJECT = 'resromcom-493b4'
@@ -309,9 +310,17 @@ def costs_view(store, now):
     return {'now':now,'view':'costs','quota':rows,'budget':budget_of(store),'billing':invoice,'anthropic':spent}
 
 
-def snapshot(store, now, view='progress'):
+def skills_view(store, now, skill=None):
+    found = skills.load(store)
+    keys = [skill] if skill in found else [] if skill else sorted(found)
+    return {'now':now,'view':'skills','skill':skill,'skills':[{'id':key,'title':found[key]['title'],'body':found[key]['body'],'examples':[{name:example.get(name, '') for name in ('verdict', 'feedback', 'before', 'after')} for example in found[key].get('examples', [])]} for key in keys]}
+
+
+def snapshot(store, now, view='progress', skill=None):
     if view == 'costs':
         return costs_view(store, now)
+    if view == 'skills':
+        return skills_view(store, now, skill)
     jobs = [{**s.to_dict(),'id':s.id} for s in store.db.collection('renders').where('state', 'in', ['queued', 'running']).stream()]
     collecting = [(s.id, s.to_dict()) for s in store.db.collection('items').where('status', '==', 'collecting').stream()]
     previews = [s.to_dict() for s in store.db.collection('specs').where('state', 'in', ['previewed', 'needs-edit']).limit(PREVIEW_LIMIT).stream()]
@@ -373,8 +382,9 @@ def respond(request, config, store):
     if not fresh:
         return https_fn.Response('',status=401,headers=cors)
     try:
-        view = 'costs' if request.args.get('view') == 'costs' else 'progress'
-        body = json.dumps(snapshot(store, now, view))
+        view = request.args.get('view')
+        view = view if view in ('costs', 'skills') else 'progress'
+        body = json.dumps(snapshot(store, now, view, request.args.get('skill')))
     except Exception:
         logging.exception('progress snapshot failed')
         return https_fn.Response('',status=503,headers=cors)

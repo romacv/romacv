@@ -45,21 +45,28 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 .free{color:var(--tg-theme-hint-color,#6d6d72)}
 #state{margin-top:24px;text-align:center}
 .note{margin:8px 4px 0}
+.back{margin-top:16px;font:inherit;font-size:15px;border:0;background:none;padding:4px 0;color:var(--tg-theme-link-color,#2481cc)}
+.back:active{opacity:.5}
+.body{white-space:pre-wrap;overflow-wrap:anywhere}
+.ex>div{margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
+.ex .good{color:var(--tg-theme-accent-text-color,var(--tg-theme-link-color,#2481cc))}
+.ex .bad{color:var(--tg-theme-destructive-text-color,#d93025)}
 </style>
 </head>
 <body>
 <header><h1 id="heading">Прогресс</h1><button id="refresh" type="button">Обновить</button></header>
-<div class="switch" role="group" aria-label="Раздел"><button type="button" id="tab-progress" aria-pressed="false">Прогресс</button><button type="button" id="tab-costs" aria-pressed="false">Расходы</button></div>
+<div class="switch" role="group" aria-label="Раздел"><button type="button" id="tab-progress" aria-pressed="false">Прогресс</button><button type="button" id="tab-costs" aria-pressed="false">Расходы</button><button type="button" id="tab-skills" aria-pressed="false">Навыки</button></div>
 <div id="active"></div>
 <div id="waiting"></div>
 <div id="published"></div>
 <div id="limits"></div>
+<div id="skills"></div>
 <p id="state" class="hint" role="status">Загрузка…</p>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 'use strict';
-const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), views={progress:'Прогресс',costs:'Расходы'};
-let view=new URLSearchParams(location.search).get('view')==='costs'?'costs':'progress';
+const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', state=document.getElementById('state'), views={progress:'Прогресс',costs:'Расходы',skills:'Навыки'}, query=new URLSearchParams(location.search);
+let view=query.get('view') in views?query.get('view'):'progress', skill=view==='skills'?query.get('skill')||null:null;
 function mark(){
   document.title=document.getElementById('heading').textContent=views[view];
   Object.keys(views).forEach(k=>document.getElementById('tab-'+k).setAttribute('aria-pressed',String(k===view)));
@@ -105,6 +112,7 @@ function group(id,head,rows){const box=document.getElementById(id);box.replaceCh
 function render(){
   if(!data)return;
   if(view==='costs'){limits();return}
+  if(view==='skills'){skillsPage();return}
   group('active','Сейчас',data.active.map((job,i)=>{
     const head=el('div'), time=el('span','time');
     head.append(line(el('span','title',job.title||'Без названия'),time));
@@ -209,6 +217,55 @@ function limits(){
   if(a&&a.balance)section('Anthropic',[balance(a)]);
   section('Использование',q.map(usage),q.some(x=>x.key==='cpu'||x.key==='mem')?['Бесплатные лимиты Cloud Run и других сервисов общие на весь billing account; здесь считается только этот проект.']:[]);
 }
+function skillsPage(){
+  const box=document.getElementById('skills');box.replaceChildren();
+  const list=data.skills||[];
+  if(skill){
+    const back=el('button','back','‹ Все навыки');back.type='button';
+    back.addEventListener('click',()=>{haptic();openSkill(null)});
+    box.append(back);
+    const k=list[0];
+    if(!k){box.append(el('p','hint note','Навык не найден.'));return}
+    const head=el('div','row plain');head.append(el('div','title',k.title),el('div','hint',k.id));
+    const text=el('div','row plain body',k.body);
+    const s=el('section');s.append(head,text);box.append(s);
+    box.append(el('h2','','Примеры'));
+    if(!k.examples.length){box.append(el('p','hint note','Примеров пока нет'));return}
+    const ex=el('section');
+    k.examples.forEach(x=>{
+      const r=el('div','row plain ex'),good=x.verdict==='good';
+      r.append(el('div','title '+(good?'good':'bad'),good?'хорошо':'плохо'));
+      [['Отзыв',x.feedback],['До',x.before],['После',x.after]].forEach(p=>{
+        if(!p[1])return;
+        const d=el('div');d.append(el('span','hint',p[0]+': '),document.createTextNode(p[1]));r.append(d);
+      });
+      ex.append(r);
+    });
+    box.append(ex);
+    return;
+  }
+  if(!list.length){box.append(el('p','hint note','Навыков пока нет.'));return}
+  const s=el('section');
+  list.forEach(k=>{
+    const r=el('div','row'),n=k.examples.length;
+    r.append(line(el('span','title',k.title),el('span','time',String(n))),el('div','hint',k.id+' · примеров: '+n));
+    r.setAttribute('role','button');r.tabIndex=0;
+    const go=()=>{haptic();openSkill(k.id)};
+    r.addEventListener('click',go);
+    r.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}});
+    s.append(r);
+  });
+  box.append(s);
+}
+function openSkill(id){
+  skill=id;data=null;
+  const url=new URL(location.href);url.searchParams.set('view','skills');
+  if(id)url.searchParams.set('skill',id);else url.searchParams.delete('skill');
+  history.replaceState(null,'',url);
+  document.getElementById('skills').replaceChildren();
+  state.textContent=app&&app.initData?'Загрузка…':'Открой страницу из бота.';
+  load();
+}
 function tick(){
   data&&data.active&&data.active.forEach((job,i)=>{
     const rows=document.querySelectorAll('#active .row'), r=rows[i];
@@ -221,28 +278,28 @@ function tick(){
 async function load(){
   if(busy||!app||!app.initData)return;
   busy=true;
-  const asked=view;
+  const asked=view, askedSkill=skill;
   try{
-    const response=await fetch(endpoint+(view==='costs'?'?view=costs':''),{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
+    const response=await fetch(endpoint+(view==='progress'?'':'?view='+view+(view==='skills'&&skill?'&skill='+encodeURIComponent(skill):'')),{headers:{Authorization:'tma '+app.initData},cache:'no-store'});
     if(!response.ok)throw Error(response.status);
     const body=await response.json();
-    if(asked!==view)return;
+    if(asked!==view||askedSkill!==skill)return;
     data=body;
     offset=data.now-Date.now()/1000;
-    state.textContent=view==='costs'||data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
+    state.textContent=view!=='progress'||data.active.length||data.waiting.length||data.published.length?'':'Пока ничего нет.';
     render();
   }catch(e){
-    if(asked!==view)return;
+    if(asked!==view||askedSkill!==skill)return;
     const code=e.message;
     state.textContent=code==='401'?'Открой заново из бота.':code==='403'?'Нет доступа.':code==='503'?'Сервер недоступен.':'Нет связи. Нажми «Обновить».';
-  }finally{busy=false;if(asked!==view)load()}
+  }finally{busy=false;if(asked!==view||askedSkill!==skill)load()}
 }
 function switchView(next){
   if(next===view)return;
   haptic();
-  view=next;data=null;
-  const url=new URL(location.href);url.searchParams.set('view',view);history.replaceState(null,'',url);
-  ['active','waiting','published','limits'].forEach(id=>document.getElementById(id).replaceChildren());
+  view=next;data=null;skill=null;
+  const url=new URL(location.href);url.searchParams.set('view',view);url.searchParams.delete('skill');history.replaceState(null,'',url);
+  ['active','waiting','published','limits','skills'].forEach(id=>document.getElementById(id).replaceChildren());
   state.textContent=app&&app.initData?'Загрузка…':'Открой страницу из бота.';
   mark();load();
 }

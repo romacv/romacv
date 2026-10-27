@@ -61,6 +61,21 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(self.call(signed(age=90000)).status_code,401)
         self.assertEqual(self.call(signed(token='other')).status_code,403)
 
+    def test_skills_view(self):
+        self.store.put('skills/montage',{'title':'Монтаж','body':'line one\nline two','examples':[{'verdict':'bad','feedback':'f','before':'a','after':'b','at':1}],'revision':1})
+        self.store.put('skills/other',{'title':'Другой','body':'x','examples':[],'revision':1})
+        self.store.put('meta/skills-seed',{'at':1})
+        def read(skill=None):
+            request = Mock(method='GET')
+            request.args = {'view':'skills',**({'skill':skill} if skill else {})}
+            request.headers = {'Authorization':'tma ' + signed()}
+            return json.loads(app.respond(request,self.config,self.store).get_data(as_text=True))
+        with patch.object(app,'monitoring_client',side_effect=AssertionError), patch.object(app,'billing_rows',side_effect=AssertionError), patch.object(app,'anthropic_of',side_effect=AssertionError):
+            everything, one, none = read(), read('montage'), read('nope')
+        self.assertEqual([s['id'] for s in everything['skills']],['montage','other'])
+        self.assertEqual(one['skills'],[{'id':'montage','title':'Монтаж','body':'line one\nline two','examples':[{'verdict':'bad','feedback':'f','before':'a','after':'b'}]}])
+        self.assertEqual((one['view'],none['skills']),('skills',[]))
+
     def test_snapshot_failure(self):
         self.store.db.collection = Mock(side_effect=RuntimeError)
         self.assertEqual(self.call(signed()).status_code,503)

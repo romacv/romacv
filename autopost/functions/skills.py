@@ -15,6 +15,7 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
+VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 
 
 def fresh(base):
@@ -89,7 +90,7 @@ def listing(skills):
 
 
 def keyboard(skills):
-    return {'inline_keyboard': [[{'text': key, 'callback_data': 'skill:' + key}] for key in sorted(skills)]}
+    return {'inline_keyboard': [[{'text': key, 'web_app': {'url': VIEWER + key}}] for key in sorted(skills)]}
 
 
 def full(key, value):
