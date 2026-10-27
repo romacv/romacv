@@ -94,7 +94,7 @@ class ProgressTests(unittest.TestCase):
         self.store.put('usage/anthropic-' + time.strftime('%Y-%m',time.gmtime(now)),{'calls':3,'usd':0.1234,'input_tokens':10})
         self.store.put('sessions/budget',{'costAmount':0.4,'budgetAmount':1,'costIntervalStart':'2026-10-01T07:00:00Z','currencyCode':'USD','at':now - 3600})
         used = {(app.RUN_CPU,'cloud_run_job'):250000,(app.RUN_MEMORY,'cloud_run_job'):1000,(app.FIRESTORE_READS,app.FIRESTORE_DATABASE):1200}
-        with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=lambda client,project,metric,resource,*rest: used.get((metric,resource),0)), patch.object(app,'billing_rows',return_value=None):
+        with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=lambda client,project,metric,resource,*rest: used.get((metric,resource),0)), patch.object(app,'registry_bytes',return_value=3 * 2 ** 30), patch.object(app,'billing_rows',return_value=None):
             costs = json.loads(self.call(signed(),'costs').get_data(as_text=True))
         with patch.object(app,'monitoring_client',side_effect=AssertionError), patch.object(app,'billing_rows',side_effect=AssertionError):
             body = json.loads(self.call(signed()).get_data(as_text=True))
@@ -110,6 +110,7 @@ class ProgressTests(unittest.TestCase):
         rows = {row['key']:row for row in body['quota']}
         self.assertEqual((rows['cpu']['percent'],rows['cpu']['paid']),(104.2,round(10000 * 0.000018,4)))
         self.assertNotIn('active',body)
+        self.assertEqual((rows['ar']['used'],rows['ar']['period'],rows['ar']['rate'],rows['ar']['paid']),(3,'now','month',round(2.5 * 0.1,4)))
         self.assertEqual((rows['cpu']['period'],rows['reads']['period'],rows['gcs_bytes']['period'],rows['speech']['period']),('month','day','now','month'))
         self.assertEqual((rows['reads']['used'],rows['speech']['used'],rows['speech']['paid']),(1200,30,0))
         self.assertEqual((body['budget']['cost'],body['budget']['budget']),(0.4,1))
@@ -131,7 +132,7 @@ class ProgressTests(unittest.TestCase):
 
     def test_monitoring_failure_degrades(self):
         self.store.put('sessions/budget',{'costAmount':0.1,'budgetAmount':1,'at':1})
-        with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=RuntimeError):
+        with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=RuntimeError), patch.object(app,'registry_bytes',side_effect=RuntimeError):
             response = self.call(signed(),'costs')
         body = json.loads(response.get_data(as_text=True))
         self.assertEqual(response.status_code,200)

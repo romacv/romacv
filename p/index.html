@@ -180,7 +180,7 @@ function period(x){return x.period==='month'?monthFrom():x.period==='day'?'за 
 function usage(x){
   const r=el('div','row plain');
   if(x.percent===null){r.append(line(el('span','',x.label),el('span','time','нет метрики')),el('div','hint','бесплатно '+number(x.free)+' '+x.unit));return r}
-  r.append(line(el('span','',x.label),el('span','time',x.paid>0?'≈'+money(x.paid)+' сверх':'')));
+  r.append(line(el('span','',x.label),el('span','time',x.paid>0?'≈'+money(x.paid)+(x.rate==='month'?'/мес':'')+' сверх':'')));
   r.append(el('div','hint',[period(x),number(x.used)+' из '+number(x.free)+' '+x.unit+' ('+number(x.percent)+'%)'+(x.stale?' · устарело':'')].filter(Boolean).join(' · ')));
   r.append(bar(x.label,x.percent));
   return r;

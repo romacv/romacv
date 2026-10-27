@@ -149,6 +149,7 @@ def iam():
     grant(BUDGET, 'roles/datastore.user')
     grant(RUNTIME, monitoring)
     grant(RUNTIME, 'roles/bigquery.jobUser')
+    grant(RUNTIME, 'roles/artifactregistry.reader')
     dataset_reader(RUNTIME)
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST'), RUNTIME, 'roles/secretmanager.secretAccessor')
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST_NOTIFY'), RENDER, 'roles/secretmanager.secretAccessor')

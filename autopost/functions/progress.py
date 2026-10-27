@@ -31,6 +31,7 @@ FIRESTORE_WRITES = 'firestore.googleapis.com/document/write_ops_count'
 FIRESTORE_DELETES = 'firestore.googleapis.com/document/delete_ops_count'
 FIRESTORE_DATABASE = 'firestore.googleapis.com/Database'
 GIB = 2 ** 30
+AR_LOCATION = 'us-central1'
 GB = 10 ** 9
 QUOTA_TTL = 600
 BILLING_TTL = 1800
@@ -52,11 +53,11 @@ SPECS = (
     ('gcs_bytes','Cloud Storage, объём','ГиБ','storage.googleapis.com/storage/v2/total_bytes','gcs_bucket','gauge',GIB),
     ('gcs_egress','Cloud Storage, исходящий трафик (оценка)','ГиБ','storage.googleapis.com/network/sent_bytes_count','gcs_bucket','month',GIB),
     ('tasks','Cloud Tasks, операции','шт','cloudtasks.googleapis.com/api/request_count','cloud_tasks_queue','month',1),
-    ('ar','Artifact Registry, объём','ГиБ','artifactregistry.googleapis.com/repository/size','artifactregistry.googleapis.com/Repository','gauge',GIB),
     ('log','Cloud Logging, приём','ГиБ','logging.googleapis.com/billing/bytes_ingested',None,'month',GIB),
     ('host_out','Firebase Hosting, трафик','ГБ','firebasehosting.googleapis.com/network/sent_bytes_count','firebase_domain','month',GB),
     ('host_size','Firebase Hosting, хранилище','ГБ','firebasehosting.googleapis.com/storage/total_bytes','firebase_domain','gauge',GB),
 )
+RATE_KEYS = ('gcs_bytes','ar','host_size')
 PERIODS = {'month':'month','day':'day','gauge':'now'}
 NO_METRIC = (('scheduler','Cloud Scheduler','заданий',3),('secrets','Secret Manager','версий',6),('build','Cloud Build','мин',2500),('pubsub','Pub/Sub','ГиБ',10))
 FREE = {'svc_cpu':180000,'svc_mem':360000,'svc_req':2000000,'cpu':240000,'mem':450000,'reads':50000,'writes':20000,'deletes':20000,'gcs_bytes':5,'gcs_egress':100,'tasks':1000000,'ar':0.5,'log':50,'host_out':10,'host_size':10,'speech':60,'mon_reads':1000000}
@@ -142,6 +143,12 @@ def monitoring_client():
     return monitoring_v3.MetricServiceClient()
 
 
+def registry_bytes(project):
+    from google.cloud import artifactregistry_v1
+    client = artifactregistry_v1.ArtifactRegistryClient()
+    return sum(repo.size_bytes for repo in client.list_repositories(parent='projects/' + project + '/locations/' + AR_LOCATION, timeout=8))
+
+
 def window_of(window, now):
     return {'month':(month_start(now), 86400),'day':(day_start(now), 3600),'gauge':(now - 172800, 86400)}[window]
 
@@ -165,12 +172,13 @@ def quota(store, now):
     if client:
         pool = ThreadPoolExecutor(max_workers=8)
         jobs = [(key, label, unit, div, metric, window, pool.submit(series_total, client, project, metric, resource, window_of(window, now)[0], now, window_of(window, now)[1], window == 'gauge')) for key, label, unit, metric, resource, window, div in SPECS]
+        jobs.append(('ar', 'Artifact Registry, объём', 'ГиБ', GIB, 'repositories', 'gauge', pool.submit(registry_bytes, project)))
         wait([job for *_, job in jobs], timeout=QUOTA_DEADLINE)
         pool.shutdown(wait=False, cancel_futures=True)
         for key, label, unit, div, metric, window, job in jobs:
             try:
                 if job.done():
-                    rows.append({**quota_row(key, label, unit, job.result(), div, PERIODS[window]),**({'estimate':True} if key == 'gcs_egress' else {})})
+                    rows.append({**quota_row(key, label, unit, job.result(), div, PERIODS[window]),**({'estimate':True} if key == 'gcs_egress' else {}),**({'rate':'month'} if key in RATE_KEYS else {})})
             except Exception:
                 logging.exception('monitoring read failed: ' + key + ' ' + metric)
     measured = bool(rows)
