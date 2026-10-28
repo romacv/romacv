@@ -308,7 +308,7 @@ class ChainedPublishTests(unittest.TestCase):
         self.assertTrue(all(saved['errors'].get(target) for target in self.spec['targets']))
         enqueue.assert_called_once()
         tell.assert_called_once()
-        self.assertIn('tg-channel: Прервано по таймауту.',tell.call_args[0][1])
+        self.assertIn('Telegram-канал — прервано',tell.call_args[0][1])
         self.assertNotIn('повторю',tell.call_args[0][1])
 
     def test_nothing_published_skips_learning_and_says_so(self):

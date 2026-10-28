@@ -13,11 +13,12 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
+from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
 LIMIT = 10
+SESSION_LIMIT = 30
 QUOTA_DEADLINE = 10
 PREVIEW_LIMIT = 50
 NEAR_FREE = 80
@@ -338,6 +339,26 @@ def timeline(session, now, render=None):
     return {'state':session.get('state'),'opened':session.get('opened'),'ended':session.get('ended'),'outcome':{**session['outcome'], 'why':scrub(session['outcome'].get('why'))} if isinstance(session.get('outcome'), dict) else session.get('outcome'),'usd':round(session.get('usd') or 0, 4),'past':past,'current':current,'planned':[{'id':s['id'],'label':s.get('label', s['id'])} for s in steps if s.get('state') == 'planned']}
 
 
+def percent_of(session, state):
+    if state == 'published':
+        return 100
+    if state == 'cancelled':
+        return 0
+    steps = [s for s in session.get('steps') or [] if s.get('state')]
+    running = [s for s in steps if s.get('state') == 'running']
+    rows = list((running[-1].get('targets') or {}).values()) if running else []
+    fraction = sum(1 for row in rows if row.get('status') in ('done', 'failed', 'verified', 'unverified', 'unverifiable')) / len(rows) if rows else 0
+    return max(0, min(100, round(100 * (sum(1 for s in steps if s['state'] == 'done') + fraction) / max(len(steps), 1))))
+
+
+def session_view(key, session, item, spec, now, zone, render=None):
+    state = session.get('state')
+    if spec and spec.get('state') in ('done', 'partial') and state in ('open', 'published') and (spec.get('results') or spec.get('published')):
+        state = 'published' if spec['state'] == 'done' else 'partial'
+    steps = timeline(session, now, render)
+    return {'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()} for row in table_rows(spec, item, zone)] if spec else []}
+
+
 def session_sub(session):
     current = session['current']
     if not current:
@@ -420,8 +441,13 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
     jobs = [{**s.to_dict(),'id':s.id} for s in store.db.collection('renders').where('state', 'in', ['queued', 'running']).stream()]
     collecting = [(s.id, s.to_dict()) for s in store.db.collection('items').where('status', '==', 'collecting').stream()]
     previews = [(s.id, s.to_dict()) for s in store.db.collection('specs').where('state', 'in', ['previewed', 'needs-edit']).limit(PREVIEW_LIMIT).stream()]
-    specs = [s.to_dict() for s in store.db.collection('specs').where('published_at', '>=', now - MAX_AGE).stream()]
-    specs = sorted((spec for spec in specs if spec.get('state') in ('done', 'partial')), key=lambda spec: -spec['published_at'])[:LIMIT]
+    specs = {s.id:s.to_dict() for s in store.db.collection('specs').where('published_at', '>=', now - MAX_AGE).stream()}
+    for s in store.db.collection('specs').where('state', '==', 'partial').stream():
+        spec = s.to_dict()
+        spec['published_at'] = spec.get('published_at') or spec.get('started_at') or spec.get('updated') or 0
+        if spec['published_at'] >= now - MAX_AGE and not spec.get('operation'):
+            specs.setdefault(s.id, spec)
+    specs = sorted((spec for spec in specs.values() if spec.get('state') in ('done', 'partial')), key=lambda spec: -spec['published_at'])[:LIMIT]
     busy = {job.get('item') for job in jobs}
     working = {s.id: s.to_dict() for s in store.db.collection('items').where('status', 'in', ['queued', 'drafting']).stream()}
     newest = newest_specs(s.to_dict() for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream())
@@ -461,7 +487,7 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
         stage = pin_stage(item, states.get(key), bool((newest.get(key) or {}).get('answered'))) if item and item.get('status') not in ('rejected', 'failed') and key not in busy and not stale(item, now, key in live) else None
         if stage in WORKING:
             active.append({'id':key,'item':key,'title':title_of(item, newest.get(key)),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':(((newest.get(key) or {}).get('started_at') if states.get(key) in ('running','rendering') else None) or (newest.get(key) or {}).get('updated') if states.get(key) in ('approved','running','rendering') else None) or item.get('updated') or item.get('created') or now,'steps':[]})
-    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item')), spec),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
+    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item')), spec),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))],'unfinished':[{'target':row['target'],'name':row['name'],'status':scrub(row['status'])} for row in table_rows(spec, items.get(spec.get('item')), zone) if row['url'] is None and row['status'] != 'опубликовано']} for spec in specs]
     try:
         sessions = sessions_of(store, list(dict.fromkeys(row.get('item') or row['id'] for row in active + waiting + published)))
     except Exception:
@@ -505,7 +531,35 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
             row['session'], sub = None, ''
         if sub and row in active:
             row['sub'] = sub
-    return {'now':now,'view':'progress','active':active,'waiting':waiting,'published':published}
+    try:
+        listed = sorted(((snap.id, snap.to_dict()) for snap in store.db.collection('sessions').stream()), key=lambda row: -((row[1] or {}).get('opened') or 0))
+        listed = [(key, doc) for key, doc in listed if isinstance(doc.get('steps'), list) and doc.get('item')]
+        shown = [key for key, doc in listed[:SESSION_LIMIT]]
+        have = {key: doc for key, doc in listed}
+        extra = [key for key in dict.fromkeys(row.get('item') or row['id'] for row in active + waiting + published) if key and key not in shown]
+        ids = shown + extra
+        owners = {snap.id: snap.to_dict() for snap in store.db.get_all([store.db.document('items/' + key) for key in ids]) if snap.exists}
+        slugs = latest_specs(store, sorted(ids))
+        pairs = {key: store.get('specs/' + slugs[key]) for key in ids if key in slugs}
+        views = []
+        for key in ids:
+            doc, item, spec = have.get(key), owners.get(key), pairs.get(key)
+            if doc is None and spec and spec.get('state') in ('done', 'partial') and (spec.get('results') or spec.get('published')):
+                doc = backfilled(key, item, spec)
+            if doc is None and item and item.get('status') in ('collecting', 'queued', 'drafting'):
+                doc = Store.session(None, key, item.get('created') or now, item)
+            if doc is None:
+                continue
+            row = next((r for r in active if r.get('item') == key), None)
+            try:
+                views.append(session_view(key, doc, item, spec, now, zone, row.get('steps') if row else None))
+            except Exception:
+                logging.exception('session view failed')
+        sessions_list = sorted(views, key=lambda view: -(view['opened'] or 0))
+    except Exception:
+        logging.exception('sessions list failed')
+        sessions_list = []
+    return {'now':now,'view':'progress','active':active,'waiting':waiting,'published':published,'sessions':sessions_list}
 
 
 def respond(request, config, store):

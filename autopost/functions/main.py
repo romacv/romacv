@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import EXPIRED_TEXT, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import agents
 import drafter
 import learning
@@ -208,7 +208,7 @@ def callback_reply(config, store, query, result, visible):
 
 def collect_reply(config, store, item_id, item, text):
     offers = offered(config,store.get('tokens/business') or config.get('business'))
-    return {'item':item_id,'text':hinted(text,offers),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
+    return {'item':item_id,'text':hinted(text,offers,item.get('chosen')),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
 
 
 def send_collect(config, store, result, claim=None):
@@ -396,6 +396,14 @@ def received(saved):
 
 @https_fn.on_request(region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=60,min_instances=0,max_instances=2,invoker='public')
 def webhook(request):
+    stop = threading.Event()
+    try:
+        return handle_update(request,stop)
+    finally:
+        stop.set()
+
+
+def handle_update(request,stop):
     config, store, bucket = runtime()
     platforms.configure(config,store,tempfile.gettempdir())
     cors = {'Access-Control-Allow-Origin':'https://www.resrom.com','Access-Control-Allow-Headers':'Content-Type','Access-Control-Allow-Methods':'POST, OPTIONS','Vary':'Origin'}
@@ -432,11 +440,11 @@ def webhook(request):
     if isinstance(message,dict) and message.get('message_id'):
         kind = 'upload_photo' if message.get('photo') else 'upload_video' if message.get('video') else 'typing'
         def react():
-            for method,fields in (('setMessageReaction',{'chat_id':config['roman_chat_id'],'message_id':message['message_id'],'reaction':[{'type':'emoji','emoji':'👀'}]}),('sendChatAction',{'chat_id':config['roman_chat_id'],'action':kind})):
-                try:
-                    platforms.telegram(method,fields)
-                except Exception:
-                    pass
+            try:
+                platforms.telegram('setMessageReaction',{'chat_id':config['roman_chat_id'],'message_id':message['message_id'],'reaction':[{'type':'emoji','emoji':'👀'}]})
+            except Exception:
+                pass
+            activity(config,kind,stop)
         group = message.get('media_group_id')
         if not group or store.change('sessions/reacted',lambda saved:first_of_group(saved,group)):
             bounded(react,WEBHOOK_EDIT_SECONDS)
@@ -455,6 +463,7 @@ def webhook(request):
         enqueue({'step':'skill','skill':query['data'][6:],'query':query['id']},'skill-' + str(query['id']))
         return https_fn.Response('{}',content_type='application/json')
     taps = []
+    store.classifier = lambda text,context:drafter.classify(config,text,context,lambda usage:store.record_usage(None,'classify',usage))
     result = store.intake(value,config,taps)
     store.flush(enqueue)
     query = value.get('callback_query')
@@ -470,7 +479,8 @@ def webhook(request):
     refresh = result.get('refresh') if isinstance(result,dict) else None
     if refresh:
         bounded(lambda:edit_message(config,refresh['message_id'],refresh['text'],refresh['reply_markup']),WEBHOOK_EDIT_SECONDS)
-        return https_fn.Response('{}',content_type='application/json')
+        said = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':result['text']} if result.get('text') else {}
+        return https_fn.Response(json.dumps(said,ensure_ascii=False),content_type='application/json')
     text = result.get('text') if isinstance(result,dict) else result
     if text and isinstance(result,dict) and result.get('item') and result.get('reply_markup'):
         claim = {'lock':threading.Lock(),'abandoned':False,'sent':False,'failed':False}
@@ -816,7 +826,7 @@ def draft(config,store,bucket,payload,directory):
         return
     edits,shots = heard
     allowed = restrict(config,store,payload,item,bool(files),bool(clips))
-    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'clips':len(clips)} if clips else {}),**({'chosen_targets':allowed} if allowed else {})}
+    source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'clips':len(clips)} if clips else {}),**({'chosen_targets':allowed} if allowed else {})}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))
@@ -1166,7 +1176,7 @@ def plan_montage(config,store,bucket,payload,directory):
         return {'agents':{'montage':{'action':None,'finished':time.time(),'usd':round(spent[0],6),**line}},'usd':round(spent[0],6)}
     track(store.step,payload['item'],'montage',{'agents':{'montage':{'status':'running','action':'планирую монтаж','started':time.time()}}},payload['revision'])
     try:
-        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
+        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
     except Exception:
         track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed'},payload['revision'])
         raise
@@ -1231,6 +1241,7 @@ def fail_final(config,store,slug,render,after=0):
         if value.get('final_render') != render or value.get('state') != 'rendering' or after and time.time() - value.get('started_at',0) < after:
             return False
         value['state'] = 'partial'
+        value['published_at'] = time.time()
         value['retry_pending'] = 'final'
         return value
     saved = store.change('specs/' + slug,fail)
@@ -1241,8 +1252,9 @@ def fail_final(config,store,slug,render,after=0):
 
 
 def announce_retry(config,store,slug,saved):
-    text = 'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.' if saved['retry_pending'] == 'final' else 'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.\n' + '\n'.join(target_lines(saved))
+    text = 'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.' if saved['retry_pending'] == 'final' else 'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.\n' + table_of(config,store,saved)
     tell(config,text,reply_markup=buttons(slug,saved['hash'],True))
+    store.talk(saved.get('item'),None,text)
     store.change('specs/' + slug,lambda value:value.pop('retry_pending',None))
 
 
@@ -1396,7 +1408,6 @@ def publish_order(targets):
 
 
 RETRY_TEXT = 'Прервано по таймауту, повторю.'
-EXPIRED_TEXT = 'Материал истёк. Пришли файлы заново.'
 
 
 def pending_targets(saved):
@@ -1415,6 +1426,10 @@ def missing_errors(saved,timeout=False):
             errors[target] = ('Прервано по таймауту, повторю.' if attempted < 3 else 'Прервано по таймауту.') if attempted else 'Не начато.'
         else:
             errors[target] = 'Прервано по таймауту.' if current == RETRY_TEXT else 'Операция остановлена.'
+
+
+def table_of(config,store,saved):
+    return table_text(saved,store.get('items/' + saved['item']) if saved.get('item') else None,config.get('timezone','Asia/Makassar'))
 
 
 def target_lines(saved):
@@ -1481,7 +1496,7 @@ def run(config,store,bucket,slug,directory,resume=False):
                 result = platforms.post_social(target_spec,state,target,urls,session)
                 verified = platforms.link_opens(result)
             publication = state['steps'].get(target + ':publish',{}).get('value')
-            published = {'url':result,'verified':verified,'copy':spec.get('copy',{}).get(target)}
+            published = {'url':result,'verified':verified,'at':time.time(),'copy':spec.get('copy',{}).get(target)}
             published.update(published_ids(config,spec,target,target_assets,publication))
             saved['results'][target] = published
             published_targets[target] = published
@@ -1493,7 +1508,7 @@ def run(config,store,bucket,slug,directory,resume=False):
             saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
         publication = state['steps'].get(target + ':publish',{})
         if target not in published_targets and publication.get('status') == 'done':
-            published_targets[target] = {'url':'','verified':False,'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
+            published_targets[target] = {'url':'','verified':False,'at':time.time(),'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
         store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets,attempts=attempts))
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
         sent = target in saved['results']
@@ -1510,6 +1525,7 @@ def run(config,store,bucket,slug,directory,resume=False):
         missing_errors(saved)
         store.change('specs/' + slug,lambda value:value.update(errors=saved['errors']))
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
+    saved['state'] = state
     any_published = bool(saved['results'] or saved.get('published'))
     track(store.step,saved['item'],'publish',{'state':'done' if any_published else 'failed'})
     if any_published:
@@ -1517,14 +1533,15 @@ def run(config,store,bucket,slug,directory,resume=False):
         track(store.step,saved['item'],'learn',{})
         store.forget(saved['item'],fix=False)
         enqueue({'step':'verify','slug':slug,'attempt':1},'verify-' + slug + '-1-' + secrets.token_hex(4))
-    lines = ['Пост' + post_name(store,saved) + ':'] + target_lines(saved)
+    lines = [table_of(config,store,saved)]
     if any(target.startswith('ig-') for target in platforms.live(spec['targets'])):
         lines.append('Facebook: посты бота туда сами не попадают, поделись вручную из Instagram.')
-    retryable = any(saved['errors'].get(t) != EXPIRED_TEXT for t in platforms.live(spec['targets']) if t not in saved['results'])
-    if state == 'partial' and not retryable:
+    can_retry = retryable(saved)
+    if state == 'partial' and not can_retry:
         lines.append(EXPIRED_TEXT)
-    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and retryable,True))
+    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and can_retry,True))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
+    store.talk(saved['item'],None,'\n'.join(lines))
     finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
     store.change('specs/' + slug,lambda value:value.pop('status_message',None))
 
@@ -1637,7 +1654,7 @@ def fix(config,store,slug):
             return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
         status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in platforms.live(source['spec']['targets'])}
         retry = source.get('state') == 'partial' and bool(source.get('hash')) and any(source.get('errors',{}).get(t) and t not in source.get('results',{}) for t in source['spec']['targets'])
-        asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'instruction':saved['instruction'],**({'retry_available':True} if retry else {})}
+        asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'table':table_rows(source,store.get('items/' + source['item']),config.get('timezone','Asia/Makassar')),'instruction':saved['instruction'],**({'retry_available':True} if retry else {})}
         corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked,rec=lambda usage:store.record_usage(saved['item'],'fix',usage))
         if drafter.answered(corrected):
             message = tell(config,corrected['answer'],**({'reply_markup':buttons(saved['source'],source['hash'],True)} if retry else {}))
@@ -1820,7 +1837,11 @@ def handle_worker(request):
         stop = threading.Event()
         try:
             step = payload['step']
-            activity(config,ACTIONS.get(step,'typing'),stop)
+            action = ACTIONS.get(step,'typing')
+            if step in ('run','apply-fix') and payload.get('slug'):
+                media_kind = ((store.get('specs/' + payload['slug']) or {}).get('spec') or {}).get('media') or {}
+                action = 'upload_video' if media_kind.get('video') or media_kind.get('clips') else action
+            activity(config,action,stop)
             sync_pin(config,store)
             if payload.get('say'):
                 try:
@@ -1904,6 +1925,7 @@ def handle_worker(request):
                     value.update(state='failed' if isinstance(failure,platforms.ExpiredMaterial) else 'partial')
                     if value['state'] == 'partial' and value.get('spec'):
                         missing_errors(value)
+                        value['published_at'] = time.time()
                 store.change('specs/' + payload['slug'],stopped)
             text = str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.'
             extra = {}
@@ -1991,6 +2013,20 @@ def maintenance(config,store,bucket):
                 enqueue({'step':'verify','slug':journal['slug'],'attempt':1},'verify-sweep-' + journal['slug'] + '-' + str(now // 86400))
             elif now - saved.get('published_at',now) > 86400:
                 store.close_session(snapshot.id,'published','опубликовано' if saved['state'] == 'done' else 'опубликовано не везде')
+    owned = {snapshot.id for snapshot in store.db.collection('sessions').stream()}
+    for snapshot in store.db.collection('specs').where('state','==','partial').stream():
+        def unmended(value):
+            return bool(value.get('spec')) and not value.get('operation') and (not value.get('published_at') or any(t not in value.get('results',{}) and not value.get('errors',{}).get(t) for t in platforms.live(value['spec'].get('targets',[]))))
+        def mend(value):
+            missing_errors(value,True)
+            value.setdefault('published_at',value.get('started_at') or value.get('updated') or now)
+        if unmended(snapshot.to_dict()):
+            store.change('specs/' + snapshot.id,mend)
+    for snapshot in store.db.collection('specs').stream():
+        saved = snapshot.to_dict()
+        if saved.get('item') and saved['item'] not in owned and not saved.get('operation') and saved.get('state') in ('done','partial') and (saved.get('results') or saved.get('published')) and (saved.get('published_at') or saved.get('updated') or now) > now - SESSION_AGE:
+            if store.backfill(saved['item'],store.get('items/' + saved['item']),saved):
+                owned.add(saved['item'])
     store.flush(enqueue)
 
 
@@ -2023,6 +2059,7 @@ def recover_running(config,store):
                 value['started_at'] = time.time()
                 return value
             value['state'] = 'partial'
+            value['published_at'] = time.time()
             value['retry_pending'] = 'run'
             return value
         saved = store.change('specs/' + snapshot.id,recover)
@@ -2058,6 +2095,9 @@ def recover_running(config,store):
     sync_pin(config,store)
 
 
+COLLECT_DEADLINE = 6 * 3600
+
+
 def stop_stale(config,store):
     now = time.time()
     renders = [snapshot.to_dict() for snapshot in store.db.collection('renders').where('state','in',['queued','running','done']).stream()]
@@ -2084,6 +2124,26 @@ def stop_stale(config,store):
                 if not stopped and item.get('status') != 'failed' and newest.get(key) == 'drafting':
                     store.change('items/' + key,lambda value:value.update(stalled=True))
                 store.change('specs/' + slug,lambda value:value.update(state='failed') if value.get('state') == 'drafting' else None)
+    for snapshot in store.db.collection('items').where('status','==','collecting').stream():
+        item = snapshot.to_dict()
+        if now - (item.get('updated') or item.get('created') or now) > COLLECT_DEADLINE:
+            def close(value):
+                if value.get('status') != 'collecting' or now - (value.get('updated') or value.get('created') or now) <= COLLECT_DEADLINE:
+                    return False
+                value.update(status='rejected',waiting_upload=False,updated=now,revision=value.get('revision',0) + 1)
+                return True
+            if store.change('items/' + snapshot.id,close):
+                def release(value):
+                    if value.get('collecting') == snapshot.id:
+                        value.pop('collecting')
+                store.change('sessions/inbox',release)
+                track(store.close_session,snapshot.id,'cancelled','без нового материала 6 часов')
+                if item.get('keyboard_message'):
+                    remove_keyboard(config,{'preview_message':item['keyboard_message']})
+                try:
+                    tell(config,'Пост' + (item_name(item) or ' без названия') + ': 6 часов без нового материала, отменён. Начни /post.')
+                except Exception:
+                    logging.error(json.dumps({'code':'stalled_notice_failed'}))
     for snapshot in store.db.collection('items').where('stalled','==',True).stream():
         item = snapshot.to_dict()
         try:

@@ -102,8 +102,63 @@ def collect_keyboard(item_id, token, offers=(), chosen=()):
     return {'inline_keyboard':[toggles[i:i + 2] for i in range(0, len(toggles), 2)] + [values]}
 
 
-def hinted(text, offers):
-    return text + '\n' + CHOICE_HINT if text and offers else text
+def hinted(text, offers, chosen=()):
+    return text + '\n' + CHOICE_HINT if text and offers and not chosen else text
+
+
+WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
+KINDS = ('caption', 'title', 'instruction', 'question', 'rule', 'fix')
+CONTAINER_AGE = 23 * 3600
+DIALOG_LIMIT = 200
+
+
+def word(text):
+    return WORDS.get(' '.join((text or '').lower().split()).strip('.!«»'))
+
+
+def clock(at, zone):
+    try:
+        return datetime.fromtimestamp(at, ZoneInfo(zone)).strftime('%H:%M')
+    except (TypeError, ValueError, OverflowError, OSError, KeyError):
+        return None
+
+
+def target_status(saved, target):
+    made = (saved.get('results') or {}).get(target)
+    error = (saved.get('errors') or {}).get(target)
+    if made and made.get('url'):
+        return 'опубликовано'
+    if made or (saved.get('published') or {}).get(target):
+        return 'опубликовано, ссылка не получена'
+    if error:
+        low = error.lower()
+        return 'прервано' if low.startswith(('прервано', 'операция остановлена')) else 'не начато' if low.startswith('не начато') else 'ошибка: ' + error.rstrip('.')
+    return 'в процессе' if saved.get('state') in ('approved', 'running') else 'не начато'
+
+
+EXPIRED_TEXT = 'Материал истёк. Пришли файлы заново.'
+RETRY_AGE = 48 * 3600
+
+
+def retryable(saved):
+    return any((saved.get('errors') or {}).get(t) != EXPIRED_TEXT for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES and t not in (saved.get('results') or {}))
+
+
+def table_rows(saved, item, zone='Asia/Makassar'):
+    chosen = [t for key, label, targets in GROUPS if key in (item or {}).get('chosen', []) for t in targets]
+    rows = []
+    for target in dict.fromkeys(list((saved.get('spec') or {}).get('targets', [])) + chosen):
+        if target in NAMES:
+            made = (saved.get('results') or {}).get(target) or (saved.get('published') or {}).get(target) or {}
+            rows.append({'target':target, 'name':NAMES[target], 'status':target_status(saved, target), 'at':made.get('at'), 'url':made.get('url') or None, 'ok':bool(made.get('url')) and target in (saved.get('results') or {})})
+    return rows
+
+
+def table_text(saved, item, zone='Asia/Makassar'):
+    rows = table_rows(saved, item, zone)
+    lines = ['Пост' + post_phrase(item, saved) + ': что, куда, когда.']
+    lines += [str(index) + '. ' + row['name'] + ' — ' + row['status'] + ' — ' + (clock(row['at'], zone) or '—') + ' — ' + (row['url'] or '—') for index, row in enumerate(rows, 1)]
+    return '\n'.join(lines) if rows else lines[0] + ' Целей нет.'
 
 
 def clips(item):
@@ -196,6 +251,11 @@ def collected(item):
     return 'Добавил в пост' + titled(item) + '.'
 
 
+def counted(item):
+    parts = contents(item)
+    return 'Добавил в пост' + titled(item) + (': ' + ', '.join(parts) if parts else '') + '.'
+
+
 class StateError(Exception):
     pass
 
@@ -274,7 +334,9 @@ def located(message):
 
 
 def titled(item):
-    texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')]
+    if item.get('title'):
+        return snippet(item['title'])
+    texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if (m.get('text') or m.get('caption')) and not word(m.get('text') or m.get('caption'))]
     return snippet(next((t for t in texts if not t.startswith(('Место: ', 'Место (координаты): '))), texts[0] if texts else ''))
 
 
@@ -283,6 +345,8 @@ def post_title(item, saved=None):
 
 
 def post_phrase(item, saved=None):
+    if (item or {}).get('title'):
+        return snippet(item['title'])
     inner = (saved or {}).get('spec') or {}
     copy = inner.get('copy') or {}
     text = next((copy[t] for t in ['tg-channel'] + list(inner.get('targets', [])) if copy.get(t)), '')
@@ -290,8 +354,9 @@ def post_phrase(item, saved=None):
     return snippet(line) if line else titled(item or {})
 
 
-PRICED = 'claude-sonnet-5-5'
+PRICED = ('claude-sonnet-5-5', 'claude-haiku-5-5')
 PRICE = {'input':2.0, 'write5m':2.5, 'write1h':4.0, 'read':0.2, 'output':10.0, 'search':0.01}
+HAIKU_PRICE = {'input':0.1, 'write5m':0.125, 'write1h':0.2, 'read':0.01, 'output':0.5, 'search':0.01}
 
 
 def tally(usage):
@@ -303,7 +368,9 @@ def tally(usage):
     short, long = (number(split, 'ephemeral_5m_input_tokens'), number(split, 'ephemeral_1h_input_tokens')) if split else (created, 0)
     tools = usage.get('server_tool_use') if isinstance(usage, dict) else getattr(usage, 'server_tool_use', None)
     row = {'calls':1, 'input_tokens':number(usage, 'input_tokens'), 'output_tokens':number(usage, 'output_tokens'), 'cache_read_tokens':number(usage, 'cache_read_input_tokens'), 'cache_write_tokens':short + long, 'web_searches':number(tools, 'web_search_requests') if tools else 0}
-    row['usd'] = (row['input_tokens'] * PRICE['input'] + short * PRICE['write5m'] + long * PRICE['write1h'] + row['cache_read_tokens'] * PRICE['read'] + row['output_tokens'] * PRICE['output']) / 1e6 + row['web_searches'] * PRICE['search']
+    model = usage.get('model') if isinstance(usage, dict) else getattr(usage, 'model', None)
+    price = HAIKU_PRICE if isinstance(model, str) and model.startswith('claude-haiku-5-5') else PRICE
+    row['usd'] = (row['input_tokens'] * price['input'] + short * price['write5m'] + long * price['write1h'] + row['cache_read_tokens'] * price['read'] + row['output_tokens'] * price['output']) / 1e6 + row['web_searches'] * price['search']
     return row
 
 
@@ -311,6 +378,17 @@ SESSION_AGE = 30*86400
 SESSION_STEPS = 60
 STEP_ORDER = ('collect', 'draft', 'prepare', 'montage', 'render', 'preview', 'wait', 'final', 'publish', 'verify', 'learn')
 STEP_ALIAS = {'edit':'draft'}
+
+
+def backfilled(item_id, item, saved):
+    finished = saved.get('published_at') or saved.get('updated') or time.time()
+    opened = min((item or {}).get('created') or finished, saved.get('started_at') or finished, finished)
+    results, errors = saved.get('results') or {}, saved.get('errors') or {}
+    targets = [t for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES]
+    rows = {t:{'status':'done' if t in results or (saved.get('published') or {}).get(t) else 'failed', 'attempt':(saved.get('attempts') or {}).get(t, 0), 'runs':[], 'url':(results.get(t) or {}).get('url'), 'error':errors.get(t)} for t in targets}
+    names = ('collect', 'draft', 'preview', 'wait', 'publish', 'verify', 'learn')
+    steps = [{'id':name, 'label':STEP_LABELS[name], 'state':'done', 'since':opened, 'ended':finished, **({'targets':rows} if name == 'publish' else {})} for name in names]
+    return {'item':item_id, 'slug':saved.get('slug') or item_id, 'state':'published' if saved.get('state') == 'done' else 'partial', 'opened':opened, 'ended':finished, 'outcome':{'kind':'published', 'at':finished, 'why':'опубликовано' if saved.get('state') == 'done' else 'опубликовано не везде'}, 'revision':0, 'current':'learn', 'usd':0, 'updated':finished, 'steps':steps}
 STEP_LABELS = {'collect':'Собираю', 'draft':'Черновик', 'edit':'Правка', 'prepare':'Готовлю видео', 'montage':'Монтаж', 'render':'Рендер', 'preview':'Превью', 'wait':'Жду «Опубликовать»', 'final':'Финальное видео', 'publish':'Публикую', 'verify':'Проверяю', 'learn':'Учусь'}
 
 
@@ -323,6 +401,8 @@ def merged(base, patch):
 class Store:
     def __init__(self, db):
         self.db = db
+        self.classifier = None
+        self.subject = None
 
     def get(self, path, transaction=None):
         snapshot = self.db.document(path).get(transaction=transaction)
@@ -391,14 +471,163 @@ class Store:
                 enqueue(job['payload'], snapshot.id, job.get('delay', 0))
                 self.db.document('outbox/' + snapshot.id).delete()
 
+    def latest(self, states, prefer=None):
+        found = []
+        for state in states:
+            for snapshot in self.db.collection('specs').where('state', '==', state).stream():
+                saved = snapshot.to_dict()
+                if saved.get('item') and not saved.get('operation') and not saved.get('deleted'):
+                    found.append((snapshot.id == prefer, saved.get('published_at') or saved.get('updated') or 0, snapshot.id))
+        return max(found)[2] if found else None
+
+    def verdict(self, message, name, query):
+        text = message.get('text')
+        if query or name or not isinstance(text, str) or not text.strip() or any(message.get(k) for k in MEDIA_KEYS) or message.get('reply_to_message') or message.get('media_group_id'):
+            return None
+        inbox = self.get('sessions/inbox') or {}
+        if inbox.get('awaiting'):
+            return None
+        current = inbox.get('current')
+        found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current), 'retry':self.latest(('partial',), current)}
+        command_word = word(text)
+        if command_word:
+            return {**found, 'kind':'command', 'value':command_word}
+        if not self.classifier:
+            return None
+        opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
+        item = opened if opened and opened.get('status') == 'collecting' else self.get('items/' + current) if current else None
+        context = {'collecting':bool(opened and opened.get('status') == 'collecting'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
+        try:
+            answer = self.classifier(text.strip(), context)
+        except Exception:
+            logging.error(json.dumps({'code':'classifier_failed'}))
+            return None
+        if not isinstance(answer, dict) or answer.get('kind') not in KINDS:
+            return None
+        value = answer.get('value')
+        return {**found, 'kind':answer['kind'], 'value':value.strip() if isinstance(value, str) and value.strip() else None}
+
+    def talk(self, item_id, owner, bot):
+        entries = [(who, text) for who, text in (('owner', owner), ('bot', bot)) if isinstance(text, str) and text.strip()]
+        if not item_id or not entries:
+            return
+        def add(tx):
+            value = self.get('sessions/' + item_id, tx)
+            if value is None:
+                return
+            now = time.time()
+            value['dialog'] = ((value.get('dialog') or []) + [{'at':now, 'who':who, 'text':text.strip()[:500]} for who, text in entries])[-DIALOG_LIMIT:]
+            self.put('sessions/' + item_id, value, tx)
+        try:
+            self.atomic(add)
+        except Exception:
+            logging.error(json.dumps({'code':'dialog_write_failed'}))
+
+    def textual(self, tx, found, session, identifier, config, business, taps):
+        kind, value = found['kind'], found['value']
+        zone = (config or {}).get('timezone', 'Asia/Makassar')
+        offers = offered(config or {}, business)
+        opened = self.get('items/' + session['collecting'], tx) if session.get('collecting') else None
+        opened = opened if opened and opened.get('status') == 'collecting' else None
+        current = self.get('items/' + session['current'], tx) if session.get('current') and not opened else None
+        finished = self.get('specs/' + found['finished'], tx) if found.get('finished') else None
+        finished_item = self.get('items/' + finished['item'], tx) if finished else None
+        retrying = self.get('specs/' + found['retry'], tx) if found.get('retry') else None
+        journal = self.get('sessions/' + (opened or current or {}).get('slug', ''), tx) if opened or current else None
+        update_path = 'updates/' + identifier
+        def answer(text, subject=None):
+            self.subject = subject or self.subject
+            self.put(update_path, {'received':time.time()}, tx)
+            return text
+        def table():
+            if not finished:
+                return answer('Опубликованных постов пока нет.')
+            return answer(table_text(finished, finished_item, zone), finished['item'])
+        if kind == 'command' and value == 'table' or kind == 'question' and finished and not opened and not (current and current.get('status') in ('queued', 'drafting')):
+            return table()
+        if kind == 'command' and value == 'retry':
+            if not retrying or retrying.get('state') != 'partial':
+                return answer('Повторять нечего: нет поста с неопубликованными целями.')
+            if time.time() - (retrying.get('updated') or retrying.get('published_at') or 0) > RETRY_AGE:
+                return answer('Повторять поздно: прошло больше двух суток, пришли материал заново.', retrying['item'])
+            if not retryable(retrying):
+                return answer(EXPIRED_TEXT, retrying['item'])
+            retrying_item = self.get('items/' + retrying['item'], tx)
+            retrying['state'] = 'approved'
+            retrying['attempts'] = {t:n for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {})}
+            self.put('specs/' + found['retry'], retrying, tx)
+            self.job(tx, {'slug':found['retry'], 'step':'run'}, 'callback-' + hashlib.sha256(identifier.encode()).hexdigest())
+            return answer('Повторяю публикацию' + named(retrying, retrying_item) + '.', retrying['item'])
+        if kind == 'command' and value in ('cancel', 'done'):
+            if opened:
+                self.put(update_path, {'received':time.time()}, tx)
+                subject = session['collecting']
+                result = self.collect_callback(tx, 'done' if value == 'done' else 'cncl', session['collecting'], opened.get('batch_token'), opened, session, identifier, None, offers, taps, config or {}, business, journal)
+                self.subject = subject
+                return result or ('Собираю черновик' + titled(opened) + '.' if value == 'done' else 'Пост отменён.')
+            if value == 'cancel' and current:
+                cancelled = self.cancel_post(tx, session['current'], identifier)
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = session['current']
+                return 'Черновик отклонён.' if cancelled else 'Отменять нечего.'
+            return answer('Отменять нечего.' if value == 'cancel' else 'Сначала пришли материал для поста.')
+        if kind == 'title' and value and (opened or current):
+            item = opened or current
+            item['title'] = value[:80]
+            item['updated'] = time.time()
+            self.put('items/' + (session.get('collecting') if opened else session['current']), item, tx)
+            self.put(update_path, {'received':time.time()}, tx)
+            self.subject = session.get('collecting') if opened else session['current']
+            reply = 'Название: ' + value[:80]
+            if opened and opened.get('keyboard_message'):
+                return {'item':self.subject, 'revision':item['revision'], 'text':reply, 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers, item.get('chosen')), 'reply_markup':collect_keyboard(self.subject, item['batch_token'], offers, item.get('chosen', []))}}
+            return reply
+        if kind in ('instruction', 'fix') and opened and (value or found['text']):
+            value = value or found['text']
+            opened['instructions'] = (opened.get('instructions') or []) + [value[:300]]
+            opened['updated'] = time.time()
+            self.put('items/' + session['collecting'], opened, tx)
+            self.put(update_path, {'received':time.time()}, tx)
+            self.subject = session['collecting']
+            return 'Принял указание для текста: ' + value[:120]
+        if kind == 'rule' and (value or found['text']):
+            rule = value or found['text']
+            self.job(tx, {'step':'skills', 'text':found['text']}, 'skills-' + identifier)
+            line = 'Правило записал: ' + rule[:120]
+            if 'таблиц' in (found['text'] + ' ' + rule).lower() and finished:
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = finished['item']
+                return line + '\n' + table_text(finished, finished_item, zone)
+            return answer(line, session.get('collecting') or session.get('current'))
+        if kind in ('fix', 'instruction') and finished and not opened and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
+            self.put(update_path, {'received':time.time()}, tx)
+            self.queue_fix(tx, found['finished'], finished, 'fix', found['text'], identifier)
+            self.subject = finished['item']
+            return asking(finished, finished_item)
+        if kind == 'question':
+            if opened:
+                return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
+            if current:
+                return answer('Пост' + titled(current) + ' сейчас в работе, статус виден в Mini App.', session['current'])
+            return table()
+        if kind in ('fix', 'instruction'):
+            if current:
+                return answer('Пост ещё делается: пришли правку, когда будет превью.', session['current'])
+            return answer('Сейчас нет поста, к которому это относится.')
+        return None
+
     def intake(self, update, config, taps=None):
         self.edited = None
+        self.subject = None
         message = imaged(located(update.get('message', {})))
         query = update.get('callback_query')
         identifier = str(update['update_id'])
         found = self.draft_ids() if command(message) == '/post' else None
+        replay = bool(not query and self.get('updates/' + identifier))
+        said = None if replay else self.verdict(message, command(message), query)
         def handle(tx):
             self.edited = None
+            self.subject = None
             if taps is not None:
                 del taps[:]
             update_path = 'updates/' + identifier
@@ -414,6 +643,7 @@ class Store:
                 self.put('tokens/business', {'business_connection_id':connection['id']}, tx)
                 return 'Подключение Business сохранено; права проверяются перед публикацией.'
             session = self.get('sessions/inbox', tx) or {}
+            self.subject = session.get('collecting') or session.get('current')
             origin = (message.get('forward_origin') or {}).get('sender_user') or {}
             if origin.get('id') and str(origin['id']) == str((config or {}).get('telegram_bot_id', '')):
                 self.put(update_path, {'received':time.time()}, tx)
@@ -457,6 +687,7 @@ class Store:
             published = self.published_match(reply_id, tx) if text and reply_id and name != '/post' else None
             if published:
                 item = self.get('items/' + published[1]['item'], tx)
+                self.subject = published[1]['item']
                 self.put(update_path, {'received':time.time()}, tx)
                 self.queue_fix(tx, published[0], published[1], 'fix', text, identifier)
                 return fixing(published[1], item)
@@ -486,6 +717,10 @@ class Store:
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
                     return fixing(target, item)
+            if said and not name:
+                outcome = self.textual(tx, said, session, identifier, config, business, taps)
+                if outcome is not None:
+                    return outcome
             opened = session.get('collecting')
             offers = offered(config, business)
             slug = session.get('current')
@@ -528,6 +763,7 @@ class Store:
                         continuing = item.get('collect_group') == group
                         item['collect_group'] = group
                 session['collecting'] = item_id
+                self.subject = item_id
                 large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
                 if large:
                     item['waiting_upload'] = True
@@ -539,19 +775,19 @@ class Store:
                 self.put('items/' + item_id, item, tx)
                 self.put('sessions/inbox', session, tx)
                 if name == '/post' and not opened:
-                    reply = 'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.' if not filled else collected(item)
+                    reply = 'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.' if not filled else counted(item)
                 elif filled:
-                    reply = None if continuing else collected(item)
+                    reply = None if continuing else counted(item)
                 else:
                     reply = 'Пост' + titled(item) + ' уже собирается. Присылай материал и нажми «Готово».'
                 if dropped:
                     reply = 'Отменяю старые черновики: ' + ', '.join(label for entry, label in dropped) + '.\n' + reply
                 markup = collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))
                 if filled and not dropped and item.get('keyboard_message'):
-                    return {'item':item_id, 'revision':item['revision'], 'text':None, 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers), 'reply_markup':markup}}
+                    return {'item':item_id, 'revision':item['revision'], 'text':None if continuing else counted(item), 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers, item.get('chosen')), 'reply_markup':markup}}
                 if continuing and not dropped:
                     return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
-                return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers), 'reply_markup':markup}
+                return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers, item.get('chosen')), 'reply_markup':markup}
             if message.get('video') and not name and (pending and pending.get('status') in ('queued', 'drafting') or target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit')):
                 held = pending or self.get('items/' + target['item'], tx)
                 limit = refused(held['messages'], message)
@@ -642,10 +878,14 @@ class Store:
             return None
         def apply(tx):
             result = handle(tx)
-            if isinstance(result, str) and not query:
+            if isinstance(result, (str, dict)) and not query:
                 self.put('updates/' + identifier, {'received':time.time(), 'reply':result}, tx)
             return result
-        return self.atomic(apply)
+        result = self.atomic(apply)
+        if not query and not replay and self.subject:
+            sent = result.get('text') or (result.get('refresh') or {}).get('text') if isinstance(result, dict) else result
+            self.talk(self.subject, message.get('text') or message.get('caption'), sent)
+        return result
 
     def draft_ids(self):
         items, specs = set(), set()
@@ -1033,7 +1273,8 @@ class Store:
             self.close_session(item_id, 'cancelled', 'отменён', tx, journal)
             result = 'Пост отменён.'
             self.retire(taps, query, 'Отменено.')
-            self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)
+            if query:
+                self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)
         else:
             session['current'] = item['slug']
             item['status'] = 'queued'
@@ -1069,7 +1310,7 @@ class Store:
     def checkpoint(self, slug, name, action, complete=None):
         path = 'specs/' + slug + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()
         def claim(value):
-            if value.get('state') == 'done':
+            if value.get('state') == 'done' and not (':container' in name and time.time() - (value.get('at') or 0) > CONTAINER_AGE):
                 return ('done', value['value'])
             if value.get('state') == 'pending':
                 raise StateError('Uncertain outcome: reconcile saved checkpoint before retry')
@@ -1088,7 +1329,7 @@ class Store:
         def finish(tx):
             if complete:
                 complete(tx)
-            self.put(path, {'state':'done', 'name':name, 'value':result}, tx)
+            self.put(path, {'state':'done', 'name':name, 'value':result, 'at':time.time()}, tx)
         self.atomic(finish)
         return result
 
@@ -1098,6 +1339,14 @@ class Store:
 
     def session(self, item_id, opened, item=None):
         return {'item':item_id, 'slug':(item or {}).get('slug'), 'state':'open', 'opened':opened, 'ended':None, 'outcome':None, 'revision':0, 'current':'collect', 'usd':0, 'updated':opened, 'steps':[{'id':'collect', 'label':STEP_LABELS['collect'], 'state':'running', 'since':opened, 'ended':None}]}
+
+    def backfill(self, item_id, item, saved):
+        def add(tx):
+            if self.get('sessions/' + item_id, tx) is not None:
+                return False
+            self.put('sessions/' + item_id, backfilled(item_id, item, saved), tx)
+            return True
+        return self.atomic(add)
 
     def open_session(self, tx, item_id, now):
         self.put('sessions/' + item_id, self.session(item_id, now), tx)

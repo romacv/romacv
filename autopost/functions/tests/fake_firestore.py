@@ -48,6 +48,9 @@ class Collection:
         query.predicate = lambda row: row.get(field) in value if operator == 'in' else (row.get(field) or 0) >= value if operator == '>=' else row.get(field) == value
         return query
 
+    def limit(self, count):
+        return self
+
     def stream(self):
         prefix = self.path + '/'
         return iter([Snapshot(path, value) for path, value in list(self.db.values.items()) if path.startswith(prefix) and '/' not in path[len(prefix):] and getattr(self, 'predicate', lambda row: True)(value)])
@@ -63,6 +66,9 @@ class FakeFirestore:
 
     def collection(self, path):
         return Collection(self, path)
+
+    def get_all(self, references):
+        return [reference.get() for reference in references]
 
     def run_transaction(self, operation):
         with self.lock:

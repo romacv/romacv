@@ -407,6 +407,18 @@ def converse(config, system, text, tokens=4000, rec=None):
     return final_text(response.content)
 
 
+CLASSIFIER_MODEL = 'claude-haiku-5-5'
+CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (text that belongs to the post as material), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (he asks something about the post, its status, links or publications), rule (a standing rule for all future posts or bot behaviour; value is the rule), fix (a change to the already published post). Context JSON: collecting says whether a post is being collected, title and status describe the current post. When unsure, return caption.'
+
+
+def classify(config, text, context, rec=None):
+    response = connect(config).with_options(timeout=8, max_retries=0).messages.create(model=CLASSIFIER_MODEL, max_tokens=300, system=CLASSIFIER_SYSTEM, messages=[{'role':'user','content':json.dumps({'message':text, 'context':context}, ensure_ascii=False)}])
+    note(rec, response)
+    raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', final_text(response.content).strip())
+    answer = json.loads(raw)
+    return answer if isinstance(answer, dict) else None
+
+
 def ask(config, payload, images, validator, montage=False, thread=None, follow=None, rec=None):
     import anthropic
     client = connect(config)
