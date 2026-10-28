@@ -492,6 +492,18 @@ class RecoveryTests(unittest.TestCase):
         states = newest_states(snapshot.to_dict() for snapshot in self.store.db.collection('specs').stream())
         self.assertEqual(pin_stage(item,states.get('item-1')),'ждёт «Опубликовать»')
 
+    def test_superseded_and_overdue_render_jobs_are_failed_silently(self):
+        now = time.time()
+        self.store.put('items/item-1',{'status':'drafting','revision':2,'messages':[],'slug':'album','created':now,'updated':now})
+        self.store.put('renders/old',{'item':'item-1','revision':1,'state':'running','created':now})
+        self.store.put('renders/late',{'item':'item-1','revision':2,'state':'queued','created':now - app.FINAL_DEADLINE - 10})
+        self.store.put('renders/live',{'item':'item-1','revision':2,'state':'running','created':now})
+        self.store.put('renders/final',{'item':'item-1','revision':1,'mode':'final','state':'running','created':now})
+        with patch.object(app,'tell') as tell:
+            app.recover_running(self.config,self.store)
+        tell.assert_not_called()
+        self.assertEqual([(self.store.get('renders/' + key)['state'],self.store.get('renders/' + key).get('delivered')) for key in ('old','late','live','final')],[('failed',True),('failed',True),('running',None),('running',None)])
+
     def test_stale_drafting_item_is_failed_and_announced_once(self):
         self.store.put('items/item-1',{'status':'drafting','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time() - 2000})
         self.store.db.document('specs/album').set({'state':'drafting','hash':'','item':'item-1','updated':time.time() - 2000,'spec':{'copy':{}}})

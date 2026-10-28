@@ -122,6 +122,26 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn('"secret"',json.dumps(progress))
         self.assertNotIn('signed.example',json.dumps(progress))
 
+    def test_one_waiting_row_per_post(self):
+        now = time.time()
+        self.store.put('items/a',{'messages':[{'text':'Выбор'}],'status':'previewed','created':now,'updated':now})
+        self.store.put('items/b',{'messages':[{'text':'Готово'}],'status':'previewed','created':now,'updated':now})
+        for position, slug in enumerate(('fix-1','fix-2','fix-3')):
+            self.store.db.document('specs/' + slug).set({'item':'a','operation':'fix','state':'previewed','targets':['tg-channel'],'updated':now - 100 + position})
+        self.store.db.document('specs/old').set({'item':'b','operation':'fix','state':'previewed','targets':[],'updated':now - 100})
+        self.store.db.document('specs/b').set({'item':'b','state':'done','published_at':now - 10,'updated':now - 10})
+        body = app.snapshot(self.store,now)
+        self.assertEqual([(w['title'],w['status']) for w in body['waiting']],[('Выбор','previewed')])
+
+    def test_superseded_render_is_not_listed(self):
+        now = time.time()
+        self.store.put('items/a',{'messages':[{'text':'Старый'}],'status':'previewed','revision':2,'created':now})
+        self.store.put('items/b',{'messages':[{'text':'Живой'}],'status':'drafting','revision':1,'created':now})
+        self.store.put('renders/old',{'item':'a','revision':1,'mode':'draft','state':'running','progress':{'label':'Монтаж','since':now - 600}})
+        self.store.put('renders/live',{'item':'b','revision':1,'mode':'draft','state':'running','progress':{'label':'Монтаж','since':now - 60}})
+        body = app.snapshot(self.store,now)
+        self.assertEqual([row['title'] for row in body['active']],['Живой'])
+
     def test_working_post_is_active(self):
         now = time.time()
         self.store.put('items/a',{'messages':[{'text':'Кофе'}],'status':'drafting','created':now - 60,'updated':now - 30})

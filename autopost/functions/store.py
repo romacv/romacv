@@ -141,6 +141,10 @@ def newest_states(specs):
     return {key:value[1] for key,value in newest.items()}
 
 
+def dead_render(job, item):
+    return not item or item.get('status') in ('rejected', 'failed') or bool(item.get('published')) or job.get('mode') != 'final' and 'revision' in job and job['revision'] != item.get('revision')
+
+
 def pin_stage(item, state):
     working = 'монтаж' if item.get('montage') else 'готовлю черновик'
     if item.get('status') == 'collecting':
@@ -630,6 +634,18 @@ class Store:
         self.put('specs/' + name, {'operation':operation,'source':slug,'item':source['item'], 'instruction':text,'state':'drafting','results':{},'errors':{},'hash':''}, tx)
         self.job(tx, {'step':'fix','slug':name}, 'fix-' + identifier)
 
+    def supersede(self, tx, item_id, keep=(), drafts=False):
+        if not item_id:
+            return
+        found = [snapshot.id for snapshot in self.db.collection('specs').where('item', '==', item_id).stream() if snapshot.id not in keep and snapshot.to_dict().get('state') in ('previewed', 'needs-edit') and not (drafts and snapshot.to_dict().get('operation'))]
+        current = [(slug, self.get('specs/' + slug, tx)) for slug in found]
+        for slug, saved in current:
+            if saved and saved.get('state') in ('previewed', 'needs-edit'):
+                saved['state'] = 'rejected'
+                self.put('specs/' + slug, saved, tx)
+                if saved.get('preview_message'):
+                    self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':saved['preview_message']}, 'superseded-' + slug)
+
     def published_match(self, reply, tx):
         linked = self.get('published-messages/' + reply, tx)
         if not linked:
@@ -845,13 +861,16 @@ class Store:
         return self.change('items/' + identifier, claim)
 
     def claim_run(self, slug):
-        def claim(value):
-            if value.get('state') != 'approved' or value.get('hash') != value.get('approved_hash'):
-                return False
-            value['state'] = 'running'
-            value['started_at'] = time.time()
-            return copy.deepcopy(value)
-        return self.change('specs/' + slug, claim)
+        def claim(tx):
+            value = self.get('specs/' + slug, tx) or {}
+            claimed = value.get('state') == 'approved' and value.get('hash') == value.get('approved_hash')
+            if claimed:
+                value['state'] = 'running'
+                value['started_at'] = time.time()
+                self.supersede(tx, value.get('item'), {slug}, True)
+            self.put('specs/' + slug, value, tx)
+            return copy.deepcopy(value) if claimed else False
+        return self.atomic(claim)
 
     def checkpoint(self, slug, name, action, complete=None):
         path = 'specs/' + slug + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()

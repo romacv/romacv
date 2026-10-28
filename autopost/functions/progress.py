@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES, PIN_SPEC_STAGES, newest_states, pin_stage
+from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_states, pin_stage
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -325,6 +325,17 @@ def skills_view(store, now, skill=None):
     return {'now':now,'view':'skills','skill':skill,'skills':[{'id':key,'title':found[key]['title'],'body':found[key]['body'],'examples':[{name:example.get(name, '') for name in ('verdict', 'feedback', 'before', 'after')} for example in found[key].get('examples', [])]} for key in keys]}
 
 
+def latest_specs(store, keys):
+    latest = {}
+    for start in range(0, len(keys), 30):
+        for s in store.db.collection('specs').where('item', 'in', keys[start:start + 30]).stream():
+            spec = s.to_dict()
+            rank = (spec.get('updated', 0), spec.get('state') in ('done', 'partial', 'rejected', 'failed'))
+            if spec['item'] not in latest or rank >= latest[spec['item']][0]:
+                latest[spec['item']] = (rank, s.id)
+    return {key:value[1] for key, value in latest.items()}
+
+
 def snapshot(store, now, view='progress', skill=None):
     if view == 'costs':
         return costs_view(store, now)
@@ -332,23 +343,26 @@ def snapshot(store, now, view='progress', skill=None):
         return skills_view(store, now, skill)
     jobs = [{**s.to_dict(),'id':s.id} for s in store.db.collection('renders').where('state', 'in', ['queued', 'running']).stream()]
     collecting = [(s.id, s.to_dict()) for s in store.db.collection('items').where('status', '==', 'collecting').stream()]
-    previews = [s.to_dict() for s in store.db.collection('specs').where('state', 'in', ['previewed', 'needs-edit']).limit(PREVIEW_LIMIT).stream()]
+    previews = [(s.id, s.to_dict()) for s in store.db.collection('specs').where('state', 'in', ['previewed', 'needs-edit']).limit(PREVIEW_LIMIT).stream()]
     specs = [s.to_dict() for s in store.db.collection('specs').where('published_at', '>=', now - MAX_AGE).stream()]
     specs = sorted((spec for spec in specs if spec.get('state') in ('done', 'partial')), key=lambda spec: -spec['published_at'])[:LIMIT]
     busy = {job.get('item') for job in jobs}
     working = {s.id: s.to_dict() for s in store.db.collection('items').where('status', 'in', ['queued', 'drafting']).stream()}
     states = newest_states(s.to_dict() for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream())
-    wanted = sorted((busy | set(working) | set(states) | {spec.get('item') for spec in specs} | {spec.get('item') for spec in previews}) - {None})
+    wanted = sorted((busy | set(working) | set(states) | {spec.get('item') for spec in specs} | {spec.get('item') for slug, spec in previews}) - {None})
     items = {s.id: s.to_dict() for s in store.db.get_all([store.db.document('items/' + key) for key in wanted]) if s.exists}
+    jobs = [job for job in jobs if not dead_render(job, items.get(job.get('item')))]
+    busy = {job.get('item') for job in jobs}
     waiting = []
     for key, item in collecting:
         if key not in busy:
             count = len([m for m in item.get('messages', []) if m.get('photo') or m.get('video') or m.get('document')])
             waiting.append({'id':key,'title':title_of(item),'status':'collecting','wait':'Собираю материал' + (': ' + str(count) + ' влож.' if count else '') + '; жду «Готово»','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
-    for spec in previews:
+    latest = latest_specs(store, sorted({spec.get('item') for slug, spec in previews} - {None}))
+    for slug, spec in previews:
         item = items.get(spec.get('item'))
         at = (item or {}).get('updated') or (item or {}).get('created') or 0
-        if not item or spec.get('item') in busy or spec.get('deleted') or not spec.get('operation') and at < now - WAITING_AGE:
+        if not item or latest.get(spec.get('item')) != slug or spec.get('item') in busy or spec.get('deleted') or not spec.get('operation') and at < now - WAITING_AGE:
             continue
         operation = {'fix':'исправление','delete':'удаление'}.get(spec.get('operation'))
         wait = 'Нужна правка черновика' if spec['state'] == 'needs-edit' else 'Жду подтверждения: ' + operation if operation else 'Черновик показан; жду «Опубликовать»'

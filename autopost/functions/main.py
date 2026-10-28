@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, PIN_SPEC_STAGES, newest_states, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, PIN_SPEC_STAGES, newest_states, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import learning
 import progress as progress_view
@@ -538,6 +538,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         if previous.get('state') not in (None,'drafting','needs-edit'):
             raise StateError('Existing preview or publication cannot be overwritten')
         started[:] = [current]
+        store.supersede(tx,item_id,{spec['slug']})
         store.put('specs/' + spec['slug'],saved,tx)
         return True
     if not store.atomic(begin):
@@ -834,7 +835,7 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
     formats = sorted({CLIP_FORMATS[t] for t in spec['targets'] if t in CLIP_FORMATS})
-    job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message')),**({'edl':edl} if edl else {})}
+    job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message')),**({'edl':edl} if edl else {})}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
@@ -998,7 +999,7 @@ def plan_montage(config,store,bucket,payload,directory):
         return
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
+    job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
     start_job(project,identifier)
@@ -1015,7 +1016,7 @@ def plan_montage(config,store,bucket,payload,directory):
 def start_preparation(config,store,bucket,payload,item,inputs,target=None):
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
-    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),**({'montage':True} if item.get('montage') else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','loader':loader_for(config,item.get('status_message'))}
+    job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),**({'montage':True} if item.get('montage') else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     start_job(project,identifier)
@@ -1176,7 +1177,7 @@ def start_final(config,store,bucket,saved):
     item = store.get('items/' + saved['item'])
     draft = store.get('renders/' + item['render'])
     identifier = secrets.token_hex(16)
-    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','loader':loader_for(config,saved.get('status_message'))}
+    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','created':time.time(),'loader':loader_for(config,saved.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier,started_at=time.time()))
     start_job(job['project'],identifier)
@@ -1400,7 +1401,12 @@ def fix(config,store,slug):
     verb, label = ('del','Подтвердить удаление') if saved['operation'] == 'delete' else ('fix','Опубликовать правку')
     markup = {'inline_keyboard':[[{'text':label,'callback_data':verb + ':' + slug + ':' + saved['hash'][:8]},{'text':'Отклонить','callback_data':'rej:' + slug + ':' + saved['hash'][:8]}]]}
     message = tell(config,('Удаление поста' if saved['operation'] == 'delete' else 'Правка поста') + post_name(store,source),reply_markup=markup)
-    store.change('specs/' + slug,lambda value:value.update(state='previewed',preview_message=message['message_id']))
+    def show(tx):
+        value = store.get('specs/' + slug,tx) or {}
+        store.supersede(tx,saved['item'],{slug})
+        value.update(state='previewed',preview_message=message['message_id'])
+        store.put('specs/' + slug,value,tx)
+    store.atomic(show)
     store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
 
 
@@ -1678,6 +1684,12 @@ def recover_running(config,store):
             if not since or time.time() - since < FINAL_DEADLINE:
                 continue
         fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
+    now = time.time()
+    for snapshot in store.db.collection('renders').where('state','in',['queued','running']).stream():
+        job = snapshot.to_dict()
+        since = job.get('created') or (job.get('progress') or {}).get('since')
+        if dead_render(job,store.get('items/' + str(job.get('item')))) or since and now - since > FINAL_DEADLINE:
+            store.change('renders/' + snapshot.id,lambda value:value.update(state='failed',delivered=True) if value.get('state') in ('queued','running') else None)
     stop_stale(config,store)
     sync_pin(config,store)
 

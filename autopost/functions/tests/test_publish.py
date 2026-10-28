@@ -271,6 +271,15 @@ class PublishedTests(unittest.TestCase):
     def approve(self, saved, verb='fix', identifier=101):
         return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':verb + ':fix-100:' + saved['hash'][:8]}},self.config)
 
+    def test_new_fix_preview_supersedes_the_older_one(self):
+        self.prepare()
+        self.intake('ещё одна правка',20,102)
+        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Другой текст.'}}
+        with patch.object(app,'tell',return_value={'message_id':31}), patch.object(drafter,'ask',return_value=corrected):
+            app.fix(self.config,self.store,'fix-102')
+        self.assertEqual((self.store.get('specs/fix-100')['state'],self.store.get('specs/fix-102')['state']),('rejected','previewed'))
+        self.assertEqual(self.store.get('outbox/superseded-fix-100')['payload'],{'slug':'fix-100','step':'remove-keyboard','message':30})
+
     def test_fix_edits_only_changed_targets_and_never_reposts(self):
         saved = self.prepare()
         self.assertTrue(self.approve(saved))
