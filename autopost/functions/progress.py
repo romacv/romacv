@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
@@ -41,6 +42,8 @@ BILLING_PREFIX = 'gcp_billing_export_v1_'
 BILLING_BYTES = 100 * 2 ** 20
 COST_ITEMS = 30
 RENDER_LIMIT = 200
+AGENT_LABELS = {'places':'места','media':'фото','copy':'тексты','merge':'сборка','montage':'монтаж'}
+RENDER_STEPS = ('prepare', 'montage', 'render', 'final')
 ANTHROPIC_FIELDS = ('calls', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'web_searches')
 SPECS = (
     ('svc_cpu','Cloud Run (сервисы), vCPU','с',RUN_CPU,'cloud_run_revision','month',1),
@@ -288,6 +291,68 @@ def costs_of(store, ids, by_key):
     return costs
 
 
+def scrub(text):
+    if not isinstance(text, str):
+        return text
+    return ' '.join(re.sub(r'https?://\S+', lambda m: m.group(0) if public(m.group(0).rstrip('.,;:)»”')) else '', text).split())
+
+
+def sessions_of(store, ids):
+    ids = ids[:COST_ITEMS]
+    if not ids:
+        return {}
+    return {s.id:s.to_dict() for s in store.db.get_all([store.db.document('sessions/' + key) for key in ids]) if s.exists}
+
+
+def spent(since, ended, now):
+    return max(0, round((ended or now) - since)) if since else 0
+
+
+def agents_of(step, now):
+    names = sorted(step.get('agents') or {}, key=lambda name: (list(AGENT_LABELS).index(name) if name in AGENT_LABELS else len(AGENT_LABELS), name))
+    rows = []
+    for name in names:
+        agent = step['agents'][name]
+        rows.append({'name':name,'label':AGENT_LABELS.get(name, name),'status':agent.get('status'),'action':scrub(agent.get('action')),'started':agent.get('started'),'seconds':spent(agent.get('started'), agent.get('finished'), now),'usd':round(agent.get('usd') or 0, 4),'searches':agent.get('searches') or 0,'result':scrub(agent.get('result'))})
+    return rows
+
+
+def targets_in(step, now):
+    rows = []
+    for target, value in sorted((step.get('targets') or {}).items()):
+        runs = value.get('runs') or []
+        last = runs[-1] if runs else {}
+        link = value.get('link')
+        rows.append({'target':target,'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'status':value.get('status'),'attempt':value.get('attempt', value.get('attempts')),'url':value.get('url') if public(value.get('url')) else None,'error':scrub(value.get('error')),'api':scrub(value.get('api')),'link':link if isinstance(link, (bool, type(None))) else link if public(link) else None,'why':scrub(value.get('why')),'seconds':spent(last.get('since'), last.get('ended'), now)})
+    return rows
+
+
+def timeline(session, now, render=None):
+    steps = [{**step, 'state':step.get('state') or 'planned'} for step in session.get('steps') or []]
+    running = [step for step in steps if step.get('state') == 'running']
+    step = running[-1] if running else None
+    past = [{'id':s['id'],'label':s.get('label', s['id']),'seconds':spent(s.get('since'), s.get('ended'), now) if s.get('ended') else 0,'usd':round(s.get('usd') or 0, 4),'state':s['state'],'targets':targets_in(s, now)} for s in steps if s.get('state') in ('done', 'failed', 'cancelled')]
+    current = None
+    if step:
+        current = {'id':step['id'],'label':step.get('label', step['id']),'since':step.get('since'),'seconds':spent(step.get('since'), None, now),'usd':round(step.get('usd') or 0, 4),'agents':agents_of(step, now),'targets':targets_in(step, now),'render':list(render or []) if step['id'] in RENDER_STEPS else []}
+    return {'state':session.get('state'),'opened':session.get('opened'),'ended':session.get('ended'),'outcome':{**session['outcome'], 'why':scrub(session['outcome'].get('why'))} if isinstance(session.get('outcome'), dict) else session.get('outcome'),'usd':round(session.get('usd') or 0, 4),'past':past,'current':current,'planned':[{'id':s['id'],'label':s.get('label', s['id'])} for s in steps if s.get('state') == 'planned']}
+
+
+def session_sub(session):
+    current = session['current']
+    if not current:
+        return ''
+    running = [agent for agent in current['agents'] if agent['status'] == 'running' and agent['action']]
+    if running:
+        agent = min(running, key=lambda agent: agent['started'] or 0)
+        return agent['label'] + ': ' + agent['action']
+    flying = [target for target in current['targets'] if target['status'] in ('running', 'checking')]
+    if flying:
+        target = flying[0]
+        return target['name'] + ': ' + ('проверяю' if target['status'] == 'checking' else 'попытка ' + str(target['attempt'] or 1))
+    return ''
+
+
 def budget_of(store):
     value = store.get('sessions/budget')
     if not value:
@@ -396,8 +461,22 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
         stage = pin_stage(item, states.get(key), bool((newest.get(key) or {}).get('answered'))) if item and item.get('status') not in ('rejected', 'failed') and key not in busy and not stale(item, now, key in live) else None
         if stage in WORKING:
             active.append({'id':key,'item':key,'title':title_of(item, newest.get(key)),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':(((newest.get(key) or {}).get('started_at') if states.get(key) in ('running','rendering') else None) or (newest.get(key) or {}).get('updated') if states.get(key) in ('approved','running','rendering') else None) or item.get('updated') or item.get('created') or now,'steps':[]})
-    active.sort(key=lambda row: row['since'])
     published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item')), spec),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
+    try:
+        sessions = sessions_of(store, list(dict.fromkeys(row.get('item') or row['id'] for row in active + waiting + published)))
+    except Exception:
+        logging.exception('sessions failed')
+        sessions = {}
+    merged = []
+    for row in active:
+        first = next((other for other in merged if other.get('item') == row.get('item') and row.get('item') in sessions), None)
+        if first:
+            first['steps'] = first['steps'] + row['steps']
+            first['since'] = min(first['since'], row['since'])
+        else:
+            merged.append(row)
+    active = merged
+    active.sort(key=lambda row: row['since'])
     try:
         rows = (store.get('sessions/quota') or {}).get('rows') or []
     except Exception:
@@ -417,6 +496,15 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
         costs = {}
     for row in active + waiting + published:
         row['cost'] = costs.get(row.get('item') or row['id'])
+        found = sessions.get(row.get('item') or row['id'])
+        try:
+            row['session'] = timeline(found, now, row.get('steps')) if found else None
+            sub = session_sub(row['session']) if row['session'] else ''
+        except Exception:
+            logging.exception('session timeline failed')
+            row['session'], sub = None, ''
+        if sub and row in active:
+            row['sub'] = sub
     return {'now':now,'view':'progress','active':active,'waiting':waiting,'published':published}
 
 

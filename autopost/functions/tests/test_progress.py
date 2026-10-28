@@ -124,6 +124,32 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn('"secret"',json.dumps(progress))
         self.assertNotIn('signed.example',json.dumps(progress))
 
+    def test_session_timeline_rides_its_row_and_absorbs_the_render_job(self):
+        now = time.time()
+        self.store.put('items/a',{'messages':[{'text':'Кофе'}],'status':'drafting','created':now - 100,'updated':now - 5})
+        self.store.put('items/b',{'messages':[{'text':'Готово'}],'status':'previewed','created':now - 100,'updated':now})
+        self.store.put('renders/r',{'item':'a','mode':'draft','state':'running','progress':{'label':'Рендерю','since':now - 20},'steps':[{'label':'Рендерю','since':now - 20}]})
+        self.store.put('sessions/a',{'item':'a','state':'open','opened':now - 100,'usd':0.09,'steps':[
+            {'id':'collect','label':'Собираю','state':'done','since':now - 100,'ended':now - 60,'usd':0},
+            {'id':'draft','label':'Черновик','state':'running','since':now - 60,'usd':0.09,'agents':{
+                'media':{'status':'done','started':now - 60,'finished':now - 40,'usd':0.02,'result':'7 фото'},
+                'places':{'status':'running','action':'ищу: «Warung X Canggu»','started':now - 59,'usd':0.07,'searches':2}}},
+            {'id':'preview','label':'Превью','state':'planned'},{'id':'publish','label':'Публикую','state':'planned','targets':{'ig-post':{'status':'planned'}}}]})
+        self.store.put('specs/b',{'item':'b','state':'previewed','targets':['tg-channel']})
+        self.store.put('sessions/b',{'item':'b','state':'open','opened':now - 100,'steps':[{'id':'wait','label':'Жду','state':'running','since':now - 10}]})
+        body = app.snapshot(self.store,now)
+        self.assertEqual([row['item'] for row in body['active']],['a'])
+        row = body['active'][0]
+        self.assertEqual(row['sub'],'места: ищу: «Warung X Canggu»')
+        session = row['session']
+        self.assertEqual([(a['name'],a['label'],a['status'],a['seconds']) for a in session['current']['agents']],[('places','места','running',59),('media','фото','done',20)])
+        self.assertEqual([(p['id'],p['seconds']) for p in session['past']],[('collect',40)])
+        self.assertEqual([p['id'] for p in session['planned']],['preview','publish'])
+        self.assertEqual(session['current']['render'],[])
+        self.assertEqual(body['waiting'][0]['session']['current']['id'],'wait')
+        self.store.put('sessions/b',{'item':'b','state':'open','steps':[{'id':'wait','agents':'broken','state':'running'}]})
+        self.assertEqual(app.snapshot(self.store,now)['waiting'][0]['session'],None)
+
     def test_overdue_render_and_upload_wait_leave_now(self):
         now = time.time()
         self.store.put('items/a',{'messages':[{'text':'Лазер'}],'status':'queued','montage':True,'created':now - 90000,'updated':now - 90000})

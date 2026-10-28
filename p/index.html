@@ -33,6 +33,9 @@ section{background:var(--tg-theme-secondary-bg-color,#f1f1f4);border-radius:12px
 .more>div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
 .more .done{color:var(--tg-theme-hint-color,#6d6d72)}
 .more .current{font-weight:600}
+.more>.sub{padding-left:14px}
+.more .planned{color:var(--tg-theme-hint-color,#6d6d72)}
+.more .bad{color:var(--tg-theme-destructive-text-color,#d33)}
 .more a{color:var(--tg-theme-link-color,#2481cc);text-decoration:none;overflow-wrap:anywhere}
 .big{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
 .help{flex:none;width:44px;height:44px;margin:-8px -10px -8px 0;border:0;border-radius:50%;background:none;font:600 18px/1 system-ui,-apple-system,sans-serif;color:var(--tg-theme-link-color,#2481cc);-webkit-tap-highlight-color:transparent}
@@ -107,6 +110,51 @@ function costs(c){
   box.append(line(el('span','title','Итого'),el('span','time',c.total==null?'нет данных':'≈'+money(c.total))));
   return box;
 }
+const AGENT_STATUS={waiting:'ждёт',cancelled:'отменён'};
+const TARGET_STATUS={planned:'ждёт',done:'опубликовано',verified:'проверено',unverifiable:'без проверки'};
+function ticked(seconds,since,usd){
+  const tail=usd?' · '+money(usd):'', t=el('span','time',clock(seconds)+tail);
+  if(since){t.dataset.since=since;t.dataset.tail=tail}
+  return t;
+}
+function agentLine(a){
+  const text=a.status==='running'?a.action:a.status==='done'?a.result:a.status==='failed'?'ошибка: '+(a.result||a.action||''):AGENT_STATUS[a.status]||'';
+  const d=el('div','sub'+(a.status==='failed'?' bad':a.status==='running'?'':' done'));
+  d.append(el('span','',a.label+(text?' · '+text:'')),a.status==='waiting'?el('span','time',''):ticked(a.seconds,a.status==='running'?a.started:null,a.usd));
+  return d;
+}
+function targetLine(t){
+  const bad=t.status==='failed'||t.status==='unverified';
+  const text=t.status==='running'?'попытка '+(t.attempt||1):t.status==='checking'?'проверяю':t.status==='failed'?'ошибка: '+(t.error||''):t.status==='unverified'?'не подтверждено'+(t.why?': '+t.why:''):TARGET_STATUS[t.status]||'';
+  const d=el('div','sub'+(bad?' bad':t.status==='planned'||t.status==='unverifiable'?' done':''));
+  const name=el('span');name.append(t.url&&t.status==='done'?link(t.name,t.url):document.createTextNode(t.name),document.createTextNode(' · '+text));
+  d.append(name,el('span','time',t.seconds?clock(t.seconds):''));
+  return d;
+}
+function stepLine(step){
+  const item=el('div',step.done?'done step':'current step'), t=el('span','time',clock(step.seconds)+' · '+number(step.vcpu_s)+' vCPU·с'+(step.paid===undefined?'':' · '));
+  const s=el('span',step.paid===0&&!step.near?'free':'',spend(step.paid,step.near));
+  if(step.paid!==undefined)t.append(s);
+  item.append(el('span','',step.label),t);
+  return item;
+}
+function timeline(box,session,job,mode){
+  session.past.forEach(p=>{
+    const d=el('div',p.state==='failed'?'bad':'done');
+    d.append(el('span','',p.label+(p.state==='cancelled'?' · отменён':p.state==='failed'?' · ошибка':'')),el('span','time',p.seconds||p.usd?clock(p.seconds)+(p.usd?' · '+money(p.usd):''):''));
+    box.append(d);
+    if(mode!=='waiting')p.targets.forEach(t=>box.append(targetLine(t)));
+  });
+  const c=session.current;
+  if(c&&mode==='active'){
+    const d=el('div','current');d.append(el('span','',c.label),ticked(c.seconds,c.since,c.usd));box.append(d);
+    c.agents.forEach(a=>box.append(agentLine(a)));
+    c.targets.forEach(t=>box.append(targetLine(t)));
+    (c.render.length||!job?c.render:job.steps).forEach(step=>box.append(stepLine(step)));
+  }
+  if(c&&mode==='published'&&c.id==='verify')c.targets.forEach(t=>box.append(targetLine(t)));
+  if(mode!=='published')session.planned.forEach(p=>{const d=el('div','planned');d.append(el('span','',p.label),el('span','time','—'));box.append(d)});
+}
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
 function render(){
   if(!data)return;
@@ -117,15 +165,10 @@ function render(){
     head.append(line(el('span','title',job.title||'Без названия'),time));
     if(job.label)head.append(el('div','stage',job.label));
     if(job.sub&&job.sub!==job.label)head.append(el('div','hint',job.sub));
-    return row('a'+(job.id||i),head,job.steps.length||job.cost?()=>{
+    return row('a'+(job.id||i),head,job.steps.length||job.cost||job.session?()=>{
       const box=el('div','more');
-      job.steps.forEach(step=>{
-        const item=el('div',step.done?'done':'current'), t=el('span','time',clock(step.seconds)+' · '+number(step.vcpu_s)+' vCPU·с'+(step.paid===undefined?'':' · '));
-        const s=el('span',step.paid===0&&!step.near?'free':'',spend(step.paid,step.near));
-        if(step.paid!==undefined)t.append(s);
-        item.append(el('span','',step.label),t);
-        box.append(item);
-      });
+      if(job.session)timeline(box,job.session,job,'active');
+      if(!job.session||!job.session.current)job.steps.forEach(step=>box.append(stepLine(step)));
       if(job.cost)box.append(costs(job.cost));
       return box;
     }:null);
@@ -135,6 +178,7 @@ function render(){
     return row('w'+(w.id||i),head,()=>{
       const box=el('div','more');
       box.append(el('div','',w.wait));
+      if(w.session)timeline(box,w.session,null,'waiting');
       if(w.targets.length)box.append(el('div','hint','Куда: '+w.targets.join(', ')));
       if(w.cost)box.append(costs(w.cost));
       return box;
@@ -146,6 +190,7 @@ function render(){
       const box=el('div','more');
       if(!p.links.length)box.append(el('div','hint',p.state==='partial'?'Опубликовано не везде.':'Ссылок нет.'));
       p.links.forEach(l=>{const d=el('div');d.append(link(l.name,l.url));box.append(d)});
+      if(p.session)timeline(box,p.session,null,'published');
       if(p.cost)box.append(costs(p.cost));
       return box;
     });
@@ -271,9 +316,10 @@ function tick(){
     const rows=document.querySelectorAll('#active .row'), r=rows[i];
     if(!r)return;
     r.querySelector('.line .time').textContent=clock(Math.max(0,now()-job.since));
-    const step=job.steps[job.steps.length-1], live=r.querySelector('.more .current .time');
+    const step=job.steps[job.steps.length-1], live=r.querySelector('.more .step.current .time');
     if(live&&step){const text=live.firstChild.nodeValue;live.firstChild.nodeValue=clock(Math.max(0,now()-step.since))+text.slice(text.indexOf(' · '))}
   });
+  document.querySelectorAll('.time[data-since]').forEach(t=>{t.textContent=clock(Math.max(0,now()-Number(t.dataset.since)))+(t.dataset.tail||'')});
 }
 async function load(){
   if(busy||!app||!app.initData)return;
