@@ -236,15 +236,15 @@ def send_collect(config, store, result, claim=None):
 
 
 def pin_texts(store):
-    ids = {snapshot.id for snapshot in store.db.collection('items').where('status','in',['collecting','queued','drafting']).stream()}
+    recent = [(snapshot.id,snapshot.to_dict()) for snapshot in store.db.collection('items').where('created','>=',time.time() - progress_view.WAITING_AGE).stream()]
+    if not recent:
+        return {}
+    key,item = max(recent,key=lambda row:row[1].get('created') or 0)
     states = newest_states(snapshot.to_dict() for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream())
-    texts = {}
-    for key in sorted(ids | set(states)):
-        item = store.get('items/' + key)
-        stage = pin_stage(item,states.get(key)) if item and item.get('status') not in ('rejected','failed') else None
-        if stage:
-            texts[key] = 'Пост' + titled(item) + ': ' + stage
-    return texts
+    stage = pin_stage(item,states.get(key)) if item.get('status') not in ('rejected','failed') else None
+    if stage and states.get(key) in ('previewed','needs-edit') and (item.get('updated') or item.get('created') or 0) < time.time() - progress_view.WAITING_AGE:
+        stage = None
+    return {key:'Пост' + titled(item) + ': ' + stage} if stage else {}
 
 
 def sync_pin(config, store):
@@ -261,6 +261,8 @@ def sync_pin(config, store):
                 entry = posts.get(key)
                 if entry and entry.get('message_id'):
                     plan[key] = ('keep' if entry.get('pinned') else 'pin',entry)
+                    if entry.get('text') != text:
+                        posts[key] = {**entry,'text':text}
                 elif entry and time.time() - entry.get('at',0) < 60:
                     plan[key] = ('keep',entry)
                 else:
@@ -301,9 +303,11 @@ def sync_pin(config, store):
                         platforms.telegram('editMessageText',{'chat_id':chat,'message_id':entry['message_id'],'text':text,'reply_markup':PROGRESS_MARKUP})
                     except Error as failure:
                         if not getattr(failure,'not_modified',False):
+                            update(text=entry.get('text'))
                             raise
-                    update(text=text)
-            except Exception:
+            except Exception as failure:
+                if getattr(failure,'status_code',None) == 400 and any(x in getattr(failure,'description','').lower() for x in ('message to edit not found','message to pin not found')):
+                    store.change('sessions/pin',lambda value:value['posts'][key].pop('message_id',None) and value['posts'][key].pop('pinned',None) if key in (value.get('posts') or {}) and value['posts'][key].get('at') == entry.get('at') else None)
                 logging.error(json.dumps({'code':'pin_status_failed'}))
     except Exception:
         logging.error(json.dumps({'code':'pin_status_failed'}))
@@ -311,6 +315,22 @@ def sync_pin(config, store):
 
 def tell(config, text, **extra):
     return platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
+
+
+def failure_text(failure, target, fallback):
+    if isinstance(failure,Error) and getattr(failure,'description',''):
+        return ('Telegram не принял публикацию: ' if target.startswith('tg-') else 'Платформа не приняла запрос: ') + failure.description
+    return str(failure) if isinstance(failure,(Error,StateError)) else fallback
+
+
+def tell_reliably(config, store, text, **extra):
+    try:
+        return tell(config,text,**extra)
+    except Error as failure:
+        if failure.status_code != 429:
+            raise
+    store.atomic(lambda tx:store.job(tx,{'step':'say','say':text,**({'markup':extra['reply_markup']} if extra.get('reply_markup') else {})},'say-' + secrets.token_hex(8)))
+    store.flush(enqueue)
 
 
 def authorized(update, config):
@@ -406,6 +426,11 @@ def webhook(request):
     store.flush(enqueue)
     query = value.get('callback_query')
     bounded(lambda:retire_taps(config,store,taps) if taps or result is not None or not query else resync_keyboard(config,store,query),WEBHOOK_EDIT_SECONDS)
+    edited = None if query else getattr(store,'edited',None)
+    if edited:
+        remount = store.get('items/' + edited)
+        if remount and remount.get('montage') and remount.get('status') == 'queued':
+            bounded(lambda:acknowledge_remount(config,store,{'item':edited},remount),WEBHOOK_EDIT_SECONDS)
     bounded(lambda:sync_pin(config,store),WEBHOOK_EDIT_SECONDS)
     if query:
         return callback_reply(config,store,query,result,bool(taps))
@@ -545,11 +570,12 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     try:
         offer(config,store,bucket,item_id,spec,assets,directory,basis,revision,saved,digest,current,send,say,last,scoped)
     except Withdrawn:
-        cancel_draft(config,store,item_id,spec['slug'],digest,last)
+        cancel_draft(config,store,item_id,spec['slug'],digest,last,revision)
 
 
-def cancel_draft(config, store, item_id, slug, digest, last):
-    if (store.get('items/' + item_id) or {}).get('status') != 'rejected':
+def cancel_draft(config, store, item_id, slug, digest, last, revision=None):
+    item = store.get('items/' + item_id) or {}
+    if item.get('status') != 'rejected' and (revision is None or item.get('revision') == revision):
         return False
     def reject(value):
         if value.get('state') == 'drafting' and value.get('hash') == digest:
@@ -619,13 +645,14 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
         value.update(state='previewed',preview_message=message['message_id'],preview_targets=scoped)
         item.update(status='previewed',edits_applied=len(item.get('edits',[])),photos_applied=len(item.get('edit_photos',[])))
         shown_status.append(item.pop('status_message',None))
-        session['current'] = spec['slug']
+        if not session.get('current') or session['current'] == spec['slug']:
+            session['current'] = spec['slug']
         store.put('specs/' + spec['slug'],value,tx)
         store.put('items/' + item_id,item,tx)
         store.put('sessions/inbox',session,tx)
         return True
     if not store.atomic(commit):
-        if not cancel_draft(config,store,item_id,spec['slug'],digest,last):
+        if not cancel_draft(config,store,item_id,spec['slug'],digest,last,revision):
             try:
                 remove_keyboard(config,{'preview_message':message['message_id']})
             except Error:
@@ -849,7 +876,7 @@ def answer_edit(config,store,payload,item,answer):
     newp = newp_markup(store,payload['item'])
     if newp:
         keyboard['inline_keyboard'].append(newp)
-    message = tell(config,answer,reply_markup=keyboard)
+    message = tell(config,('Черновик' + item_name(item) + ': ' if item_name(item) else '') + answer,reply_markup=keyboard)
     def restore(tx):
         saved = store.get('specs/' + slug,tx)
         current = store.get('items/' + payload['item'],tx)
@@ -943,7 +970,7 @@ def acknowledge_remount(config,store,payload,item):
     except Exception:
         return
     item['status_message'] = record
-    store.change('items/' + payload['item'],lambda value:value.update(status_message=record))
+    store.change('items/' + payload['item'],lambda value:value.update(status_message=record) if not value.get('status_message') and value.get('revision') == item.get('revision') else None)
 
 
 def plan_montage(config,store,bucket,payload,directory):
@@ -1272,7 +1299,7 @@ def run(config,store,bucket,slug,directory):
         except platforms.ExpiredMaterial:
             raise
         except Exception as failure:
-            saved['errors'][target] = str(failure) if isinstance(failure,(Error,StateError)) else 'Target failed; reconcile saved checkpoints'
+            saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
         publication = state['steps'].get(target + ':publish',{})
         if target not in published_targets and publication.get('status') == 'done':
             published_targets[target] = {'url':'','verified':False,'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
@@ -1486,7 +1513,7 @@ def apply_fix(config,store,bucket,slug,directory):
             saved['results'][target] = result
             saved['errors'].pop(target,None)
         except Exception as failure:
-            saved['errors'][target] = str(failure) if isinstance(failure,(Error,StateError)) else 'Ошибка; сверь контрольные точки'
+            saved['errors'][target] = failure_text(failure,target,'Ошибка; сверь контрольные точки')
         store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors']))
     state = 'done' if all(t in saved['results'] for t in platforms.live(saved['spec']['targets'])) else 'partial'
     if fix_hash(saved) != saved['approved_hash']:
@@ -1540,7 +1567,7 @@ def handle_worker(request):
             sync_pin(config,store)
             if payload.get('say'):
                 try:
-                    tell(config,payload['say'])
+                    tell(config,payload['say'],**({'reply_markup':payload['markup']} if payload.get('markup') else {}))
                 except Exception:
                     logging.error(json.dumps({'code':'say_failed','step':payload.get('step')}))
             if step == 'draft':
@@ -1581,9 +1608,29 @@ def handle_worker(request):
                 tell(config,'Напиши, что поправить в посте' + post_name(store,store.get('specs/' + payload['slug']) or {}) + '.')
             store.flush(enqueue)
         except Exception as failure:
-            logging.error(json.dumps({'code':'worker_failed','step':payload.get('step')}))
-            if payload.get('item'):
-                store.change('items/' + payload['item'],lambda value:value.update(status='failed'))
+            logging.error(json.dumps({'code':'worker_failed','step':payload.get('step'),'type':type(failure).__name__,'error':str(failure)[:200]},ensure_ascii=False))
+            current = True
+            if payload.get('item') and payload.get('step') in ('draft','montage','prepared','rendered','upload-complete'):
+                def fail_item(tx):
+                    value = store.get('items/' + payload['item'],tx)
+                    if value and value.get('revision') == payload.get('revision') and value.get('status') in ('queued','drafting'):
+                        value['status'] = 'failed'
+                        store.put('items/' + payload['item'],value,tx)
+                        return True
+                    return False
+                current = store.atomic(fail_item)
+                if current:
+                    try:
+                        finish_status(config,(store.get('items/' + payload['item']) or {}).get('status_message'),'Остановлено.')
+                    except Exception:
+                        pass
+            if payload.get('step') == 'fix' and payload.get('slug'):
+                def fail_fix(tx):
+                    value = store.get('specs/' + payload['slug'],tx)
+                    if value and value.get('state') == 'drafting':
+                        value['state'] = 'failed'
+                        store.put('specs/' + payload['slug'],value,tx)
+                store.atomic(fail_fix)
             if payload.get('step') in ('run','apply-fix') and payload.get('slug'):
                 store.change('specs/' + payload['slug'],lambda value:value.update(state='failed' if isinstance(failure,platforms.ExpiredMaterial) else 'partial'))
             text = str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.'
@@ -1592,6 +1639,8 @@ def handle_worker(request):
                 saved = store.get('specs/' + payload['slug'])
                 if saved and saved.get('hash'):
                     extra['reply_markup'] = buttons(payload['slug'],saved['hash'],True)
+            if current and payload.get('step') in ('draft','montage') and payload.get('item') and payload.get('revision') is not None:
+                extra['reply_markup'] = {'inline_keyboard':[[{'text':'Повторить','callback_data':'again:' + payload['item'] + ':' + str(payload['revision'])}]]}
             name = ''
             try:
                 if payload.get('item'):
@@ -1601,11 +1650,12 @@ def handle_worker(request):
                     name = post_name(store,saved)
             except Exception:
                 name = ''
-            if name and text.startswith('Черновик не готов'):
+            if name and text.startswith(('Черновик не готов','Черновик не получился')):
                 text = 'Черновик' + name + text[len('Черновик'):]
             elif name:
                 text =('Пост' if payload.get('step') in ('run','apply-fix','fix') else 'Черновик') + name + ': ' + text
-            tell(config,text,**extra)
+            if current:
+                tell_reliably(config,store,text,**extra)
         finally:
             sync_pin(config,store)
             stop.set()

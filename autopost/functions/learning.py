@@ -113,8 +113,10 @@ def command(config, store, payload, tell):
     current = skills.load(store)
     text = (payload.get('text') or '').strip()
     if not text:
-        message = tell(config, skills.listing(current), reply_markup=skills.keyboard(current))
-        store.put('skills-messages/' + str(message['message_id']), {'at': time.time()})
+        pages = skills.listing(current)
+        for number, page in enumerate(pages, 1):
+            message = tell(config, page, **({'reply_markup': skills.keyboard(current)} if number == len(pages) else {}))
+            store.put('skills-messages/' + str(message['message_id']), {'at': time.time()})
         return
     try:
         value = skills.parse(drafter.converse(config, EDIT + '\n\n' + skills.render(current, True), text, rec=lambda usage: store.record_usage(None, 'skills', usage)))

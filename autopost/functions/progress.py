@@ -374,7 +374,8 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
         if not item or latest.get(spec.get('item')) != slug or spec.get('item') in busy or spec.get('deleted') or not spec.get('operation') and at < now - WAITING_AGE:
             continue
         operation = {'fix':'исправление','delete':'удаление'}.get(spec.get('operation'))
-        wait = 'Нужна правка черновика' if spec['state'] == 'needs-edit' else 'Жду подтверждения: ' + operation if operation else 'Черновик показан; жду «Опубликовать»'
+        stage = pin_stage(item, spec['state']) or 'черновик показан'
+        wait = 'Жду подтверждения: ' + operation if operation else stage[0].upper() + stage[1:]
         waiting.append({'id':spec.get('item'),'title':title_of(item),'status':spec['state'],'wait':wait,'targets':targets_of(spec),'at':at})
     for key in sorted(working):
         item = items.get(key)

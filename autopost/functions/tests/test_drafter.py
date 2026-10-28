@@ -150,7 +150,7 @@ class ConversationTests(unittest.TestCase):
 
 
 class DraftCorrectionTests(unittest.TestCase):
-    def test_packaged_prompt_and_exactly_one_correction(self):
+    def test_packaged_prompt_and_three_corrections(self):
         response = Mock(content=[Mock(type='text',text='{}')])
         client = Mock()
         client.messages.create.return_value = response
@@ -167,7 +167,7 @@ class DraftCorrectionTests(unittest.TestCase):
         with patch.object(anthropic,'Anthropic',return_value=client):
             with self.assertRaises(p.Error):
                 drafter.ask({'anthropic_key':'unused'},{},[],lambda value:['invalid'])
-        self.assertEqual(client.messages.create.call_count,2)
+        self.assertEqual(client.messages.create.call_count,4)
 
 
 if __name__ == '__main__':

@@ -178,13 +178,23 @@ def multipart(fields, files):
     return b''.join(parts) + f'--{boundary}--\r\n'.encode(), {'Content-Type': 'multipart/form-data; boundary=' + boundary}
 
 
+IDEMPOTENT = ('editMessageText', 'editMessageCaption', 'editMessageReplyMarkup', 'deleteMessage', 'pinChatMessage', 'unpinChatMessage', 'answerCallbackQuery', 'getFile', 'getWebhookInfo', 'setMessageReaction', 'sendChatAction')
+
+
 def telegram(method, fields=None, files=None):
     url = 'https://api.telegram.org/bot' + key('telegram-bot-token', raw=True) + '/' + method
-    if files:
-        data, headers = multipart(fields or {}, files)
-        reply = request('POST', url, data=data, headers=headers, timeout=180)
-    else:
-        reply = request('POST', url, fields={k: json.dumps(v) if isinstance(v, (dict, list, bool)) else v for k, v in (fields or {}).items()}, timeout=60)
+    for attempt in range(3):
+        try:
+            if files:
+                data, headers = multipart(fields or {}, files)
+                reply = request('POST', url, data=data, headers=headers, timeout=180, label=method)
+            else:
+                reply = request('POST', url, fields={k: json.dumps(v) if isinstance(v, (dict, list, bool)) else v for k, v in (fields or {}).items()}, timeout=60, label=method)
+            break
+        except Error as failure:
+            if failure.status_code != 429 and not (failure.status_code in (502, 503, 504) and method in IDEMPOTENT) or attempt == 2:
+                raise
+            time.sleep(min(float(getattr(failure, 'retry_after', None) or (1 if failure.status_code == 429 else 2)), 30))
     if not reply.get('ok'):
         raise Error('Telegram rejected request; inspect bot permissions')
     return reply['result']
@@ -506,7 +516,7 @@ def social_session(provider, deleting=False):
     return token, str(me['id']), IG if provider == 'instagram' else THREADS
 
 
-def request(method, url, fields=None, token=None, data=None, headers=None, timeout=60):
+def request(method, url, fields=None, token=None, data=None, headers=None, timeout=60, label=None):
     import logging
     headers = dict(headers or {})
     if token:
@@ -519,6 +529,7 @@ def request(method, url, fields=None, token=None, data=None, headers=None, timeo
             data = encoded.encode()
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
     status = None
+    retry = None
     try:
         with urllib.request.urlopen(urllib.request.Request(url,data=data,headers=headers,method=method),timeout=timeout) as response:
             reply = json.loads(response.read())
@@ -531,15 +542,17 @@ def request(method, url, fields=None, token=None, data=None, headers=None, timeo
         except (ValueError, OSError):
             reply = {}
         status = failure.code
+        retry = (reply.get('parameters') or {}).get('retry_after') if isinstance(reply, dict) else None
         safe = safe_error(reply, failure.code)
     except ProviderFailure as failure:
         status = failure.reply.get('error_code')
         safe = safe_error(failure.reply)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         safe = {'code': 'network', 'description': 'Outcome uncertain; inspect checkpoints'}
-    logging.error(json.dumps(safe))
+    logging.error(json.dumps({**safe, **({'api': label} if label else {})}))
     failure = Error('API failure: ' + str(safe['code']), status_code=status)
     failure.description = safe.get('description', '')
+    failure.retry_after = retry
     failure.not_modified = status == 400 and 'message is not modified' in safe.get('description', '').lower()
     raise failure from None
 

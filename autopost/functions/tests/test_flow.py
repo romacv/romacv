@@ -56,6 +56,38 @@ class EditFlowTests(unittest.TestCase):
             app.draft(self.config,self.store,None,{'item':'item-2','revision':1},self.root)
         self.assertIn('Unknown media fields',seen[0])
 
+    def test_worker_failure_fails_only_the_current_drafting_revision(self):
+        class Request:
+            data = {'step':'draft','item':'item-1','revision':1}
+        for stored,expected in (({'status':'drafting','revision':1},'failed'),({'status':'drafting','revision':2},'drafting'),({'status':'collecting','revision':1},'collecting')):
+            self.store.put('items/item-1',{**stored,'messages':[]})
+            with patch.object(app,'runtime',return_value=(self.config,self.store,None)), patch.object(app,'activity'), patch.object(app,'sync_pin'), patch.object(app,'tell') as tell, patch.object(app,'draft',side_effect=RuntimeError):
+                app.handle_worker(Request)
+            self.assertEqual(self.store.get('items/item-1')['status'],expected)
+            self.assertEqual(tell.call_count,1 if expected == 'failed' else 0)
+
+    def test_failed_draft_offers_a_retry_that_requeues_the_same_step(self):
+        class Request:
+            data = {'step':'montage','item':'item-1','revision':1}
+        self.store.put('items/item-1',{'status':'drafting','revision':1,'montage':True,'messages':[]})
+        with patch.object(app,'runtime',return_value=(self.config,self.store,None)), patch.object(app,'activity'), patch.object(app,'sync_pin'), patch.object(app,'tell') as tell, patch.object(app,'plan_montage',side_effect=p.Error('Черновик не получился: причина.')):
+            app.handle_worker(Request)
+        markup = tell.call_args.kwargs['reply_markup']
+        data = markup['inline_keyboard'][0][0]['callback_data']
+        self.assertEqual(data,'again:item-1:1')
+        self.assertTrue(tell.call_args.args[1].startswith('Черновик не получился') or ' не получился' in tell.call_args.args[1])
+        self.store.intake({'update_id':60,'callback_query':{'id':'60','data':data}},self.config)
+        self.assertEqual(self.store.get('items/item-1')['status'],'queued')
+        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':1})
+
+    def test_scheduled_post_is_not_running_media_starts_a_new_post_and_text_names_the_time(self):
+        self.store.put('specs/example',{**self.store.get('specs/example'),'state':'approved','spec':{**self.spec,'at':'2099-01-01T10:00:00+00:00'}})
+        self.store.put('sessions/inbox',{'current':'example'})
+        reply = self.store.intake({'update_id':50,'message':{'message_id':50,'text':'ещё'}},self.config)
+        self.assertIn('запланирован на 01.01 18:00',reply)
+        started = self.store.intake({'update_id':51,'message':{'message_id':51,'photo':[{'file_id':'f','file_size':10}]}},self.config)
+        self.assertEqual(started['item'],'item-51')
+
     def test_video_only_post_reaches_instagram(self):
         self.store.put('items/item-3',{'status':'drafting','revision':1,'chosen':['ig-post','ig-reel'],'messages':[]})
         config = {'channels':{'tg-channel':1},'instagram':{'user_id':1}}
@@ -95,10 +127,11 @@ class PublishedMessageTests(unittest.TestCase):
 
     def test_message_after_publishing_goes_to_the_model_once(self):
         self.store.put('specs/album',{'state':'partial','item':'item-1','spec':{'targets':['tg-channel'],'copy':{'tg-channel':'x'}},'results':{},'errors':{}})
-        self.assertIn('Читаю по посту',self.say(10,'почему ошибка?'))
+        first = self.say(10,'почему ошибка?')
+        self.assertIn('Читаю по посту',first)
         self.assertIsNotNone(self.store.get('outbox/fix-10'))
         self.assertEqual(self.store.get('specs/album')['state'],'partial')
-        self.assertIsNone(self.say(10,'почему ошибка?'))
+        self.assertEqual(self.say(10,'почему ошибка?'),first)
 
 
 class AlbumWithoutPostTests(unittest.TestCase):
@@ -160,7 +193,7 @@ class QuestionToDraftTests(unittest.TestCase):
         sent = []
         with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append((text,extra)) or {'message_id':50}), patch.object(app,'asset_hash',return_value='abcdefgh'):
             app.answer_edit(self.config,self.store,payload,item,'Claude Sonnet 5.5')
-        self.assertEqual([text for text,_ in sent],['Claude Sonnet 5.5'])
+        self.assertEqual([text for text,_ in sent],['Черновик «Тема»: Claude Sonnet 5.5'])
         self.assertEqual(sent[0][1]['reply_markup']['inline_keyboard'][-1][0]['text'],'Это новый пост')
         self.assertEqual(self.store.get('specs/album')['state'],'previewed')
         self.store.put('conversations/item-1',{'edits':1,'turns':[]})
@@ -265,8 +298,8 @@ class PreviewRaceTests(unittest.TestCase):
         item = self.store.get('items/item-1')
         self.assertEqual((item['status'],item['revision']),('queued',2))
         self.assertIsNotNone(self.store.get('outbox/edit-e1'))
-        self.assertEqual(sent[-1][0],'editMessageReplyMarkup')
-        self.assertEqual(sent[-1][1]['reply_markup'],{'inline_keyboard':[]})
+        self.assertEqual(sent[-1][0],'editMessageText')
+        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик отменён.',{'inline_keyboard':[]}))
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
     def test_a_video_file_sent_to_a_previewed_draft_joins_it_and_requeues_the_montage(self):
@@ -406,10 +439,10 @@ class CollectingTests(unittest.TestCase):
         self.assertEqual([m for m,f in calls][2:],['editMessageText'])
         self.assertEqual((calls[2][1]['message_id'],calls[2][1]['text'].endswith(': готовлю черновик')),(500,True))
 
-    def test_pins_stay_per_active_post_and_leave_with_a_closed_one(self):
+    def test_only_the_newest_post_keeps_its_pin_and_a_new_post_replaces_older_pins(self):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')
-        store.put('items/item-20',{'messages':[],'revision':0,'status':'queued','montage':True,'slug':'item-20','created':1})
+        store.put('items/item-20',{'messages':[],'revision':0,'status':'queued','montage':True,'slug':'item-20','created':time.time() - 100})
         store.put('sessions/pin',{'item':'item-10','text':'Открыт пост','at':1,'message_id':400,'pinned':True})
         ids = iter(range(500,510))
         calls = []
@@ -418,13 +451,17 @@ class CollectingTests(unittest.TestCase):
             return {'message_id':next(ids)}
         with patch.object(app.platforms,'telegram',side_effect=telegram):
             app.sync_pin(self.config,store)
-            self.assertEqual(sorted(store.get('sessions/pin')['posts']),['item-10','item-20'])
-            self.assertEqual(calls,[('editMessageText',400),('sendMessage',None),('pinChatMessage',501)])
-            store.put('items/item-20',{**store.get('items/item-20'),'status':'previewed'})
-            store.put('specs/item-20',{'item':'item-20','state':'done'})
+            self.assertEqual(list(store.get('sessions/pin')['posts']),['item-10'])
+            self.assertEqual(calls,[('editMessageText',400)])
+            store.put('items/item-30',{'messages':[],'revision':0,'status':'queued','slug':'item-30','created':time.time() + 100})
             app.sync_pin(self.config,store)
-        self.assertEqual(calls[3:],[('unpinChatMessage',501),('deleteMessage',501)])
-        self.assertEqual(list(store.get('sessions/pin')['posts']),['item-10'])
+            self.assertEqual(list(store.get('sessions/pin')['posts']),['item-30'])
+            self.assertEqual(calls[1:],[('unpinChatMessage',400),('deleteMessage',400),('sendMessage',None),('pinChatMessage',503)])
+            store.put('items/item-30',{**store.get('items/item-30'),'status':'previewed'})
+            store.put('specs/item-30',{'item':'item-30','state':'done'})
+            app.sync_pin(self.config,store)
+        self.assertEqual(calls[5:6],[('unpinChatMessage',503)])
+        self.assertEqual(store.get('sessions/pin')['posts'],{})
 
     def test_a_partial_post_and_a_legacy_pin_of_a_closed_post_have_no_pin(self):
         store = Store(FakeFirestore())
@@ -531,14 +568,28 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.store.get('items/item-1')['status'],'failed')
 
     def test_pin_shows_upload_wait(self):
-        self.store.put('items/item-1',{'status':'queued','waiting_upload':True,'montage':True,'revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time()})
+        self.store.put('items/item-1',{'status':'queued','waiting_upload':True,'montage':True,'revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':time.time(),'updated':time.time()})
         self.assertIn('жду загрузку файла',list(app.pin_texts(self.store).values())[0])
 
     def test_scheduled_post_is_pinned_as_scheduled(self):
         later = time.strftime('%Y-%m-%dT%H:%M:%S+00:00',time.gmtime(time.time() + 7200))
-        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time()})
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':time.time(),'updated':time.time()})
         self.store.put('specs/album',{'state':'approved','item':'item-1','updated':time.time(),'spec':{'at':later}})
         self.assertIn('запланирован',list(app.pin_texts(self.store).values())[0])
+
+
+    def test_an_older_post_never_regains_the_pin_when_the_newest_has_no_stage(self):
+        self.store.put('items/item-1',{'status':'queued','revision':1,'messages':[],'slug':'a','created':time.time() - 100,'updated':time.time()})
+        self.store.put('items/item-2',{'status':'rejected','revision':1,'messages':[],'slug':'b','created':time.time(),'updated':time.time()})
+        self.assertEqual(app.pin_texts(self.store),{})
+
+    def test_server_errors_retry_only_idempotent_telegram_methods(self):
+        failure = p.Error('API failure: 503',status_code=503)
+        for method,calls in (('sendMessage',1),('editMessageText',3)):
+            with patch.object(p,'request',side_effect=failure) as request, patch.object(p.time,'sleep'), patch.object(p,'key',return_value='t'):
+                with self.assertRaises(p.Error):
+                    p.telegram(method,{})
+            self.assertEqual(request.call_count,calls)
 
 
 if __name__ == '__main__':

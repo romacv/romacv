@@ -312,7 +312,7 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
     book = skills.render(skills.load(thread[0])) if thread else ''
     if book:
         system.append({'type':'text','text':book,'cache_control':{'type':'ephemeral'}})
-    for attempt in range(2):
+    for attempt in range(4):
         try:
             response = create(client, system, wire(turns, pool), rec)
         except anthropic.APIStatusError as failure:
@@ -338,7 +338,8 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
                 except Exception as failure:
                     logging.error(json.dumps({'code':'conversation_save_failed','error':str(failure)[:200]},ensure_ascii=False))
             return value
-        turns.append({'role':'user','text':'Correct these validation errors and return JSON only: ' + json.dumps(errors),'images':[]})
+        if attempt < 3:
+            turns.append({'role':'user','text':'Correct these validation errors and return JSON only: ' + json.dumps(errors),'images':[]})
     errors = [str(e)[:200] for e in errors]
     logging.error(json.dumps({'code':'draft_invalid','errors':errors},ensure_ascii=False))
-    raise Error('Черновик не готов: ' + '; '.join(errors[:2]))
+    raise Error('Черновик не получился: модель не уложила материал в правила форматов.')

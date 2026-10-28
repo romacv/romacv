@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 
@@ -233,6 +234,14 @@ def publishing(saved, item=None):
     return '\n'.join(lines)
 
 
+def due_line(saved, item, zone):
+    try:
+        due = datetime.fromisoformat(saved['spec']['at'].replace('Z', '+00:00')).astimezone(ZoneInfo(zone)).strftime('%d.%m %H:%M')
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return 'Пост' + named(saved, item) + ' запланирован.'
+    return 'Пост' + named(saved, item) + ' запланирован на ' + due + '.'
+
+
 def fixing(saved, item):
     return 'Правлю опубликованный пост' + named(saved, item) + '. Превью изменений пришлю сюда.'
 
@@ -309,8 +318,14 @@ class Store:
     def atomic(self, operation):
         if hasattr(self.db, 'run_transaction'):
             return self.db.run_transaction(operation)
+        from google.api_core import exceptions
         from google.cloud import firestore
-        return firestore.transactional(operation)(self.db.transaction())
+        for attempt in range(3):
+            try:
+                return firestore.transactional(operation)(self.db.transaction())
+            except exceptions.InvalidArgument as failure:
+                if 'transaction' not in str(failure).lower() or attempt == 2:
+                    raise
 
     def delete(self, path, transaction=None):
         reference = self.db.document(path)
@@ -355,16 +370,19 @@ class Store:
                 self.db.document('outbox/' + snapshot.id).delete()
 
     def intake(self, update, config, taps=None):
+        self.edited = None
         message = imaged(located(update.get('message', {})))
         query = update.get('callback_query')
         identifier = str(update['update_id'])
         found = self.draft_ids() if command(message) == '/post' else None
-        def apply(tx):
+        def handle(tx):
+            self.edited = None
             if taps is not None:
                 del taps[:]
             update_path = 'updates/' + identifier
-            if self.get(update_path, tx):
-                return None
+            seen = self.get(update_path, tx)
+            if seen:
+                return None if query else seen.get('reply')
             business = self.get('tokens/business', tx) or config.get('business')
             if query:
                 return self.callback(tx, update_path, query, config, business, taps)
@@ -438,7 +456,7 @@ class Store:
             pending = self.get('items/' + slug, tx) if slug and not target else None
             group = message.get('media_group_id')
             drafting = bool(pending and pending.get('status') in ('queued', 'drafting')) or bool(target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'))
-            running = bool(target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering'))
+            running = bool(target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering') and not scheduled(target))
             starts = not name and not opened and not drafting and not running and not (group and session.get('answered_group') == group) and any(message.get(k) for k in MEDIA_KEYS)
             if starts:
                 session.pop('awaiting', None)
@@ -538,9 +556,14 @@ class Store:
                 if target['state'] in ('done', 'partial') and self.fixable(target) and note and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                     self.queue_fix(tx, slug, target, 'fix', note, identifier)
                     return asking(target, held)
+                if scheduled(target):
+                    return None if once() else due_line(target, held, (config or {}).get('timezone', 'Asia/Makassar'))
                 if target['state'] in ('approved', 'running', 'rendering'):
                     return None if once() else publishing(target, held)
                 return None if once() else 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
+            if pending and pending.get('status') in ('queued', 'drafting') and pending.get('waiting_upload') and (note or photo or message.get('voice')):
+                self.put(update_path, {'received':time.time()}, tx)
+                return None if once() else 'Пост' + titled(pending) + ': ' + pin_stage(pending, None) + '.'
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
                 return None if once() else 'К черновику принимаю текст, фото, видео и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
@@ -564,6 +587,11 @@ class Store:
             self.put('sessions/inbox', session, tx)
             self.put(update_path, {'received':time.time()}, tx)
             return None
+        def apply(tx):
+            result = handle(tx)
+            if isinstance(result, str) and not query:
+                self.put('updates/' + identifier, {'received':time.time(), 'reply':result}, tx)
+            return result
         return self.atomic(apply)
 
     def draft_ids(self):
@@ -644,6 +672,7 @@ class Store:
         item['revision'] += 1
         item['updated'] = time.time()
         item.pop('followup', None)
+        self.edited = item_id
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
         if item.get('waiting_upload'):
@@ -698,6 +727,8 @@ class Store:
             return None
         if verb == 'newp':
             return self.new_post_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
+        if verb == 'again':
+            return self.again_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
         if verb == 'ulnk':
             return self.upload_link_callback(tx, update_path, callback_path, slug, query, taps)
         batch = verb in ('done','cncl') or verb in TOGGLES
@@ -765,6 +796,20 @@ class Store:
         self.job(tx, payload, 'callback-' + hashlib.sha256(query['id'].encode()).hexdigest())
         if verb == 'edit':
             return 'Напиши, что поменять в черновике' + named(saved, item) + '.'
+        return True
+
+    def again_callback(self, tx, update_path, callback_path, item_id, revision, query, taps):
+        item = self.get('items/' + item_id, tx)
+        self.put(update_path, {'received':time.time()}, tx)
+        self.put(callback_path, {'received':time.time()}, tx)
+        if not item or item.get('status') != 'failed' or str(item.get('revision')) != revision:
+            self.retire(taps, query, 'Повтор больше не нужен.')
+            return None
+        self.retire(taps, query, 'Повторяю…')
+        item.update(status='queued', updated=time.time())
+        item.pop('status_message', None)
+        self.put('items/' + item_id, item, tx)
+        self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'again-' + update_path.split('/', 1)[1])
         return True
 
     def upload_link_callback(self, tx, update_path, callback_path, item_id, query, taps):

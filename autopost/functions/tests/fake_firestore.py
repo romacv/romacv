@@ -45,7 +45,7 @@ class Collection:
 
     def where(self, field, operator, value):
         query = Collection(self.db, self.path)
-        query.predicate = lambda row: row.get(field) in value if operator == 'in' else row.get(field) == value
+        query.predicate = lambda row: row.get(field) in value if operator == 'in' else (row.get(field) or 0) >= value if operator == '>=' else row.get(field) == value
         return query
 
     def stream(self):

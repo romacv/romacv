@@ -122,7 +122,7 @@ def listing(skills):
         count = len(value.get('examples', []))
         out.append(str(number) + '. ' + key + ' — ' + value['title'] + ': ' + summary(value) + ' (' + str(count) + ' ' + plural(count) + ')')
     out.append('Чтобы изменить, ответь на это сообщение или напиши /skills и что поменять.')
-    return '\n'.join(out)
+    return split('\n'.join(out))
 
 
 def keyboard(skills):
