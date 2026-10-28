@@ -33,15 +33,6 @@
         ]
       },
       {
-        "source": "/scroller-camera{,.html}",
-        "headers": [
-          {
-            "key": "X-Robots-Tag",
-            "value": "noindex, nofollow"
-          }
-        ]
-      },
-      {
         "source": "/files/scroller-camera.zip",
         "headers": [
           {
