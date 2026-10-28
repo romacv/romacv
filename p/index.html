@@ -74,7 +74,7 @@ mark();
 let data=null, offset=0, busy=false, open=null, balanceOpen=false;
 if(app){app.ready();app.expand()}
 const number=n=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:1});
-const clock=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+const clock=s=>{const two=n=>String(Math.floor(n)).padStart(2,'0');return s>=86400?Math.floor(s/86400)+' д':s>=3600?Math.floor(s/3600)+':'+two(s%3600/60)+':'+two(s%60):Math.floor(s/60)+':'+two(s%60)};
 const stamp=t=>{const d=new Date(t*1000),today=new Date().toDateString()===d.toDateString();return (today?'':d.toLocaleDateString('ru-RU',{day:'numeric',month:'short'})+', ')+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})};
 const hour=t=>new Date(t*1000).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
 const money=(v,c)=>{const p=c==='USD'||!c?'$':c+' ',n=Number(v);if(n>0&&n<0.01)return '<'+p+'0.01';const [i,f]=n.toFixed(2).split('.');return p+Number(i).toLocaleString('ru-RU')+'.'+f};
@@ -104,7 +104,7 @@ function costs(c){
   c.anthropic.forEach(k=>box.append(line(el('span','','Anthropic: '+k.kind),el('span','time','≈'+money(k.usd)))));
   if(c.speech_min)box.append(line(el('span','','Речь: '+number(c.speech_min)+' мин'),el('span','time',spend(c.speech_paid))));
   if(c.vcpu_s||c.gib_s)box.append(line(el('span','','Рендер: '+number(c.vcpu_s)+' vCPU·с, '+number(c.gib_s)+' ГиБ·с'),el('span','time',spend(c.render_paid))));
-  box.append(line(el('span','title','Итого'),el('span','time','≈'+money(c.total))));
+  box.append(line(el('span','title','Итого'),el('span','time',c.total==null?'нет данных':'≈'+money(c.total))));
   return box;
 }
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
@@ -116,6 +116,7 @@ function render(){
     const head=el('div'), time=el('span','time');
     head.append(line(el('span','title',job.title||'Без названия'),time));
     if(job.label)head.append(el('div','stage',job.label));
+    if(job.sub&&job.sub!==job.label)head.append(el('div','hint',job.sub));
     return row('a'+(job.id||i),head,job.steps.length||job.cost?()=>{
       const box=el('div','more');
       job.steps.forEach(step=>{

@@ -206,13 +206,15 @@ def language_errors(spec, owner=''):
 
 
 def answered(value):
-    return isinstance(value, dict) and set(value) == {'answer'}
+    return isinstance(value, dict) and set(value) in ({'answer'}, {'action'})
 
 
-def answer_errors(value):
-    if isinstance(value.get('answer'), str) and 1 <= len(value['answer']) <= 600 and sum('\u0400' <= c <= '\u052f' for c in value['answer']) >= len(value['answer']) / 4:
+def answer_errors(value, actions=False, limit=200):
+    if set(value) == {'action'}:
+        return [] if actions and value['action'] in (actions if isinstance(actions, tuple) else ('cancel', 'new-post')) else ['action is not allowed here']
+    if isinstance(value.get('answer'), str) and 1 <= len(value['answer']) <= limit and sum('\u0400' <= c <= '\u052f' for c in value['answer']) >= len(value['answer']) / 4:
         return []
-    return ['answer must be a short Russian string of at most 600 characters']
+    return ['answer must be a short Russian string of at most ' + str(limit) + ' characters']
 
 
 def wire(turns, pool):
@@ -327,7 +329,7 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
         except (ValueError, TypeError, KeyError):
             errors = ['Return a valid JSON object matching the schema']
         if not errors:
-            if isinstance(value, dict) and set(value) == {'answer'}:
+            if answered(value):
                 del turns[mark:]
             if thread:
                 while len(turns) > 4 and len(json.dumps(turns, ensure_ascii=False).encode()) > HISTORY_BYTES:

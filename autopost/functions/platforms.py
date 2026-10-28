@@ -301,15 +301,20 @@ def channel_post_url(spec, state):
     return f'https://t.me/{prefix}/{result["message_id"]}'
 
 
-def link_area(url):
-    return {'position': {'x_percentage': 50, 'y_percentage': 73, 'width_percentage': 83, 'height_percentage': 7, 'rotation_angle': 0, 'corner_radius_percentage': 4}, 'type': {'type': 'link', 'url': url}}
+def link_area(url, y=73):
+    return {'position': {'x_percentage': 50, 'y_percentage': y, 'width_percentage': 83, 'height_percentage': 7, 'rotation_angle': 0, 'corner_radius_percentage': 4}, 'type': {'type': 'link', 'url': url}}
+
+
+def story_areas(spec, state, text):
+    link = channel_post_url(spec, state)
+    brand = re.search(r'(?<![\w@])@([A-Za-z0-9._]{2,30})', text or '')
+    return ([link_area(link)] if link else []) + ([link_area('https://www.instagram.com/' + brand.group(1).rstrip('.'), 83)] if brand else [])
 
 
 def post_telegram(spec, state, target):
     identity = telegram_identity(target)
     files, text = media_files(spec), text_for(spec, target)
     if target == 'tg-story' and spec.get('media', {}).get('sequence'):
-        link = channel_post_url(spec, state)
         stories = []
         for position, (kind, index) in enumerate(sequence(spec)):
             name = ('image' if kind == 'image' else 'clip') + str(index)
@@ -321,8 +326,9 @@ def post_telegram(spec, state, target):
             fields = {'business_connection_id': identity['id'], 'content': content, 'active_period': config().get('story_active_period', 21600), 'post_to_chat_page': True}
             if position == 0:
                 fields['caption'] = text
-                if link:
-                    fields['areas'] = [link_area(link)]
+                areas = story_areas(spec, state, text)
+                if areas:
+                    fields['areas'] = areas
             try:
                 stories.append(checkpoint(spec, state, target, 'story' + str(position), lambda fields=fields, name=name: telegram('postStory', fields, {'asset': files[name]})))
             except Error as failure:
@@ -342,9 +348,9 @@ def post_telegram(spec, state, target):
             story_frame(files['image0'])
         fields = {'business_connection_id': identity['id'], 'content': content, 'active_period': config().get('story_active_period', 21600),
                   'post_to_chat_page': True, 'caption': text}
-        link = channel_post_url(spec, state)
-        if link:
-            fields['areas'] = [link_area(link)]
+        areas = story_areas(spec, state, text)
+        if areas:
+            fields['areas'] = areas
         try:
             result = checkpoint(spec, state, target, 'publish', lambda: telegram('postStory', fields, {'asset': files['video' if video else 'image0']}))
         except Error as failure:

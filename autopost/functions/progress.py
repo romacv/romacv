@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_specs, newest_states, overdue, pin_stage, stale
+from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -85,10 +85,8 @@ def user_of(init_data, token, now):
         return None, False
 
 
-def title_of(item):
-    texts = [m.get('text') or m.get('caption') for m in (item or {}).get('messages', []) if m.get('text') or m.get('caption')]
-    first = next((t for t in texts if not t.startswith(('Место: ', 'Место (координаты): '))), texts[0] if texts else '')
-    return ' '.join(first.split())
+def title_of(item, spec=None):
+    return post_title(item, spec)
 
 
 def public(url):
@@ -279,13 +277,14 @@ def costs_of(store, ids, by_key):
         doc, render = docs.get(key, {}), renders.get(key)
         if not doc and not render:
             continue
+        known = bool(doc)
         kinds = sorted(({'kind':kind,'usd':round((value or {}).get('usd', 0), 4)} for kind, value in (doc.get('anthropic') or {}).items()), key=lambda row: -row['usd'])
         minutes = round(doc.get('speech_seconds', 0) / 60, 2)
         speech_paid = round(minutes * PRICE['speech'], 4) if speech_over else 0
         render = render or {'vcpu_s':0, 'gib_s':0}
         render_paid = round(render['vcpu_s'] * PRICE['cpu'] + render['gib_s'] * PRICE['mem'], 4) if render_over else 0
         usd = round(sum(row['usd'] for row in kinds), 4)
-        costs[key] = {'anthropic':kinds,'anthropic_usd':usd,'speech_min':minutes,'speech_paid':speech_paid,'vcpu_s':round(render['vcpu_s'], 1),'gib_s':round(render['gib_s'], 1),'render_paid':render_paid,'total':round(usd + speech_paid + render_paid, 4)}
+        costs[key] = {'anthropic':kinds,'anthropic_usd':usd,'speech_min':minutes,'speech_paid':speech_paid,'vcpu_s':round(render['vcpu_s'], 1),'gib_s':round(render['gib_s'], 1),'render_paid':render_paid,'total':round(usd + speech_paid + render_paid, 4) if known else None}
     return costs
 
 
@@ -343,6 +342,11 @@ def due_text(spec, zone):
         return ''
 
 
+def job_stage(item, state, answered, fallback):
+    stage = pin_stage(item, state, answered) if item else None
+    return stage[0].upper() + stage[1:] if stage else fallback
+
+
 def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
     if view == 'costs':
         return costs_view(store, now)
@@ -366,7 +370,7 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
     for key, item in collecting:
         if key not in busy:
             count = len([m for m in item.get('messages', []) if m.get('photo') or m.get('video') or m.get('document')])
-            waiting.append({'id':key,'title':title_of(item),'status':'collecting','wait':'Собираю материал' + (': ' + str(count) + ' влож.' if count else '') + '; жду «Готово»','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
+            waiting.append({'id':key,'title':title_of(item, newest.get(key)),'status':'collecting','wait':'Собираю материал' + (': ' + str(count) + ' влож.' if count else '') + '; жду «Готово»','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
     latest = latest_specs(store, sorted({spec.get('item') for slug, spec in previews} - {None}))
     for slug, spec in previews:
         item = items.get(spec.get('item'))
@@ -374,26 +378,26 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
         if not item or latest.get(spec.get('item')) != slug or spec.get('item') in busy or spec.get('deleted') or not spec.get('operation') and at < now - WAITING_AGE:
             continue
         operation = {'fix':'исправление','delete':'удаление'}.get(spec.get('operation'))
-        stage = pin_stage(item, spec['state']) or 'черновик показан'
+        stage = pin_stage(item, spec['state'], bool(spec.get('answered'))) or 'черновик показан'
         wait = 'Жду подтверждения: ' + operation if operation else stage[0].upper() + stage[1:]
-        waiting.append({'id':spec.get('item'),'title':title_of(item),'status':spec['state'],'wait':wait,'targets':targets_of(spec),'at':at})
+        waiting.append({'id':spec.get('item'),'title':title_of(item, spec),'status':spec['state'],'wait':wait,'targets':targets_of(spec),'at':at})
     for key in sorted(working):
         item = items.get(key)
         if item and item.get('waiting_upload') and item.get('status') in ('queued', 'drafting') and key not in busy:
-            waiting.append({'id':key,'title':title_of(item),'status':item['status'],'wait':'Жду загрузку большого файла','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
+            waiting.append({'id':key,'title':title_of(item, newest.get(key)),'status':item['status'],'wait':'Жду загрузку большого файла','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
     for key in sorted(states):
         item = items.get(key)
         if states[key] == 'scheduled' and item and item.get('status') not in ('rejected', 'failed') and key not in busy:
-            waiting.append({'id':key,'title':title_of(item),'status':'scheduled','wait':'Запланирован' + due_text(newest[key].get('spec') or {}, zone),'targets':targets_of(newest[key].get('spec') or newest[key]),'at':newest[key].get('updated') or 0})
+            waiting.append({'id':key,'title':title_of(item, newest.get(key)),'status':'scheduled','wait':'Запланирован' + due_text(newest[key].get('spec') or {}, zone),'targets':targets_of(newest[key].get('spec') or newest[key]),'at':newest[key].get('updated') or 0})
     waiting = sorted(waiting, key=lambda row: (row['status'] != 'collecting', -row['at']))[:LIMIT]
-    active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
+    active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item')), newest.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':job_stage(items.get(job.get('item')), states.get(job.get('item')), bool((newest.get(job.get('item')) or {}).get('answered')), (job.get('progress') or {}).get('label','')),'sub':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
     for key in sorted(set(working) | set(states)):
         item = items.get(key)
-        stage = pin_stage(item, states.get(key)) if item and item.get('status') not in ('rejected', 'failed') and key not in busy and not stale(item, now, key in live) else None
+        stage = pin_stage(item, states.get(key), bool((newest.get(key) or {}).get('answered'))) if item and item.get('status') not in ('rejected', 'failed') and key not in busy and not stale(item, now, key in live) else None
         if stage in WORKING:
-            active.append({'id':key,'item':key,'title':title_of(item),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':(((newest.get(key) or {}).get('started_at') if states.get(key) in ('running','rendering') else None) or (newest.get(key) or {}).get('updated') if states.get(key) in ('approved','running','rendering') else None) or item.get('updated') or item.get('created') or now,'steps':[]})
+            active.append({'id':key,'item':key,'title':title_of(item, newest.get(key)),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':(((newest.get(key) or {}).get('started_at') if states.get(key) in ('running','rendering') else None) or (newest.get(key) or {}).get('updated') if states.get(key) in ('approved','running','rendering') else None) or item.get('updated') or item.get('created') or now,'steps':[]})
     active.sort(key=lambda row: row['since'])
-    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item'))),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
+    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item')), spec),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
     try:
         rows = (store.get('sessions/quota') or {}).get('rows') or []
     except Exception:

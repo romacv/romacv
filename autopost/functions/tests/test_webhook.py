@@ -150,6 +150,12 @@ class WebhookTests(unittest.TestCase):
             self.request(self.message())
         self.assertEqual([call.args for call in telegram.call_args_list[:2]],[('setMessageReaction',{'chat_id':1,'message_id':7,'reaction':[{'type':'emoji','emoji':'👀'}]}),('sendChatAction',{'chat_id':1,'action':'typing'})])
 
+    def test_one_reaction_per_album(self):
+        with patch.object(app.platforms,'telegram',return_value={'message_id':5}) as telegram:
+            for number in (1,2,3):
+                self.request({'update_id':200 + number,'message':{'message_id':number,'media_group_id':'g','photo':[{'file_id':'p' + str(number)}],'from':{'id':1},'chat':{'id':1,'type':'private'}}})
+        self.assertEqual([call.args[0] for call in telegram.call_args_list].count('setMessageReaction'),1)
+
     def test_stale_button_alerts(self):
         update = {'update_id':81,'callback_query':{'id':'81','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:gone:tok'}}
         answer = json.loads(self.request(update).get_data())
@@ -166,8 +172,7 @@ class WebhookTests(unittest.TestCase):
         sent = [call for call in sent if call[0] not in ('setMessageReaction','sendChatAction')]
         self.assertEqual(sent[0][0],'editMessageText')
         self.assertEqual(sent[0][1]['message_id'],900)
-        self.assertIn('1 фото',sent[0][1]['text'])
-        self.assertIn('1 клип',sent[0][1]['text'])
+        self.assertNotIn('1 фото',sent[0][1]['text'])
 
     def test_bounded_sends_work_without_patched_configure(self):
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
@@ -191,13 +196,14 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(collect.call_count,1)
         self.assertNotIn('sendMessage',sends)
 
-    def test_album_after_post_does_not_refresh_the_post_command_message(self):
+    def test_album_after_post_edits_the_one_collect_message_in_place(self):
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900})
         self.store.put('sessions/inbox',{'collecting':'item-1'})
         update = {'update_id':92,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
         with patch.object(app.platforms,'telegram',return_value={'message_id':5}) as telegram:
             self.request(update)
-        self.assertEqual([call.args[0] for call in telegram.call_args_list if call.args[0] not in ('setMessageReaction','sendChatAction')][0],'sendMessage')
+        calls = [call.args for call in telegram.call_args_list if call.args[0] not in ('setMessageReaction','sendChatAction')]
+        self.assertEqual((calls[0][0],calls[0][1]['message_id']),('editMessageText',900))
 
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})

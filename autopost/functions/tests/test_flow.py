@@ -151,6 +151,19 @@ class AlbumWithoutPostTests(unittest.TestCase):
         self.assertEqual(len(self.store.get('items/item-10')['messages']),3)
         self.assertEqual([bool(r and r.get('text')) for r in replies],[True,False,False])
 
+    def test_album_while_drafting_opens_a_new_post(self):
+        self.store.put('specs/album',{'state':'drafting','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        for n in range(3):
+            self.store.intake({'update_id':10 + n,'message':{'message_id':10 + n,'media_group_id':'g1','caption':'Новый','photo':[{'file_id':'f' + str(n),'file_size':10}]}},self.config)
+        self.assertEqual(self.store.get('sessions/inbox')['collecting'],'item-10')
+        self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
+
+    def test_bot_forward_is_ignored(self):
+        config = {'roman_chat_id':1,'telegram_bot_id':'55'}
+        reply = self.store.intake({'update_id':10,'message':{'message_id':10,'photo':[{'file_id':'f','file_size':10}],'forward_origin':{'type':'user','sender_user':{'id':55}}}},config)
+        self.assertIn('пропускаю',reply)
+        self.assertIsNone(self.store.get('sessions/inbox').get('collecting'))
+
     def test_album_while_publishing_gets_one_status_reply(self):
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
         replies = self.album(10)
@@ -164,14 +177,11 @@ class AlbumWithoutPostTests(unittest.TestCase):
         self.assertNotIn('awaiting',self.store.get('sessions/inbox'))
         self.assertEqual([bool(r and r.get('text')) for r in replies],[True,False,False])
 
-    def test_one_tap_moves_every_photo_of_an_album_sent_to_a_draft(self):
+    def test_album_sent_to_a_draft_opens_one_new_post_with_every_photo(self):
         self.store.put('specs/album',{'state':'previewed','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
-        replies = self.album(10)
-        self.assertEqual(replies,[None,None,None])
-        data = app.newp_markup(self.store,'item-1')[0]['callback_data']
-        self.store.intake({'update_id':99,'callback_query':{'id':'99','data':data}},self.config)
+        self.album(10)
         self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
-        self.assertEqual([m['message_id'] for m in self.store.get('items/item-gg1')['messages']],[10,11,12])
+        self.assertEqual([m['message_id'] for m in self.store.get('items/item-10')['messages']],[10,11,12])
 
 
 class QuestionToDraftTests(unittest.TestCase):
@@ -187,22 +197,43 @@ class QuestionToDraftTests(unittest.TestCase):
 
     def test_question_gets_exactly_one_message_the_answer_with_the_new_post_button(self):
         self.assertIsNone(self.ask('какая модель?'))
-        self.store.change('items/item-1',lambda value:value.update(status='drafting'))
-        item = self.store.get('items/item-1')
-        payload = {'item':'item-1','revision':item['revision']}
+        self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
         sent = []
-        with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append((text,extra)) or {'message_id':50}), patch.object(app,'asset_hash',return_value='abcdefgh'):
-            app.answer_edit(self.config,self.store,payload,item,'Claude Sonnet 5.5')
-        self.assertEqual([text for text,_ in sent],['Черновик «Тема»: Claude Sonnet 5.5'])
-        self.assertEqual(sent[0][1]['reply_markup']['inline_keyboard'][-1][0]['text'],'Это новый пост')
+        with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append((text,extra)) or {'message_id':50}), patch.object(app.drafter,'converse',return_value='{"answer":"Модель Claude Sonnet 5.5"}'):
+            app.question(self.config,self.store,{'slug':'album','item':'item-1','text':'какая модель?'})
+        self.assertEqual([text for text,_ in sent],['Черновик «x»: Модель Claude Sonnet 5.5'])
+        self.assertEqual([row[0]['text'] for row in sent[0][1]['reply_markup']['inline_keyboard'][-2:]],['Это новый пост','Отменить черновик'])
         self.assertEqual(self.store.get('specs/album')['state'],'previewed')
-        self.store.put('conversations/item-1',{'edits':1,'turns':[]})
-        data = sent[0][1]['reply_markup']['inline_keyboard'][-1][0]['callback_data']
+        data = sent[0][1]['reply_markup']['inline_keyboard'][-2][0]['callback_data']
         self.store.intake({'update_id':21,'callback_query':{'id':'21','data':data}},self.config)
         item = self.store.get('items/item-1')
-        self.assertEqual((item['status'],item['edits'],item['edits_applied']),('previewed',[],0))
-        self.assertEqual(self.store.get('conversations/item-1')['edits'],0)
+        self.assertEqual((item['status'],item['edits'] if 'edits' in item else []),('previewed',[]))
         self.assertEqual(self.store.get('items/item-20')['messages'][0]['message_id'],20)
+
+    def test_reply_question_writes_its_own_followup(self):
+        self.store.put('published-messages/5',{'slug':'album'})
+        self.store.intake({'update_id':20,'message':{'message_id':20,'text':'почему так?','reply_to_message':{'message_id':5,'text':'Черновик'}}},self.config)
+        self.assertEqual(self.store.get('items/item-1')['followup'],'20')
+        self.assertTrue(self.store.get('followups/20')['answered'])
+        self.assertEqual(self.store.get('items/item-1').get('edits',[]),[])
+
+    def test_model_cancel_is_a_rejection_with_learning(self):
+        payload = {'item':'item-1','revision':1,'slug':'album','text':'отмени'}
+        self.store.change('items/item-1',lambda value:value.update(status_message={'id':9,'text':'Монтирую…','line':'Принял'}))
+        with patch.object(app,'tell') as tell:
+            app.take_answer(self.config,self.store,payload,self.store.get('items/item-1'),{'action':'cancel'})
+        self.assertEqual(self.store.get('specs/album')['state'],'rejected')
+        self.assertIn('отклонён',tell.call_args.args[1])
+        self.assertEqual([snapshot.to_dict()['payload']['step'] for snapshot in self.store.db.collection('outbox').stream() if snapshot.to_dict()['payload']['step'] == 'learn'],['learn'])
+        finish = [snapshot.to_dict()['payload'] for snapshot in self.store.db.collection('outbox').stream() if snapshot.to_dict()['payload']['step'] == 'finish-status']
+        self.assertEqual([(p['status']['id'],p['line']) for p in finish],[(9,'Отклонено.')])
+        self.assertNotIn('status_message',self.store.get('items/item-1'))
+
+    def test_a_question_shaped_request_becomes_a_normal_edit(self):
+        payload = {'item':'item-1','revision':1,'slug':'album','text':'Сделаешь короче?'}
+        app.take_answer(self.config,self.store,payload,self.store.get('items/item-1'),{'action':'edit'})
+        self.assertEqual(self.store.get('items/item-1')['edits'],['Сделаешь короче?'])
+        self.assertEqual(self.store.get('specs/album')['state'],'drafting')
 
     def test_edit_line_carries_the_new_post_button(self):
         self.assertIsNone(self.ask('локация джакарта'))
@@ -387,7 +418,7 @@ class CollectingTests(unittest.TestCase):
                 else:
                     store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
                 token = store.get('items/item-10')['batch_token']
-                self.tap(store,'done','item-10',token,12)
+                self.assertIsNone(self.tap(store,'done','item-10',token,12))
                 item = store.get('items/item-10')
                 self.assertEqual((item['status'],item['montage']),('queued',clips))
                 self.assertEqual(store.get('outbox/draft-12')['payload'],{'item':'item-10','step':step,'revision':item['revision']})
@@ -413,6 +444,17 @@ class CollectingTests(unittest.TestCase):
         reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Что там?'}},self.config)
         self.assertIn('готовлю превью',reply)
         self.assertNotIn('Монтаж',reply)
+        self.assertEqual(store.get('items/item-10').get('edits',[]),[])
+
+    def test_question_text_queues_an_answer_and_never_an_edit(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
+        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        store.change('items/item-10',lambda value:value.update(status='previewed'))
+        store.put('specs/item-10',{'state':'previewed','item':'item-10','spec':{'targets':['tg-channel']},'preview_message':100})
+        store.put('published-messages/100',{'slug':'item-10'})
+        store.intake({'update_id':13,'message':{'message_id':13,'text':'Почему так?','reply_to_message':{'message_id':100}}},self.config)
         self.assertEqual(store.get('items/item-10').get('edits',[]),[])
 
     def test_done_accepts_photos_with_clips_and_the_pin_follows_the_stage(self):
@@ -510,6 +552,13 @@ class RecoveryTests(unittest.TestCase):
         self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','edits':[]})
         self.store.put('specs/album',{'state':'previewed','hash':'abcdefgh1','item':'item-1','spec':{'targets':['tg-channel']},'preview_message':100})
         self.store.put('published-messages/100',{'slug':'album'})
+
+    def test_orphaned_final_render_fails_over(self):
+        self.store.put('renders/r1',{'state':'done','delivered':True})
+        self.store.put('specs/album',{'state':'rendering','hash':'abcdefgh1','final_render':'r1','item':'item-1','spec':{'copy':{}}})
+        with patch.object(app,'tell'), patch.object(app,'sync_pin'):
+            app.recover_running(self.config,self.store)
+        self.assertEqual(self.store.get('specs/album')['state'],'partial')
 
     def test_stuck_running_spec_survives_a_failed_notification(self):
         self.store.put('specs/album',{'state':'running','hash':'abcdefgh1','started_at':0,'item':'item-1','spec':{'copy':{}}})

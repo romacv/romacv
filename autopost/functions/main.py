@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import learning
 import progress as progress_view
@@ -41,8 +41,8 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 
 RENDER_SETTINGS = 'final-v1'
-EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead.'
-SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
+EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead; an explicit request to cancel the draft or to move these messages to a new post gets {"action":"cancel"} or {"action":"new-post"}.'
+SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media. Only the newest %d are new since the last draft; the older ones were already applied.'
 
 
 def runtime():
@@ -61,10 +61,11 @@ def enqueue(payload, identifier, delay=0):
         pass
 
 
-def item_name(item):
+def item_name(item, store=None, item_id=None):
     messages = item['messages'] if item else []
     count = sum(1 for m in messages if imaged(m).get('photo'))
-    return titled(item) if item and titled(item) else (' ' + clips(item) if any(imaged(m).get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
+    saved = newest_specs([snapshot.to_dict() for snapshot in store.db.collection('specs').where('item','==',item_id).stream()]).get(item_id) if store and item_id and item else None
+    return post_phrase(item,saved) if item and post_phrase(item,saved) else (' ' + clips(item) if any(imaged(m).get('video') for m in messages) else ' ' + str(count) + ' фото' if count else '')
 
 
 def post_name(store, saved):
@@ -240,11 +241,13 @@ def pin_texts(store):
     if not recent:
         return {}
     key,item = max(recent,key=lambda row:row[1].get('created') or 0)
-    states = newest_states(snapshot.to_dict() for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream())
-    stage = pin_stage(item,states.get(key)) if item.get('status') not in ('rejected','failed') else None
+    specs = [snapshot.to_dict() for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream()]
+    states = newest_states(specs)
+    newest = newest_specs(specs).get(key) or {}
+    stage = pin_stage(item,states.get(key),bool(newest.get('answered'))) if item.get('status') not in ('rejected','failed') else None
     if stage and states.get(key) in ('previewed','needs-edit') and (item.get('updated') or item.get('created') or 0) < time.time() - progress_view.WAITING_AGE:
         stage = None
-    return {key:'Пост' + titled(item) + ': ' + stage} if stage else {}
+    return {key:'Пост' + post_phrase(item,newest) + ': ' + stage} if stage else {}
 
 
 def sync_pin(config, store):
@@ -366,6 +369,16 @@ def upload_mac(config, item, revision, expires):
     return hmac.new(hmac.new(config['webhook_secret'].encode(), b'upload', hashlib.sha256).digest(),f'{item}:{revision}:{expires}'.encode(),hashlib.sha256).hexdigest()
 
 
+def first_of_group(value, group):
+    seen = value.setdefault('groups', {})
+    if group in seen:
+        return False
+    seen[group] = time.time()
+    for old in sorted(seen, key=seen.get)[:-10]:
+        del seen[old]
+    return True
+
+
 def received(saved):
     if saved:
         return False
@@ -416,7 +429,9 @@ def webhook(request):
                     platforms.telegram(method,fields)
                 except Exception:
                     pass
-        bounded(react,WEBHOOK_EDIT_SECONDS)
+        group = message.get('media_group_id')
+        if not group or store.change('sessions/reacted',lambda saved:first_of_group(saved,group)):
+            bounded(react,WEBHOOK_EDIT_SECONDS)
     if isinstance(message,dict) and not any(message.get(key) for key in ('photo','video','voice','audio','document','animation','video_note','media_group_id')):
         name = command(message)
         listed = str(message.get('reply_to_message',{}).get('message_id',''))
@@ -600,6 +615,27 @@ def cancel_draft(config, store, item_id, slug, digest, last, revision=None):
     return True
 
 
+def copy_blocks(targets, copy):
+    blocks = {}
+    for target in platforms.live(list(targets)):
+        blocks.setdefault(copy[target],[]).append(target)
+    return blocks
+
+
+def show_texts(config, store, item, item_id, targets, copy):
+    every = copy_blocks(targets,copy)
+    sent = item.get('texts_sent') if isinstance(item.get('texts_sent'),list) else []
+    blocks = {text:members for text,members in every.items() if text not in sent}
+    if not blocks:
+        return
+    parts = pieces('<b>' + html.escape('Тексты' + item_name(item,store,item_id) + ':',quote=False) + '</b>','')
+    for text,members in blocks.items():
+        parts += pieces('<b>' + html.escape(destinations(members),quote=False) + '</b>',text,None,members)
+    for text,members in pages(parts):
+        tell(config,text,parse_mode='HTML')
+    store.change('items/' + item_id,lambda value:value.update(texts_sent=sorted(set(sent) | set(every))))
+
+
 def offer(config, store, bucket, item_id, spec, assets, directory, basis, revision, saved, digest, current, send, say, last, scoped):
     platforms.telegram_identity()
     files, found = [], {}
@@ -614,15 +650,15 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
     for position, (name, manifest, targets) in enumerate(files):
         unique = 'preview-' + str(position) + Path(name).suffix
         media.materialize(bucket,{unique:manifest},directory)
-        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets),'targets':targets})
+        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets),'targets':targets,'size':{key:manifest[key] for key in ('duration','width','height') if manifest.get(key)}})
     for start in range(0,len(shown),10):
         chunk = shown[start:start + 10]
         if len(chunk) == 1:
             method, field = ('sendVideo','video') if chunk[0]['video'] else ('sendPhoto','photo')
-            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption']},{field:chunk[0]['path']},[chunk[0]['targets']])
+            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption'],**chunk[0]['size']},{field:chunk[0]['path']},[chunk[0]['targets']])
         else:
             attached = {'file' + str(index):value['path'] for index,value in enumerate(chunk)}
-            group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),'caption':value['caption']} for index,value in enumerate(chunk)]
+            group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),'caption':value['caption'],**value['size']} for index,value in enumerate(chunk)]
             send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},attached,[value['targets'] for value in chunk])
     title = config.get('channel_title')
     if not title and 'tg-channel' in spec['targets'] and config.get('channels',{}).get('tg-channel'):
@@ -630,10 +666,9 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
             title = platforms.telegram('getChat',{'chat_id':config['channels']['tg-channel']}).get('title')
         except Error:
             title = None
-    blocks = {}
-    for target in platforms.live(spec['targets']):
-        text = spec['copy'][target]
-        blocks.setdefault(text,[]).append(target)
+    blocks = copy_blocks(spec['targets'],spec['copy'])
+    sent = current.get('texts_sent') if isinstance(current.get('texts_sent'),list) else []
+    blocks = {text:members for text,members in blocks.items() if text not in sent}
     note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
     lines = current.get('skipped',[]) + (['Заметка: ' + spec['notes']] if spec.get('notes') else [])
     heading = '<b>' + html.escape('Черновик' + post_name(store,saved) + ': куда пойдёт',quote=False) + '</b>'
@@ -747,7 +782,7 @@ def draft(config,store,bucket,payload,directory):
         return
     if item.get('montage') and item.get('status_message'):
         edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа · шаг 2 из 3').strip())
-    inputs = media.intake(bucket,payload['item'],item,config,directory)
+    inputs = unique_clips(media.intake(bucket,payload['item'],item,config,directory))
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
         return
@@ -773,11 +808,11 @@ def draft(config,store,bucket,payload,directory):
     source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'clips':len(clips)} if clips else {}),**({'chosen_targets':allowed} if allowed else {})}
     source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
     if shots:
-        source['edit_screenshots'] = SCREENSHOTS % len(shots)
+        source['edit_screenshots'] = SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))
     owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
     def validate(value):
         if drafter.answered(value):
-            return drafter.answer_errors(value) if follow is not None else ['Return a draft, not an answer']
+            return drafter.answer_errors(value,True) if follow is not None else ['Return a draft, not an answer']
         errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips))
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
@@ -796,16 +831,16 @@ def draft(config,store,bucket,payload,directory):
         return list(dict.fromkeys(errors))
     key = 'conversations/' + payload['item']
     fresh = edits[store.seen(key,payload['revision']):]
-    follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
+    follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
     spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit' if follow is not None else 'draft',usage))
     if superseded(store,payload):
         return
     if drafter.answered(spec):
-        answer_edit(config,store,payload,item,spec['answer'])
+        take_answer(config,store,payload,item,spec)
         return
     if fresh:
         markup = newp_markup(store,payload['item'])
-        tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
+        tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),reply_markup={'inline_keyboard':([markup] if markup else []) + [cancel_button(payload['item'],payload['revision'])]})
     assets = {}
     composed = {}
     for target in spec['targets']:
@@ -828,6 +863,8 @@ def draft(config,store,bucket,payload,directory):
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
         assets[target] = target_assets
     if clips:
+        acknowledge_remount(config,store,payload,item)
+        show_texts(config,store,item,payload['item'],spec['targets'],spec['copy'])
         start_clips(config,store,bucket,payload,item,spec,assets,clips)
         return
     preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
@@ -876,6 +913,69 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
     start_job(project,identifier)
 
 
+def unique_clips(inputs):
+    seen = set()
+    return [a for a in inputs if a['kind'] != 'video' or not (a['manifest']['sha256'] in seen or seen.add(a['manifest']['sha256']))]
+
+
+def cancel_button(item_id,revision):
+    return [{'text':'Отменить черновик','callback_data':'cdraft:' + item_id + ':' + str(revision)}]
+
+
+def take_answer(config,store,payload,item,value):
+    identifier = 'act-' + payload['item'] + '-' + str(payload['revision'])
+    if 'answer' in value:
+        answer_edit(config,store,payload,item,value['answer'])
+    elif value['action'] == 'cancel':
+        name = item_name(item,store,payload['item'])
+        if store.atomic(lambda tx:store.cancel_post(tx,payload['item'],identifier)):
+            tell(config,'Черновик' + name + ' отклонён.')
+    elif value['action'] == 'edit':
+        if not store.atomic(lambda tx:store.edit_from_question(tx,payload['slug'],payload['text'],identifier)):
+            tell(config,'Черновик уже менялся: напиши правку ещё раз.')
+    else:
+        held = store.get('items/' + payload['item']) or {}
+        key = held.get('followup')
+        followup = store.get('followups/' + key) if key else None
+        if not followup or followup.get('moved') or not store.atomic(lambda tx:store.new_post_callback(tx,'updates/act-' + key,'callbacks/act-' + key,key,followup['token'])):
+            tell(config,'Не нашёл сообщения для нового поста: пришли /post.')
+
+
+QUESTION_ACTIONS = ('cancel','new-post','edit')
+QUESTION = 'Question mode: Roman asked about the current draft. Return {"answer":"Russian reply, at most 200 characters"}, or {"action":"cancel"} / {"action":"new-post"} only when he explicitly asks to cancel the draft or to make it a new post, or {"action":"edit"} when the question is really a request to change the draft ("Сделаешь короче?", "Можешь убрать хэштеги?"). No Markdown fence.'
+
+
+def question(config,store,payload):
+    saved = store.get('specs/' + payload['slug'])
+    item = store.get('items/' + payload['item'])
+    if not saved or not item or item.get('status') == 'rejected' or saved.get('state') not in ('previewed','needs-edit','drafting'):
+        return
+    if saved['state'] == 'drafting':
+        tell(config,working(item,store.get('renders/' + item['render']) if item.get('render') else None,time.time()))
+        return
+    inner = saved['spec']
+    asked = {'question':payload['text'],'state':saved['state'],'targets':inner['targets'],'copy':inner['copy'],'at':inner.get('at')}
+    raw = drafter.converse(config,Path(__file__).with_name('draft-agent.md').read_text() + '\n' + QUESTION,json.dumps(asked,ensure_ascii=False),1000,lambda usage:store.record_usage(payload['item'],'edit',usage))
+    parsed = None
+    try:
+        value = parsed = json.loads(re.sub(r'^```(?:json)?\s*|\s*```$','',raw.strip()))
+        if not drafter.answered(value) or drafter.answer_errors(value,QUESTION_ACTIONS):
+            raise ValueError
+    except ValueError:
+        text = parsed.get('answer') if isinstance(parsed, dict) else None
+        value = {'answer':' '.join((text if isinstance(text, str) else raw).split())[:200] or 'Не смог ответить.'}
+    if 'action' in value:
+        take_answer(config,store,{'item':payload['item'],'revision':item['revision'],'slug':payload['slug'],'text':payload['text']},item,value)
+        return
+    keyboard = buttons(payload['slug'],saved['hash']) if saved['state'] == 'previewed' and saved.get('hash') else {'inline_keyboard':[]}
+    newp = newp_markup(store,payload['item'])
+    if newp:
+        keyboard['inline_keyboard'].append(newp)
+    keyboard['inline_keyboard'].append(cancel_button(payload['item'],item['revision']))
+    message = tell(config,'Черновик' + item_name(item,store,payload['item']) + ': ' + value['answer'],reply_markup=keyboard)
+    store.put('published-messages/' + str(message['message_id']),{'slug':payload['slug']})
+
+
 def answer_edit(config,store,payload,item,answer):
     slug = item['slug']
     saved = store.get('specs/' + slug) or {}
@@ -886,13 +986,17 @@ def answer_edit(config,store,payload,item,answer):
     newp = newp_markup(store,payload['item'])
     if newp:
         keyboard['inline_keyboard'].append(newp)
-    message = tell(config,('Черновик' + item_name(item) + ': ' if item_name(item) else '') + answer,reply_markup=keyboard)
+    keyboard['inline_keyboard'].append(cancel_button(payload['item'],payload['revision']))
+    name = item_name(item,store,payload['item'])
+    message = tell(config,('Черновик' + name + ': ' if name else '') + answer,reply_markup=keyboard)
+    shown = []
     def restore(tx):
+        shown.clear()
         saved = store.get('specs/' + slug,tx)
         current = store.get('items/' + payload['item'],tx)
         if not saved or not current or saved.get('state') != 'drafting' or current.get('revision') != payload['revision'] or current.get('status') != 'drafting':
             return False
-        saved.update(state='previewed',hash=digest,preview_message=message['message_id'])
+        saved.update(state='previewed',hash=digest,preview_message=message['message_id'],answered=True)
         if newp:
             key = current.get('followup')
             followup = store.get('followups/' + key,tx) if key else None
@@ -900,13 +1004,15 @@ def answer_edit(config,store,payload,item,answer):
                 followup['answered'] = True
                 store.put('followups/' + key,followup,tx)
         current.update(status='previewed',edits_applied=len(current.get('edits',[])),photos_applied=len(current.get('edit_photos',[])))
-        current.pop('status_message',None)
+        shown.append(current.pop('status_message',None))
         store.put('specs/' + slug,saved,tx)
         store.put('items/' + payload['item'],current,tx)
         store.put('published-messages/' + str(message['message_id']),{'slug':slug},tx)
         return True
     if not store.atomic(restore):
         remove_keyboard(config,{'preview_message':message['message_id']})
+    elif shown:
+        finish_status(config,shown[0],'Ответил ниже.')
 
 
 def restrict(config,store,payload,item,photos,video):
@@ -925,8 +1031,8 @@ def reeled(allowed):
 
 def edit_media(config,store,bucket,payload,item,directory):
     shots = []
-    fresh = item.get('edit_photos',[])[item.get('photos_applied',0):]
-    for attachment in media.intake(bucket,payload['item'],{'messages':fresh},config,directory) if fresh else []:
+    every = item.get('edit_photos',[])[-20:]
+    for attachment in media.intake(bucket,payload['item'],{'messages':every},config,directory) if every else []:
         destination = directory / ('edit-' + attachment['name'])
         media.clean_image(attachment['path'],destination)
         shots.append(destination)
@@ -972,9 +1078,11 @@ def start_job(project,identifier):
 
 
 def acknowledge_remount(config,store,payload,item):
-    if item.get('status_message') or len(item.get('edits',[])) <= item.get('edits_applied',0) and len(item.get('edit_photos',[])) <= item.get('photos_applied',0):
+    if item.get('status_message'):
         return
-    record = {'text':'Перемонтирую' + item_name(item) + '…','line':'Принял правку · шаг 1 из 3'}
+    remount = len(item.get('edits',[])) > item.get('edits_applied',0) or len(item.get('edit_photos',[])) > item.get('photos_applied',0)
+    first = not remount and item.get('montage') and any(imaged(x).get('video') for x in item['messages'])
+    record = {'text':('Перемонтирую' if remount else 'Монтирую' if item.get('montage') else 'Готовлю превью') + (' ' + clips(item) + titled(item) if first else item_name(item,store,payload['item'])) + '…','line':'Принял правку · шаг 1 из 3' if remount else 'Принял · шаг 1 из 3' if item.get('montage') else 'Принял'}
     try:
         record['id'] = tell(config,(record['text'] + '\n' + record['line']))['message_id']
     except Exception:
@@ -988,7 +1096,7 @@ def plan_montage(config,store,bucket,payload,directory):
     if not item:
         return
     acknowledge_remount(config,store,payload,item)
-    inputs = media.intake(bucket,payload['item'],item,config,directory)
+    inputs = unique_clips(media.intake(bucket,payload['item'],item,config,directory))
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
         return
@@ -1025,25 +1133,26 @@ def plan_montage(config,store,bucket,payload,directory):
     allowed = reeled(restrict(config,store,payload,item,False,True))
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):]
-    follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
-    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})},images,lambda value:(drafter.answer_errors(value) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,lambda usage:store.record_usage(payload['item'],'montage',usage))
+    follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
+    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,lambda usage:store.record_usage(payload['item'],'montage',usage))
     if superseded(store,payload):
         return
     if drafter.answered(edl):
-        answer_edit(config,store,payload,item,edl['answer'])
+        take_answer(config,store,payload,item,edl)
         return
+    show_texts(config,store,item,payload['item'],edl['targets'],edl['copy'])
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
     job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
     start_job(project,identifier)
-    name = item_name(item)
+    name = item_name(item,store,payload['item'])
     if edits and item.get('edl'):
         markup = newp_markup(store,payload['item']) if fresh else []
         text = 'Перемонтирую' + name + ' с правкой: ' + (lambda note:note[:200] + '…' if len(note) > 200 else note)(' '.join('; '.join(fresh or edits[-1:]).split())) + '. Рендерю черновик в низком качестве. Превью пришлю сюда.'
         if markup or not item.get('status_message'):
-            tell(config,text,**({'reply_markup':{'inline_keyboard':[markup]}} if markup else {}))
+            tell(config,text,reply_markup={'inline_keyboard':([markup] if markup else []) + [cancel_button(payload['item'],payload['revision'])]})
     else:
         tell(config,'Монтирую' + name + ': план готов, рендерю черновик в низком качестве. Превью пришлю сюда.')
 
@@ -1101,7 +1210,7 @@ def announce_retry(config,store,slug,saved):
 def finish_final(config,store,payload,item,job):
     slug = item['slug']
     saved = store.get('specs/' + slug)
-    if not saved or saved.get('final_render') != payload['render'] or saved.get('state') != 'rendering' or item['revision'] != payload['revision']:
+    if not saved or saved.get('final_render') != payload['render'] or saved.get('state') != 'rendering':
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
         return
     if job.get('state') != 'done':
@@ -1145,7 +1254,7 @@ def clips_rendered(config,store,bucket,payload,directory,job):
                 note = 'Клип ' + str(position + 1) + ' длиннее ' + str(CLIP_SECONDS) + ' секунд: обрезан до ' + str(CLIP_SECONDS) + '.'
                 if note not in lines:
                     lines.append(note)
-            mine['clip' + str(position) + '.mp4'] = {key:info[key] for key in ('object','generation','sha256','size','content_type')}
+            mine['clip' + str(position) + '.mp4'] = {**{key:info[key] for key in ('object','generation','sha256','size','content_type')},'duration':max(1,round(info['seconds'])),**{key:info[key] for key in ('width','height') if info.get(key)}}
         photos = sum(name.startswith('image') for name in mine)
         moving = sum(name.startswith('clip') for name in mine)
         if not photos + moving or not photos and moving == 1 and target in ('ig-post','threads'):
@@ -1390,10 +1499,11 @@ def fix(config,store,slug):
             candidate = {**spec,'copy':value['copy']}
             return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
         status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in platforms.live(source['spec']['targets'])}
-        asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'instruction':saved['instruction']}
+        retry = source.get('state') == 'partial' and bool(source.get('hash')) and any(source.get('errors',{}).get(t) and t not in source.get('results',{}) for t in source['spec']['targets'])
+        asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'instruction':saved['instruction'],**({'retry_available':True} if retry else {})}
         corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked,rec=lambda usage:store.record_usage(saved['item'],'fix',usage))
         if drafter.answered(corrected):
-            message = tell(config,corrected['answer'])
+            message = tell(config,corrected['answer'],**({'reply_markup':buttons(saved['source'],source['hash'],True)} if retry else {}))
             store.change('specs/' + slug,lambda value:value.update(state='rejected'))
             store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
             return
@@ -1588,6 +1698,8 @@ def handle_worker(request):
                 prepared(config,store,bucket,payload)
             elif step == 'rendered':
                 rendered(config,store,bucket,payload,directory)
+            elif step == 'answer':
+                question(config,store,payload)
             elif step == 'fix':
                 fix(config,store,payload['slug'])
             elif step == 'apply-fix':
@@ -1598,6 +1710,8 @@ def handle_worker(request):
                 upload_prompt(config,store,bucket,payload)
             elif step == 'upload-complete':
                 upload_complete(config,store,bucket,payload,directory)
+            elif step == 'finish-status':
+                finish_status(config,payload['status'],payload['line'])
             elif step in ('edit-prompt','remove-keyboard'):
                 saved = store.get('specs/' + payload['slug']) or {}
                 remove_keyboard(config,{'preview_message':payload['message']} if payload.get('message') else saved,payload.get('line'))
@@ -1654,7 +1768,7 @@ def handle_worker(request):
             name = ''
             try:
                 if payload.get('item'):
-                    name = item_name(store.get('items/' + payload['item']))
+                    name = item_name(store.get('items/' + payload['item']),store,payload['item'])
                 elif payload.get('slug'):
                     saved = store.get('specs/' + payload['slug']) or {}
                     name = post_name(store,saved)
@@ -1716,7 +1830,26 @@ def maintenance(config,store,bucket):
     store.flush(enqueue)
 
 
+def reject_stale_fixes(store):
+    fixes = {}
+    for snapshot in store.db.collection('specs').where('state','==','previewed').stream():
+        saved = snapshot.to_dict()
+        if saved.get('operation') == 'fix' and saved.get('item'):
+            fixes.setdefault(saved['item'],[]).append(snapshot.id)
+    for slugs in fixes.values():
+        for slug in sorted(slugs,key=lambda name:int(name[4:]) if name[4:].isdigit() else 0)[:-1]:
+            def reject(tx):
+                saved = store.get('specs/' + slug,tx)
+                if saved and saved.get('state') == 'previewed':
+                    saved['state'] = 'rejected'
+                    store.put('specs/' + slug,saved,tx)
+                    if saved.get('preview_message'):
+                        store.job(tx,{'slug':slug,'step':'remove-keyboard','message':saved['preview_message']},'superseded-' + slug)
+            store.atomic(reject)
+
+
 def recover_running(config,store):
+    reject_stale_fixes(store)
     for snapshot in store.db.collection('specs').where('state', '==', 'running').stream():
         def recover(value):
             if value.get('state') != 'running' or time.time() - value.get('started_at',time.time()) <= 600:
@@ -1735,7 +1868,10 @@ def recover_running(config,store):
         spec = snapshot.to_dict()
         render = spec.get('final_render')
         job = store.get('renders/' + render) if render else None
-        if (job or {}).get('state') == 'done':
+        if (job or {}).get('state') == 'done' and not job.get('delivered'):
+            continue
+        if job and job.get('state') == 'done':
+            fail_final(config,store,snapshot.id,render)
             continue
         if job and job.get('state') in ('queued','running') and not spec.get('started_at'):
             if (job.get('created') or (job.get('progress') or {}).get('since')) and not overdue(job,time.time()):
