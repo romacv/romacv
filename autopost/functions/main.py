@@ -1,4 +1,5 @@
 import contextvars
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import difflib
 import hashlib
@@ -26,9 +27,10 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import EXPIRED_TEXT, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import EXPIRED_TEXT, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, bursted, BURST_SECONDS, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import agents
 import drafter
+import voice
 import learning
 import progress as progress_view
 import media
@@ -206,9 +208,9 @@ def callback_reply(config, store, query, result, visible):
     return https_fn.Response(json.dumps(toast,ensure_ascii=False),content_type='application/json')
 
 
-def collect_reply(config, store, item_id, item, text):
+def collect_reply(config, store, item_id, item, text, burst=False):
     offers = offered(config,store.get('tokens/business') or config.get('business'))
-    return {'item':item_id,'text':hinted(text,offers,item.get('chosen')),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
+    return {'item':item_id,'text':bursted(item,offers,item.get('chosen')) if burst else hinted(text,offers,item.get('chosen')),'reply_markup':collect_keyboard(item_id,item['batch_token'],offers,item.get('chosen',[]))}
 
 
 def send_collect(config, store, result, claim=None):
@@ -238,7 +240,7 @@ def send_collect(config, store, result, claim=None):
             remove_keyboard(config,{'preview_message':previous})
         current = store.get('items/' + result['item']) or {}
         if current.get('status') == 'collecting' and current.get('keyboard_message') == identifier and current.get('revision') != result.get('revision'):
-            fresh = collect_reply(config,store,result['item'],current,collected(current))
+            fresh = collect_reply(config,store,result['item'],current,collected(current),time.time() - (current.get('added') or {}).get('at',0) <= BURST_SECONDS)
             edit_message(config,identifier,fresh['text'],fresh['reply_markup'])
     except Exception:
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
@@ -521,8 +523,8 @@ def newp_markup(store, item_id):
     return [{'text':'Это новый пост','callback_data':'newp:' + key + ':' + followup['token']}]
 
 
-def buttons(slug, digest, retry=False, published=False):
-    actions = ([('retry','Повторить')] if retry else []) + [('pfix','Править'),('pdel','Удалить')] if published else [('retry','Повторить')] if retry else [('pub','Опубликовать'),('edit','Править'),('rej','Отклонить')]
+def buttons(slug, digest, retry=False, published=False, accept=False):
+    actions = ([('retry','Повторить')] if retry else []) + [('pfix','Править'),('pdel','Удалить')] + ([('acc','Принять')] if accept else []) if published else [('retry','Повторить')] if retry else [('pub','Опубликовать'),('edit','Править'),('rej','Отклонить')]
     values = [{'text':label,'callback_data':verb + ':' + slug + ':' + digest[:8]} for verb,label in actions]
     if any(len(x['callback_data'].encode()) > 64 for x in values):
         raise Error('Callback exceeds 64 bytes')
@@ -576,12 +578,15 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     track(store.step,item_id,'preview',{},revision)
     scoped = {}
     last = []
+    quote = []
     def withdrawn():
         item = store.get('items/' + item_id) or {}
         return item.get('status') == 'rejected' or revision is not None and item.get('revision') != revision
     def send(method, fields, files=None, targets=None):
         if withdrawn():
             raise Withdrawn()
+        if quote:
+            fields = {**fields,'reply_parameters':{'message_id':quote.pop(),'allow_sending_without_reply':True}}
         reply = platforms.telegram(method,fields,files)
         for position, message in enumerate(reply if isinstance(reply,list) else [reply]):
             last[:] = [(message['message_id'],method)]
@@ -611,6 +616,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
     if not store.atomic(begin):
         return
     current = started[0]
+    quote[:] = [m['message_id'] for m in current.get('messages',[]) if imaged(m).get('photo') or imaged(m).get('video')][:1]
     try:
         offer(config,store,bucket,item_id,spec,assets,directory,basis,revision,saved,digest,current,send,say,last,scoped)
     except Withdrawn:
@@ -655,39 +661,67 @@ def show_texts(config, store, item, item_id, targets, copy):
     store.change('items/' + item_id,lambda value:value.update(texts_sent=sorted(set(sent) | set(every))))
 
 
+PHRASES = {'tg-channel':'пост в Telegram-канале','threads':'пост Threads','ig-post':'пост Instagram','ig-reel':'Reels Instagram'}
+STORIES = {'tg-story':'Telegram','ig-story':'Instagram'}
+
+
+def preview_label(targets, title):
+    parts = [PHRASES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in targets if t in PHRASES]
+    networks = sorted(STORIES[t] for t in targets if t in STORIES)
+    if networks:
+        parts.append('сторис ' + ' и '.join(networks))
+    return 'Это ' + (', '.join(parts[:-1]) + ' и ' if len(parts) > 1 else '') + parts[-1]
+
+
 def offer(config, store, bucket, item_id, spec, assets, directory, basis, revision, saved, digest, current, send, say, last, scoped):
     platforms.telegram_identity()
-    files, found = [], {}
-    for target in platforms.live(spec['targets']):
-        for name, manifest in assets.get(target,{}).items():
-            entry = found.setdefault(manifest.get('sha256') or json.dumps(manifest,sort_keys=True),[name,manifest,[]])
-            if entry not in files:
-                files.append(entry)
-            if target not in entry[2]:
-                entry[2].append(target)
-    shown = []
-    for position, (name, manifest, targets) in enumerate(files):
-        unique = 'preview-' + str(position) + Path(name).suffix
-        media.materialize(bucket,{unique:manifest},directory)
-        shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'caption':('Обложка. ' if name.startswith('cover') else '') + destinations(targets),'targets':targets,'size':{key:manifest[key] for key in ('duration','width','height') if manifest.get(key)}})
-    for start in range(0,len(shown),10):
-        chunk = shown[start:start + 10]
-        if len(chunk) == 1:
-            method, field = ('sendVideo','video') if chunk[0]['video'] else ('sendPhoto','photo')
-            send(method,{'chat_id':config['roman_chat_id'],'caption':chunk[0]['caption'],**chunk[0]['size']},{field:chunk[0]['path']},[chunk[0]['targets']])
-        else:
-            attached = {'file' + str(index):value['path'] for index,value in enumerate(chunk)}
-            group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),'caption':value['caption'],**value['size']} for index,value in enumerate(chunk)]
-            send('sendMediaGroup',{'chat_id':config['roman_chat_id'],'media':group},attached,[value['targets'] for value in chunk])
     title = config.get('channel_title')
     if not title and 'tg-channel' in spec['targets'] and config.get('channels',{}).get('tg-channel'):
         try:
             title = platforms.telegram('getChat',{'chat_id':config['channels']['tg-channel']}).get('title')
         except Error:
             title = None
-    blocks = copy_blocks(spec['targets'],spec['copy'])
-    sent = current.get('texts_sent') if isinstance(current.get('texts_sent'),list) else []
-    blocks = {text:members for text,members in blocks.items() if text not in sent}
+    groups = {}
+    for target in platforms.live(spec['targets']):
+        files = {}
+        for name, manifest in assets.get(target,{}).items():
+            files.setdefault(manifest.get('sha256') or json.dumps(manifest,sort_keys=True),(name,manifest))
+        text = '' if target == 'ig-story' else spec['copy'].get(target,'')
+        entry = groups.setdefault((frozenset(files),text),[files,text,[]])
+        entry[2].append(target)
+    counter = 0
+    shown_texts = set()
+    chat = config['roman_chat_id']
+    for files, text, targets in groups.values():
+        shown = []
+        for name, manifest in files.values():
+            unique = 'preview-' + str(counter) + Path(name).suffix
+            counter += 1
+            media.materialize(bucket,{unique:manifest},directory)
+            shown.append({'path':directory/unique,'video':name.endswith('.mp4'),'size':{key:manifest[key] for key in ('duration','width','height') if manifest.get(key)}})
+        if not shown and not text:
+            continue
+        caption = {'caption':text} if shown and text and platforms.units(text) <= 1024 else {}
+        first = None
+        for start in range(0,len(shown),10):
+            chunk = shown[start:start + 10]
+            extra = caption if start == 0 else {}
+            if len(chunk) == 1:
+                method, field = ('sendVideo','video') if chunk[0]['video'] else ('sendPhoto','photo')
+                reply = send(method,{'chat_id':chat,**chunk[0]['size'],**extra},{field:chunk[0]['path']},[targets])
+                sent = [reply]
+            else:
+                attached = {'file' + str(index):value['path'] for index,value in enumerate(chunk)}
+                group = [{'type':'video' if value['video'] else 'photo','media':'attach://file' + str(index),**value['size'],**(extra if index == 0 else {})} for index,value in enumerate(chunk)]
+                sent = send('sendMediaGroup',{'chat_id':chat,'media':group},attached,[targets] * len(chunk))
+            first = first or sent[0]['message_id']
+        if text and not caption:
+            written = say(text,targets)['message_id']
+            first = first or written
+        if text:
+            shown_texts.add(text)
+        say(preview_label(targets,title),targets,reply_parameters={'message_id':first,'allow_sending_without_reply':True})
+    blocks = {text:members for text,members in copy_blocks([t for t in spec['targets'] if t != 'ig-story'],spec['copy']).items() if text not in shown_texts}
     note = ' (низкое качество; финальное видео соберу после «Опубликовать»)' if basis is not None else ''
     lines = current.get('skipped',[]) + (['Заметка: ' + spec['notes']] if spec.get('notes') else [])
     heading = '<b>' + html.escape('Черновик' + post_name(store,saved) + ': куда пойдёт',quote=False) + '</b>'
@@ -797,13 +831,152 @@ def transcript(config,store,bucket,payload,item,attachment,key):
     return value
 
 
+BAR_WIDTH = 10
+STAGE_GAP = 5
+EDIT_GAP = 2
+STORE_GAP = 1
+PROJECTS_URL = 'https://raw.githubusercontent.com/romacv/romacv/main/data.json'
+PREP = 'подготовка'
+AGENT_STATUS = {'done':'готово','waiting':'ждёт','failed':'ошибка','cancelled':'отменён'}
+
+
+def bar(fraction):
+    filled = round(BAR_WIDTH * max(0,min(1,fraction)))
+    return '▰' * filled + '▱' * (BAR_WIDTH - filled) + ' ' + str(round(100 * max(0,min(1,fraction)))) + '%'
+
+
+class Stages:
+    def __init__(self, config, record, name, write=None, alive=None):
+        self.config, self.record, self.name, self.write, self.alive = config, record, name, write, alive
+        self.begun = self.last = time.monotonic()
+        self.key = self.shown = self.wrote = None
+        self.closed = False
+        self.places = ''
+        self.state = ('',0,'')
+        self.written = self.pushed = 0
+        self.lock = threading.Lock()
+        self.editing = threading.Lock()
+        self.halt = threading.Event()
+
+    def start(self):
+        def tick():
+            while not self.halt.wait(STAGE_GAP):
+                self.push()
+        threading.Thread(target=contextvars.copy_context().run,args=(tick,),daemon=True).start()
+
+    def __call__(self, key, text, fraction, extra='', force=False, quiet=False):
+        now = time.monotonic()
+        with self.lock:
+            self.state = (text,fraction,extra)
+            changed = key != self.key
+            if changed:
+                logging.info(json.dumps({'code':'stage','name':self.name,'stage':key,'elapsed':round(now - self.begun,1),'previous':round(now - self.last,1)},ensure_ascii=False))
+                self.key, self.last = key, now
+            write = self.write is not None and not self.closed and text != self.wrote and (changed or force or now - self.written >= STORE_GAP)
+            if write:
+                self.wrote, self.written = text, now
+        if write:
+            self.write(text)
+        if not quiet and (changed or force):
+            self.push(EDIT_GAP)
+
+    def push(self, gap=STAGE_GAP):
+        if not self.record:
+            return
+        with self.editing:
+            with self.lock:
+                text,fraction,extra = self.state
+                body = (self.record['text'] + '\n' + bar(fraction) + ' · ' + text + (('\n\n' + extra[:3000]) if extra else '')).strip()
+                now = time.monotonic()
+                if not text or body == self.shown or now - self.pushed < gap:
+                    return
+                self.pushed, self.shown = now, body
+            if self.alive is None or self.alive():
+                edit_message(self.config,self.record['id'],body)
+
+    def finish(self, line):
+        self.halt.set()
+        if not self.closed:
+            self.closed = True
+            if self.write is not None:
+                self.write(None)
+        if self.record and line:
+            with self.editing:
+                if self.alive is None or self.alive():
+                    finish_status(self.config,self.record,line)
+
+
+def agents_line(live):
+    with live.lock:
+        rows = {name:dict(value) for name,value in live.agents.items()}
+    parts = [agents.LABELS.get(name,name) + ' — ' + (AGENT_STATUS.get(value.get('status')) or value.get('action') or 'работаю') for name,value in rows.items() if name in agents.NAMES]
+    done = sum(1 for name in agents.NAMES if rows.get(name,{}).get('status') == 'done')
+    return ', '.join(parts), done
+
+
+def watch_agents(stages, live, stop):
+    def beat():
+        while not stop.wait(1):
+            try:
+                line, done = agents_line(live)
+                stages('agents','Пишу черновик: ' + line if line else 'Пишу черновик',0.4 + 0.4 * done / len(agents.NAMES),stages.places,quiet=True)
+            except Exception as failure:
+                logging.error(json.dumps({'code':'stage_watch_failed','error':str(failure)[:200]}))
+    threading.Thread(target=contextvars.copy_context().run,args=(beat,),daemon=True).start()
+
+
+def places_text(value):
+    rows = []
+    for place in (value.get('places') if isinstance(value,dict) else None) or []:
+        if isinstance(place,dict) and place.get('name'):
+            label = ', '.join(str(x) for x in (place['name'],place.get('city')) if x)
+            rows.append('• ' + label + ' — ' + (place.get('maps_url') or 'https://www.google.com/maps/search/?api=1&query=' + quote(label)))
+    return ('Места:\n' + '\n'.join(rows[:6])) if rows else ''
+
+
+def draft_text(spec):
+    blocks = copy_blocks(spec['targets'],spec['copy'])
+    return '\n\n'.join(destinations(members) + ':\n' + text for text,members in blocks.items())
+
+
 def draft(config,store,bucket,payload,directory):
     item = store.claim_item(payload['item'],payload['revision'])
     if not item:
         return
+    key = 'conversations/' + payload['item']
+    early = item.get('edits',[])[store.seen(key,payload['revision']):]
+    if not item.get('montage'):
+        acknowledge_remount(config,store,payload,item)
+    step = 'edit' if early else 'draft'
+    plain = item.get('prepared') or all(a['kind'] == 'photo' for a in media.attachments(item))
+    record = item.get('status_message') if plain and not item.get('montage') else None
+    def write(text):
+        track(store.step,payload['item'],step,{'agents':{PREP:{'status':'running' if text else 'done','action':text}}},payload['revision'])
+    stages = Stages(config,record,payload['item'],write if plain else None,lambda:not superseded(store,payload))
+    stages.start()
+    stages('open','Принял',0.0)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as background:
+            projects = background.submit(contextvars.copy_context().run,fetch_projects)
+            return draft_body(config,store,bucket,payload,directory,item,stages,projects,key)
+    finally:
+        stages.finish(None)
+
+
+def fetch_projects():
+    try:
+        return platforms.request('GET',PROJECTS_URL,timeout=10)
+    except Exception as failure:
+        logging.error(json.dumps({'code':'projects_fetch_failed','error':str(failure)[:200]}))
+        return []
+
+
+def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
     if item.get('montage') and item.get('status_message'):
         edit_message(config,item['status_message']['id'],(item['status_message']['text'] + '\n' + (item['status_message'].get('line') or '') + '\nСоставляю план монтажа · шаг 2 из 3').strip())
-    inputs = unique_clips(media.intake(bucket,payload['item'],item,config,directory))
+    stages('intake','Загружаю материал',0.02)
+    word = 'фото' if all(a['kind'] == 'photo' for a in media.attachments(item)) else 'файлы'
+    inputs = unique_clips(media.intake(bucket,payload['item'],item,config,directory,lambda done,total:stages('intake','Загружаю ' + word + ' ' + str(done) + '/' + str(total),0.02 + 0.28 * done / max(total,1),quiet=True)))
     if any(a['kind'] != 'photo' for a in inputs) and not item.get('prepared'):
         start_preparation(config,store,bucket,payload,item,inputs)
         return
@@ -811,8 +984,10 @@ def draft(config,store,bucket,payload,directory):
     if item.get('prepared'):
         store.change('items/' + payload['item'],lambda value:value.update(uploads={a['name']:a['manifest'] for a in inputs}))
     transcripts,images,files,clips = [],[],{},[]
+    pictures = sum(1 for a in inputs if a['kind'] == 'photo')
     for attachment in inputs:
         if attachment['kind'] == 'photo':
+            stages('clean','Обрабатываю фото ' + str(len(images) + 1) + '/' + str(pictures),0.3 + 0.1 * len(images) / max(pictures,1))
             destination = directory / ('clean-' + attachment['name'])
             media.clean_image(attachment['path'],destination)
             images.append(destination)
@@ -821,13 +996,15 @@ def draft(config,store,bucket,payload,directory):
             transcripts.append(transcript(config,store,bucket,payload,item,attachment,attachment['name']))
         else:
             clips.append(attachment['path'].stem)
+    stages('edits','Читаю правки',0.4)
     heard = edit_media(config,store,bucket,payload,item,directory)
     if heard is None:
         return
     edits,shots = heard
+    stages('restrict','Проверяю назначения',0.42)
     allowed = restrict(config,store,payload,item,bool(files),bool(clips))
     source = {'slug':item['slug'],'messages':item['messages'],'edits':edits,'transcripts':transcripts,'available_images':list(files),**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'clips':len(clips)} if clips else {}),**({'chosen_targets':allowed} if allowed else {})}
-    source['public_projects'] = platforms.request('GET','https://raw.githubusercontent.com/romacv/romacv/main/data.json')
+    source['public_projects'] = projects.result()
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))
     owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
@@ -850,33 +1027,43 @@ def draft(config,store,bucket,payload,directory):
             detail = 'Invalid media path ' + json.dumps(wrong,ensure_ascii=False) + '; use only these available_images paths exactly: ' + json.dumps(list(files))
             errors = [detail if x == 'Invalid media path' else x for x in errors]
         return list(dict.fromkeys(errors))
-    key = 'conversations/' + payload['item']
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{} if follow is not None else {'agents':{name:{'status':'waiting'} for name in agents.NAMES}},payload['revision'])
     if follow is None:
         live = agents.Live(store,payload['item'],'draft',payload['revision'])
+        live.found = lambda name,value:name == 'places' and (setattr(stages,'places',places_text(value)),stages('places','Нашёл места',0.6,stages.places,True))
         live.start()
+        stages('agents','Пишу черновик',0.45,force=True)
+        halt = threading.Event()
+        watch_agents(stages,live,halt)
         try:
             spec = agents.run_draft(config,store,payload['item'],payload['revision'],source,images + shots,clips,validate,lambda kind,usage:store.record_usage(payload['item'],kind,usage),live)
         except agents.Cancelled:
             return
         finally:
+            halt.set()
             live.stop()
     else:
+        stages('agents','Правлю черновик',0.45,force=True)
         spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit',usage))
     if superseded(store,payload):
         return
+    stages.finish(None)
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{'state':'done'},payload['revision'])
     if drafter.answered(spec):
+        stages.finish('Ответил.')
         take_answer(config,store,payload,item,spec)
         return
+    shown = (stages.places + '\n\n' if stages.places else '') + draft_text(spec)
+    stages('texts','Готовлю файлы',0.9,shown,True)
     if fresh:
         markup = newp_markup(store,payload['item'])
         tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),reply_markup={'inline_keyboard':([markup] if markup else []) + [cancel_button(payload['item'],payload['revision'])]})
     assets = {}
     composed = {}
-    for target in spec['targets']:
+    for number,target in enumerate(spec['targets'],1):
+        stages('assets','Готовлю файлы ' + str(number) + '/' + str(len(spec['targets'])),0.9 + 0.1 * (number - 1) / max(len(spec['targets']),1),shown)
         target_assets = {}
         for index,image in enumerate([] if target == 'ig-reel' else spec.get('media',{}).get('images',[])):
             path = directory/image['path']
@@ -949,7 +1136,12 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
 
 def unique_clips(inputs):
     seen = set()
-    return [a for a in inputs if a['kind'] != 'video' or not (a['manifest']['sha256'] in seen or seen.add(a['manifest']['sha256']))]
+    def repeated(a):
+        keys = [(a['kind'],a['manifest']['sha256'])] + ([(a['kind'],a['file_unique_id'])] if a['kind'] == 'photo' and a.get('file_unique_id') else [])
+        found = any(k in seen for k in keys)
+        seen.update(keys)
+        return found
+    return [a for a in inputs if a['kind'] not in ('video','photo') or not repeated(a)]
 
 
 def cancel_button(item_id,revision):
@@ -1256,6 +1448,11 @@ def announce_retry(config,store,slug,saved):
     tell(config,text,reply_markup=buttons(slug,saved['hash'],True))
     store.talk(saved.get('item'),None,text)
     store.change('specs/' + slug,lambda value:value.pop('retry_pending',None))
+    try:
+        finish_status(config,saved.get('publish_message'),'Прервано.')
+        store.change('specs/' + slug,lambda value:value.pop('publish_message',None))
+    except Exception:
+        logging.error(json.dumps({'code':'publish_message_not_closed'}))
 
 
 def finish_final(config,store,payload,item,job):
@@ -1441,6 +1638,37 @@ def target_lines(saved):
     return lines
 
 
+def open_publish_status(config,store,slug):
+    saved = store.get('specs/' + slug) or {}
+    if saved.get('publish_message'):
+        return saved['publish_message']
+    record = {'text':'Публикую' + post_name(store,saved) + '…'}
+    record['id'] = tell(config,record['text'])['message_id']
+    kept = []
+    def keep(value):
+        if value.get('publish_message'):
+            kept.append(value['publish_message'])
+        else:
+            value['publish_message'] = record
+    try:
+        store.change('specs/' + slug,keep)
+    except Exception:
+        logging.error(json.dumps({'code':'publish_message_not_saved'}))
+        return record
+    return kept[0] if kept else record
+
+
+def publish_lines(saved,running=None):
+    rows = []
+    for target in publish_order(platforms.live(saved['spec']['targets'])):
+        result = saved.get('results',{}).get(target)
+        failure = saved.get('errors',{}).get(target)
+        exhausted = saved.get('attempts',{}).get(target,0) >= 3
+        status = 'готово ' + (result['url'] or 'ссылка не получена') if result else 'публикую' if target == running else ('ошибка: ' + failure if exhausted else 'ждёт, повторю: ' + failure) if failure else 'ждёт'
+        rows.append(destinations([target]) + ' — ' + status)
+    return '\n'.join(rows)
+
+
 def run(config,store,bucket,slug,directory,resume=False):
     saved = store.claim_run(slug,resume)
     if not saved:
@@ -1465,54 +1693,66 @@ def run(config,store,bucket,slug,directory,resume=False):
         return
     published_targets = {**saved['results'],**saved.get('published',{})}
     track(store.publish_progress,slug,None,{'targets':pending_targets(saved)})
-    for target in pending_targets(saved)[:1]:
-        attempts = saved.setdefault('attempts',{})
-        attempts[target] = attempts.get(target,0) + 1
-        store.change('specs/' + slug,lambda value:value.update(attempts=attempts))
-        track(store.publish_progress,slug,target,{'status':'running','attempt':attempts[target],'run':True})
-        state = {'steps':{}}
-        target_assets = assets.get(target,{})
-        try:
-            for manifest in target_assets.values():
-                if not bucket.blob(manifest['object'],generation=int(manifest['generation'])).exists():
-                    raise platforms.ExpiredMaterial(EXPIRED_TEXT)
-            media.materialize(bucket,target_assets,directory)
-            target_spec = json.loads(json.dumps(spec))
-            target_spec['media'],keys = target_media(spec,target_assets)
+    live_targets = platforms.live(spec['targets'])
+    try:
+        record = open_publish_status(config,store,slug)
+    except Exception:
+        record = saved.get('publish_message')
+    progress = Stages(config,record,slug,None,lambda:(store.get('specs/' + slug) or {}).get('state') == 'running')
+    progress.start()
+    try:
+        for target in pending_targets(saved)[:1]:
+            attempts = saved.setdefault('attempts',{})
+            progress('target-' + target,'Публикую: ' + destinations([target]),len(saved['results']) / max(len(live_targets),1),publish_lines(saved,target),True)
+            attempts[target] = attempts.get(target,0) + 1
+            store.change('specs/' + slug,lambda value:value.update(attempts=attempts))
+            track(store.publish_progress,slug,target,{'status':'running','attempt':attempts[target],'run':True})
             state = {'steps':{}}
-            for checkpoint in store.db.collection('specs/' + slug + '/checkpoints').stream():
-                step = checkpoint.to_dict()
-                state['steps'][step['name']] = {'status':step['state'],'value':step.get('value')}
-            if target.startswith('tg-'):
-                result = platforms.post_telegram(target_spec,state,target)
-                verified = platforms.link_opens(result)
-            else:
-                provider = 'instagram' if target.startswith('ig-') else 'threads'
-                session = platforms.social_session(provider)
-                urls = {key:media.signed(bucket,target_assets[name]['object'],config,generation=target_assets[name]['generation']) for key,name in keys.items()}
-                for key,url in urls.items():
-                    manifest = target_assets[keys[key]]
-                    platforms.probe(url,directory/keys[key],manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
-                result = platforms.post_social(target_spec,state,target,urls,session)
-                verified = platforms.link_opens(result)
-            publication = state['steps'].get(target + ':publish',{}).get('value')
-            published = {'url':result,'verified':verified,'at':time.time(),'copy':spec.get('copy',{}).get(target)}
-            published.update(published_ids(config,spec,target,target_assets,publication))
-            saved['results'][target] = published
-            published_targets[target] = published
-            saved['errors'].pop(target,None)
-        except platforms.ExpiredMaterial as failure:
-            saved['errors'][target] = str(failure)
-            attempts[target] = 3
-        except Exception as failure:
-            saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
-        publication = state['steps'].get(target + ':publish',{})
-        if target not in published_targets and publication.get('status') == 'done':
-            published_targets[target] = {'url':'','verified':False,'at':time.time(),'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
-        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets,attempts=attempts))
-        store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
-        sent = target in saved['results']
-        track(store.publish_progress,slug,target,{'status':'done' if sent else 'failed' if attempts[target] >= 3 else 'planned','run_end':'done' if sent else 'failed','url':saved['results'][target]['url'] if sent else None,'error':None if sent else saved['errors'].get(target)})
+            target_assets = assets.get(target,{})
+            try:
+                for manifest in target_assets.values():
+                    if not bucket.blob(manifest['object'],generation=int(manifest['generation'])).exists():
+                        raise platforms.ExpiredMaterial(EXPIRED_TEXT)
+                media.materialize(bucket,target_assets,directory)
+                target_spec = json.loads(json.dumps(spec))
+                target_spec['media'],keys = target_media(spec,target_assets)
+                state = {'steps':{}}
+                for checkpoint in store.db.collection('specs/' + slug + '/checkpoints').stream():
+                    step = checkpoint.to_dict()
+                    state['steps'][step['name']] = {'status':step['state'],'value':step.get('value')}
+                if target.startswith('tg-'):
+                    result = platforms.post_telegram(target_spec,state,target)
+                    verified = platforms.link_opens(result)
+                else:
+                    provider = 'instagram' if target.startswith('ig-') else 'threads'
+                    session = platforms.social_session(provider)
+                    urls = {key:media.signed(bucket,target_assets[name]['object'],config,generation=target_assets[name]['generation']) for key,name in keys.items()}
+                    for key,url in urls.items():
+                        manifest = target_assets[keys[key]]
+                        platforms.probe(url,directory/keys[key],manifest.get('content_type') or mimetypes.guess_type(manifest['object'])[0])
+                    result = platforms.post_social(target_spec,state,target,urls,session)
+                    verified = platforms.link_opens(result)
+                publication = state['steps'].get(target + ':publish',{}).get('value')
+                published = {'url':result,'verified':verified,'at':time.time(),'copy':spec.get('copy',{}).get(target)}
+                published.update(published_ids(config,spec,target,target_assets,publication))
+                saved['results'][target] = published
+                published_targets[target] = published
+                saved['errors'].pop(target,None)
+            except platforms.ExpiredMaterial as failure:
+                saved['errors'][target] = str(failure)
+                attempts[target] = 3
+            except Exception as failure:
+                saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
+            publication = state['steps'].get(target + ':publish',{})
+            if target not in published_targets and publication.get('status') == 'done':
+                published_targets[target] = {'url':'','verified':False,'at':time.time(),'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
+            store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets,attempts=attempts))
+            store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
+            sent = target in saved['results']
+            track(store.publish_progress,slug,target,{'status':'done' if sent else 'failed' if attempts[target] >= 3 else 'planned','run_end':'done' if sent else 'failed','url':saved['results'][target]['url'] if sent else None,'error':None if sent else saved['errors'].get(target)})
+            progress('after-' + target,'Опубликовано ' + str(len(saved['results'])) + ' из ' + str(len(live_targets)),len(saved['results']) / max(len(live_targets),1),publish_lines(saved),True)
+    finally:
+        progress.finish(None)
     saved['published'] = published_targets
     remaining = pending_targets(saved)
     if remaining:
@@ -1526,6 +1766,10 @@ def run(config,store,bucket,slug,directory,resume=False):
         store.change('specs/' + slug,lambda value:value.update(errors=saved['errors']))
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
     saved['state'] = state
+    try:
+        voice.published(store,spec,saved.get('results',{}))
+    except Exception:
+        logging.error(json.dumps({'code':'voice_append_failed'}))
     any_published = bool(saved['results'] or saved.get('published'))
     track(store.step,saved['item'],'publish',{'state':'done' if any_published else 'failed'})
     if any_published:
@@ -1539,11 +1783,15 @@ def run(config,store,bucket,slug,directory,resume=False):
     can_retry = retryable(saved)
     if state == 'partial' and not can_retry:
         lines.append(EXPIRED_TEXT)
-    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and can_retry,True))
+    lost = [ROLES[t][0] + ': ' + ROLES[t][1] + ' — ' + saved['errors'][t] for t in platforms.live(spec['targets']) if t not in saved['results'] and saved.get('errors',{}).get(t) and saved['errors'][t] != EXPIRED_TEXT and not saved['errors'][t].startswith(('Прервано','Операция остановлена','Не начато'))]
+    if lost:
+        lines.append('Не опубликовано:\n' + '\n'.join(lost) + '\nПовторить попробует снова.')
+    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and can_retry,True,bool(saved['results'])))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
     store.talk(saved['item'],None,'\n'.join(lines))
     finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
-    store.change('specs/' + slug,lambda value:value.pop('status_message',None))
+    finish_status(config,record,'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
+    store.change('specs/' + slug,lambda value:(value.pop('status_message',None),value.pop('publish_message',None)))
 
 
 VERIFY_ATTEMPTS = 3
@@ -1793,6 +2041,11 @@ def apply_fix(config,store,bucket,slug,directory):
     if fix_hash(saved) != saved['approved_hash']:
         state = 'rejected'
     store.change('specs/' + slug,lambda value:value.update(state=state))
+    if state != 'rejected' and saved['operation'] == 'fix':
+        try:
+            voice.published(store,saved['spec'],saved.get('results',{}))
+        except Exception:
+            logging.error(json.dumps({'code':'voice_append_failed'}))
     source = store.get('specs/' + saved['source'])
     published_targets = {**source.get('results',{}),**source.get('published',{})}
     deleted = saved['operation'] == 'delete' and state == 'done' and all(x.get('deleted') or platforms.manual_change(t,x,saved['spec'],'delete') for t,x in published_targets.items())
@@ -1813,7 +2066,7 @@ def apply_fix(config,store,bucket,slug,directory):
         lines.append(label + ': ' + status + ' ' + (url or 'ссылка не получена'))
     extra = {}
     if not deleted:
-        markup = buttons(saved['source'],source['hash'],published=True)
+        markup = buttons(saved['source'],source['hash'],published=True,accept=bool(source.get('results')) and not source.get('accepted'))
         if state == 'partial':
             markup['inline_keyboard'][0] = buttons(slug,saved['hash'],True)['inline_keyboard'][0] + markup['inline_keyboard'][0]
         extra = {'reply_markup':markup}
@@ -1842,12 +2095,23 @@ def handle_worker(request):
                 media_kind = ((store.get('specs/' + payload['slug']) or {}).get('spec') or {}).get('media') or {}
                 action = 'upload_video' if media_kind.get('video') or media_kind.get('clips') else action
             activity(config,action,stop)
-            sync_pin(config,store)
-            if payload.get('say'):
+            if payload.get('say') and step == 'run' and payload.get('slug'):
+                try:
+                    claimable = store.get('specs/' + payload['slug']) or {}
+                    if claimable.get('state') in ('approved','running') and not claimable.get('deleted'):
+                        open_publish_status(config,store,payload['slug'])
+                except Exception:
+                    logging.error(json.dumps({'code':'say_failed','step':payload.get('step')}))
+                    try:
+                        tell(config,payload['say'])
+                    except Exception:
+                        pass
+            elif payload.get('say'):
                 try:
                     tell(config,payload['say'],**({'reply_markup':payload['markup']} if payload.get('markup') else {}))
                 except Exception:
                     logging.error(json.dumps({'code':'say_failed','step':payload.get('step')}))
+            sync_pin(config,store)
             if step == 'draft':
                 draft(config,store,bucket,payload,directory)
             elif step == 'montage':
@@ -1880,6 +2144,12 @@ def handle_worker(request):
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
                     send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
+            elif step == 'accept':
+                accepted = store.get('specs/' + payload['slug']) or {}
+                track(store.close_session,accepted.get('item'),'published','принято')
+                sync_pin(config,store)
+                missing = [ROLES[t][0] + ': ' + ROLES[t][1] + ' — ' + accepted.get('errors',{}).get(t,'не опубликовано') for t in platforms.live((accepted.get('spec') or {}).get('targets',[])) if t not in accepted.get('results',{})]
+                tell(config,'Принято' + post_name(store,accepted) + '.' + (' Не опубликовано:\n' + '\n'.join(missing) if missing else ''))
             elif step == 'verify':
                 verify(config,store,payload['slug'],payload.get('attempt',1))
             elif step == 'learn':
@@ -1927,6 +2197,12 @@ def handle_worker(request):
                         missing_errors(value)
                         value['published_at'] = time.time()
                 store.change('specs/' + payload['slug'],stopped)
+                try:
+                    closing = (store.get('specs/' + payload['slug']) or {}).get('publish_message')
+                    finish_status(config,closing,'Остановлено.')
+                    store.change('specs/' + payload['slug'],lambda value:value.pop('publish_message',None))
+                except Exception:
+                    logging.error(json.dumps({'code':'publish_message_not_closed'}))
             text = str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.'
             extra = {}
             if payload.get('step') in ('run','apply-fix') and payload.get('slug') and not isinstance(failure,platforms.ExpiredMaterial):
@@ -1980,6 +2256,10 @@ def maintenance(config,store,bucket):
         platforms.telegram('setWebhook',{'url':config['webhook_url'],'secret_token':config['webhook_secret'],'allowed_updates':['message','callback_query','business_connection']})
     now = int(time.time())
     sync_pin(config,store)
+    try:
+        voice.refresh(config,store)
+    except Exception:
+        logging.error(json.dumps({'code':'voice_refresh_failed'}))
     for provider,host,prefix in [('instagram','https://graph.instagram.com','ig'),('threads','https://graph.threads.net','th')]:
         token = platforms.token(config,store,provider)
         if not token:

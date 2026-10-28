@@ -15,7 +15,7 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
-MIGRATION = 3
+MIGRATION = 4
 MIGRATIONS = [
     ('writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
     ('montage', " Short unspoken headlines are titles, not subtitles.", ""),
@@ -25,6 +25,7 @@ MIGRATIONS = [
     ('publishing', " Blog is work only.", ""),
     ('publishing', "; blog uses the photos only.", "."),
     ('roman-social-networks', "- Blog on resrom.com: work only, English, long form with headings; the full article is written before the preview.\n", ""),
+    ('roman-social-networks', "- Telegram stories (Business): short line over the first photo or the video.\n", "- Telegram stories (Business): short line over the first photo or the video.\n- The voice comes from his own posts: see the «Мои тексты» skill.\n"),
 ]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 
@@ -95,7 +96,7 @@ def render(skills, edit=False):
     def build():
         out = ['# Skills', "Your editorial, platform, personal and montage know-how, kept from Roman's feedback. Follow the bodies; examples marked bad show what to avoid, good what to repeat. The contract above always wins."]
         for key, value in rows:
-            out.append('\n## ' + key + ': ' + value['title'] + '\n' + value['body'])
+            out.append('\n## ' + key + ': ' + value['title'] + '\n' + '\n'.join([value['body']] + voice_lines(value.get('texts', []))))
             if kept[key]:
                 out.append('Examples:')
                 out += [line(e, i if edit else None) for i, e in kept[key]]
@@ -108,6 +109,20 @@ def render(skills, edit=False):
         kept[oldest[1]].pop(0)
         text = build()
     return text
+
+
+def voice_lines(texts, count=12, cut=400):
+    by = {}
+    for row in texts:
+        by.setdefault(row['network'], []).append(row)
+    for rows in by.values():
+        rows.sort(key=lambda row: row['at'], reverse=True)
+    picked = []
+    while len(picked) < count and any(by.values()):
+        for rows in by.values():
+            if rows and len(picked) < count:
+                picked.append(rows.pop(0))
+    return ['- [' + row['network'] + '] ' + ' '.join(row['text'][:cut].split()) for row in picked]
 
 
 def summary(value):

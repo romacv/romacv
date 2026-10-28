@@ -1,3 +1,5 @@
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import hashlib
 import json
@@ -6,6 +8,7 @@ import mimetypes
 from pathlib import Path
 import re
 import subprocess
+import threading
 from datetime import timedelta
 import urllib.request
 from platforms import Error, ExpiredMaterial, telegram, digest_file
@@ -66,12 +69,14 @@ def attachments(item):
     return result
 
 
-def intake(bucket, item_id, item, config, directory):
-    result = []
+INTAKE_WORKERS = 4
+
+
+def intake(bucket, item_id, item, config, directory, progress=None):
     values = attachments(item)
     if sum(a.get('file_size',0) for a in values) > 1024*1024*1024:
         raise Error('Пакет превышает лимит 1 ГБ.')
-    for attachment in values:
+    def take(attachment):
         path = directory / attachment['name']
         name = 'inbox/' + item_id + '/' + attachment['name']
         saved = item.get('uploads',{}).get(attachment['name'])
@@ -98,10 +103,26 @@ def intake(bucket, item_id, item, config, directory):
             except OSError:
                 raise Error('Telegram download failed') from None
             saved = upload(bucket,path,name)
-        result.append({**attachment,'path':path,'manifest':saved})
         if attachment['kind'] != 'photo':
             path.unlink(missing_ok=True)
-    return result
+        return {**attachment,'path':path,'manifest':saved}
+    done = [0]
+    lock = threading.Lock()
+    def counted(attachment):
+        value = take(attachment)
+        with lock:
+            done[0] += 1
+            number = done[0]
+        if progress:
+            progress(number,len(values))
+        return value
+    with ThreadPoolExecutor(max_workers=INTAKE_WORKERS) as pool:
+        futures = [pool.submit(contextvars.copy_context().run,counted,a) for a in values]
+        try:
+            return [future.result() for future in futures]
+        except BaseException:
+            pool.shutdown(wait=False,cancel_futures=True)
+            raise
 
 
 def shrink(path):

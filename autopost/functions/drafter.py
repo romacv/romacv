@@ -40,7 +40,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             raise Error('targets must be a nonempty unique list of supported targets')
         if chosen is not None and any(t not in chosen for t in targets):
             errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag', 'location'}:
             errors.append('Unknown spec fields')
         if 'notes' in spec:
             note = spec['notes']
@@ -49,6 +49,8 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                 errors.append('notes must be a string of at most 200 characters')
             elif NOTE_TERMS.search(note) or letters and sum('\u0400' <= c <= '\u052f' for c in letters) / len(letters) < 0.8:
                 errors.append('notes must be short plain Russian with no technical words, or omitted')
+        if 'location' in spec and (not isinstance(spec['location'], str) or not 1 <= len(spec['location']) <= 120):
+            errors.append('location must be a string of 1–120 characters')
         tag = spec.get('threads_tag')
         if 'threads' in targets and tag is None and not copy_only:
             errors.append('threads needs threads_tag')

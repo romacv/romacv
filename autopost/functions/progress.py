@@ -347,7 +347,7 @@ def percent_of(session, state):
     steps = [s for s in session.get('steps') or [] if s.get('state')]
     running = [s for s in steps if s.get('state') == 'running']
     rows = list((running[-1].get('targets') or {}).values()) if running else []
-    fraction = sum(1 for row in rows if row.get('status') in ('done', 'failed', 'verified', 'unverified', 'unverifiable')) / len(rows) if rows else 0
+    fraction = sum(1 for row in rows if row.get('status') in ('done', 'failed', 'verified', 'unverified', 'unverifiable')) / len(rows) if rows else 0.5 if running else 0
     return max(0, min(100, round(100 * (sum(1 for s in steps if s['state'] == 'done') + fraction) / max(len(steps), 1))))
 
 
@@ -356,7 +356,9 @@ def session_view(key, session, item, spec, now, zone, render=None):
     if spec and spec.get('state') in ('done', 'partial') and state in ('open', 'published') and (spec.get('results') or spec.get('published')):
         state = 'published' if spec['state'] == 'done' else 'partial'
     steps = timeline(session, now, render)
-    return {'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()} for row in table_rows(spec, item, zone)] if spec else []}
+    ordered = [s for s in session.get('steps') or [] if s.get('state') == 'running']
+    position = next((n for n, s in enumerate(session.get('steps') or [], 1) if s is ordered[-1]), None) if ordered else None
+    return {'step':(steps['current'] or {}).get('label'),'step_index':position,'step_count':len([e for e in session.get('steps') or [] if e.get('state')]),'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()} for row in table_rows(spec, item, zone)] if spec else []}
 
 
 def session_sub(session):

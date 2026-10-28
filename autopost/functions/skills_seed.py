@@ -39,6 +39,7 @@ SEED = {
 - Instagram: work copy in English, personal copy in Russian; feed posts, Reels and stories; hashtags carry discovery.
 - Threads: short text-first posts, work in English, personal in Russian, one topic tag per post.
 - Telegram stories (Business): short line over the first photo or the video.
+- The voice comes from his own posts: see the «Мои тексты» skill.
 - Roman is not asked to share anything the networks cannot show; he reviews every preview and presses the only approval."""},
 'about-roman': {'title': 'Что знать о Романе', 'body': """Facts about Roman that shape every draft.
 - Roman Resenchuk, an independent iOS, macOS and AI developer. Describe his role only where public evidence supports it; lead with the real problem, with an optional brief founder insert.

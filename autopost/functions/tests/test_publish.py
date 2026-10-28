@@ -84,6 +84,12 @@ class MixedPostTests(unittest.TestCase):
         stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
         self.assertEqual(stories,['video','photo','video'])
 
+    def test_seven_photos_become_seven_telegram_stories_in_order(self):
+        self.spec['targets'] = ['tg-story']
+        self.spec['media'] = {'images':[{'path':'image0.jpg','alt':'a'}] * 7}
+        stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
+        self.assertEqual(stories,['photo'] * 7)
+
     def test_album_checkpoints_are_saved_per_album_so_a_retry_never_reposts(self):
         self.spec['media']['clips'] = [{'path':'clip0.mp4'},{'path':'clip1.mp4'}]
         self.spec['media']['images'] = [{'path':'image0.jpg','alt':'a'}] * 10

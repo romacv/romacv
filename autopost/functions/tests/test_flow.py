@@ -110,6 +110,38 @@ class EditFlowTests(unittest.TestCase):
         self.assertEqual(self.store.get('items/item-1')['edits'],['Make shorter'])
         self.assertIsNotNone(self.store.get('outbox/edit-42'))
 
+    def test_nudge_during_drafting_gets_status_without_superseding_the_draft(self):
+        self.store.put('items/item-9',{'status':'drafting','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.put('sessions/item-9',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'running','since':time.time() - 200,'agents':{'places':{'status':'running','action':'ищу'},'media':{'status':'done'},'copy':{'status':'waiting'}}}]})
+        reply = self.store.intake({'update_id':90,'message':{'message_id':90,'text':'ну'}},self.config)
+        self.assertEqual(reply,'Черновик пишется 3 мин: места — ищу, медиа — готово, текст — ждёт.')
+        item = self.store.get('items/item-9')
+        self.assertEqual(item['revision'],8)
+        self.assertNotIn('followup',item)
+        self.assertIsNone(self.store.get('outbox/edit-90'))
+
+    def drafting_with(self, kind, number, value='короче'):
+        self.store.put('items/item-9',{'status':'drafting','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.put('sessions/item-9',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'running','since':time.time(),'agents':{'copy':{'status':'running','action':'пишу'}}}]})
+        def classify(text,context):
+            if kind is None:
+                raise RuntimeError
+            return {'kind':kind,'value':value}
+        self.store.classifier = classify
+        return self.store.intake({'update_id':number,'message':{'message_id':number,'text':'сделай текст короче'}},self.config)
+
+    def test_classifier_fix_and_failure_during_drafting_edit_but_question_gets_status(self):
+        for number,kind in ((91,'fix'),(92,None)):
+            self.assertIsNone(self.drafting_with(kind,number))
+            item = self.store.get('items/item-9')
+            self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.setUp()
+        reply = self.drafting_with('question',93)
+        self.assertIn('текст — пишу',reply)
+        self.assertEqual(self.store.get('items/item-9')['revision'],8)
+
 
 class PublishedMessageTests(unittest.TestCase):
     def setUp(self):
@@ -285,11 +317,14 @@ class ChainedPublishTests(unittest.TestCase):
             self.assertEqual(list(self.store.get('specs/example')['results']),['tg-channel'])
             enqueue.assert_called_once()
             self.assertEqual(enqueue.call_args[0][0],{'step':'run','slug':'example','resume':True})
-            tell.assert_not_called()
+            tell.assert_called_once()
+            self.assertIn('Публикую',tell.call_args[0][1])
             self.assertEqual(self.store.get('specs/example')['state'],'running')
             app.run(self.config,self.store,None,'example',self.root,True)
         self.assertEqual([call[0][0]['step'] for call in enqueue.call_args_list],['run','verify'])
-        tell.assert_called_once()
+        self.assertEqual(tell.call_count,2)
+        self.assertIn('Публикую',tell.call_args_list[0][0][1])
+        self.assertNotIn('Публикую',tell.call_args_list[1][0][1])
         self.assertEqual((self.store.get('specs/example')['state'],sorted(self.store.get('specs/example')['results'])),('done',['tg-channel','threads']))
 
     def test_overdue_running_spec_records_reasons_and_resumes_until_attempts_run_out(self):
@@ -332,6 +367,29 @@ class ChainedPublishTests(unittest.TestCase):
         self.store.intake({'update_id':1,'callback_query':{'id':'1','data':'retry:example:' + self.digest[:8]}},self.config)
         saved = self.store.get('specs/example')
         self.assertEqual((saved['state'],saved['attempts']),('approved',{'tg-channel':1}))
+
+    def test_accept_ends_a_partial_post_as_done_with_the_failure_kept(self):
+        result = {'url':'https://t.me/example/1','verified':True}
+        self.store.change('specs/example',lambda value:value.update(state='partial',results={'tg-channel':result},errors={'threads':'x'},attempts={'tg-channel':1,'threads':3}))
+        self.store.intake({'update_id':1,'callback_query':{'id':'1','data':'acc:example:' + self.digest[:8]}},self.config)
+        saved = self.store.get('specs/example')
+        self.assertEqual((saved['state'],saved['accepted'],saved['errors']),('done',True,{'threads':'x'}))
+
+    def test_accept_is_refused_when_nothing_was_published(self):
+        self.store.change('specs/example',lambda value:value.update(state='partial',results={},errors={'threads':'x'}))
+        self.store.intake({'update_id':1,'callback_query':{'id':'1','data':'acc:example:' + self.digest[:8]}},self.config)
+        self.assertEqual(self.store.get('specs/example')['state'],'partial')
+
+    def test_accept_step_closes_the_session_and_lists_the_failed_targets(self):
+        class Request:
+            data = {'step':'accept','slug':'example'}
+        result = {'url':'https://t.me/example/1','verified':True}
+        self.store.change('specs/example',lambda value:value.update(state='done',accepted=True,results={'tg-channel':result},errors={'threads':'Платформа не приняла запрос'}))
+        with patch.object(app,'runtime',return_value=(self.config,self.store,None)), patch.object(app,'activity'), patch.object(app,'sync_pin') as pin, patch.object(app,'tell') as tell, patch.object(self.store,'close_session') as close:
+            app.handle_worker(Request)
+        close.assert_called_once_with('item-1','published','принято')
+        pin.assert_called()
+        self.assertIn('Платформа не приняла запрос',tell.call_args[0][1])
 
 
 class BatchedPollingTests(unittest.TestCase):
@@ -379,8 +437,11 @@ class PreviewRaceTests(unittest.TestCase):
         sent = self.preview()
         fields = next(f for m,f in sent if m == 'sendMessage' and 'parse_mode' in f)
         self.assertEqual(fields['parse_mode'],'HTML')
-        self.assertIn('a &lt;b&gt; &amp; c',fields['text'])
-        self.assertIn('<b>Пост: Telegram</b>',fields['text'])
+        self.assertIn('<b>Черновик',fields['text'])
+        self.assertIn('куда пойдёт</b>',fields['text'])
+        self.assertNotIn('a <b> & c',fields['text'])
+        shown = [f for m,f in sent if 'parse_mode' not in f and 'a <b> & c' in (f.get('caption') or f.get('text') or ''.join(x.get('caption','') for x in f.get('media',[])))]
+        self.assertTrue(shown)
 
     def test_a_long_copy_continues_without_a_separator_and_keeps_its_targets(self):
         parts = app.pieces('<b>h</b>','x'*7000,None,['tg-channel']) + app.pieces('<b>k</b>','y',None,['threads'])

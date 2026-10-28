@@ -10,6 +10,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
@@ -341,7 +343,7 @@ def story_areas(spec, state, text):
 def post_telegram(spec, state, target):
     identity = telegram_identity(target)
     files, text = media_files(spec), text_for(spec, target)
-    if target == 'tg-story' and spec.get('media', {}).get('sequence'):
+    if target == 'tg-story' and (spec.get('media', {}).get('sequence') or len(spec.get('media', {}).get('images', [])) > 1):
         stories = []
         for position, (kind, index) in enumerate(sequence(spec)):
             name = ('image' if kind == 'image' else 'clip') + str(index)
@@ -416,6 +418,17 @@ def post_telegram(spec, state, target):
     return f'https://t.me/{prefix}/{result["message_id"]}'
 
 
+def lookup(text, network):
+    import geo
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(contextvars.copy_context().run, geo.location, config(), text, network).result(timeout=8)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False)
+
+
 def post_social(spec, state, target, urls, session):
     instagram = target.startswith('ig-')
     token, user, base = session
@@ -429,7 +442,15 @@ def post_social(spec, state, target, urls, session):
                 if name is None:
                     raise Error('Media must come from this post’s own public bucket objects')
                 probe(fields[field], local_files[name])
-        return checkpoint(spec, state, target, step, lambda: numeric(request('POST', f'{base}/{user}/{edge}', fields, token=token)))
+        def send():
+            try:
+                return numeric(request('POST', f'{base}/{user}/{edge}', fields, token=token))
+            except Error:
+                if 'location_id' not in fields:
+                    raise
+                plain = {k: v for k, v in fields.items() if k != 'location_id'}
+                return numeric(request('POST', f'{base}/{user}/{edge}', plain, token=token))
+        return checkpoint(spec, state, target, step, send)
     published = state['steps'].get(target + ':publish')
     if published and published.get('status') == 'done':
         media_id = published['value']
@@ -442,8 +463,12 @@ def post_social(spec, state, target, urls, session):
             caption['topic_tag'] = spec['threads_tag']
         if target == 'ig-story':
             caption = {}
+        elif spec.get('location'):
+            found = lookup(spec['location'], 'instagram' if instagram else 'threads')
+            if found:
+                caption['location_id'] = found
         order = sequence(spec)
-        stories = target == 'ig-story' and bool(spec.get('media', {}).get('sequence'))
+        stories = target == 'ig-story' and (bool(spec.get('media', {}).get('sequence')) or len(order) > 1)
         if spec.get('media', {}).get('clips') and target != 'ig-story' and len(order) < 2:
             raise Error('Для карусели нужно минимум два вложения')
         if stories:
@@ -451,11 +476,13 @@ def post_social(spec, state, target, urls, session):
             created = []
             for position, (kind, index) in enumerate(order):
                 fields = {'media_type': 'STORIES', ('image_url' if kind == 'image' else 'video_url'): urls[('image' if kind == 'image' else 'clip') + str(index)]}
-                created.append(create('container' + str(position), fields))
+                done = state['steps'].get(target + ':publish' + str(position), {}).get('status') == 'done'
+                created.append(None if done else create('container' + str(position), fields))
             waiting = [position for position in range(len(created)) if state['steps'].get(target + ':publish' + str(position), {}).get('status') != 'done']
             ready_all(session, [created[position] for position in waiting], instagram, lambda i: CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(waiting[i])))
             for position, story in enumerate(created):
-                quota(session, instagram)
+                if story is not None:
+                    quota(session, instagram)
                 media_ids.append(checkpoint(spec, state, target, 'publish' + str(position), lambda story=story: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': story}, token=token))))
             media_id = checkpoint(spec, state, target, 'publish', lambda: media_ids)
             container = None

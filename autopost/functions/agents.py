@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import drafter
+import geo
 import store as ledger
+import voice
 from drafter import Error, Cancelled
 
 NAMES = ('places', 'media', 'copy', 'merge')
@@ -361,6 +363,9 @@ def merge(item, source, places, media, copy, clips, chosen, owner):
         spec['notes'] = copy['notes']
     if copy.get('threads_tag') is not None:
         spec['threads_tag'] = copy['threads_tag']
+    where = geo.query(places)
+    if where:
+        spec['location'] = where[:120]
     stories = [t for t in spec['targets'] if t in ('ig-story', 'tg-story') and isinstance(blocks.get(t), str)]
     if images and stories:
         place = next((p['name'] for p in (places or {}).get('places', []) if isinstance(p, dict) and isinstance(p.get('name'), str) and 1 <= len(p['name']) <= 40 and p.get('confidence') == 'high'), None)
@@ -374,7 +379,9 @@ def merge(item, source, places, media, copy, clips, chosen, owner):
 def run_draft(config, store, item, revision, source, images, clips, validate, rec, live):
     zone = config.get('timezone', 'Asia/Makassar')
     base = {**source, 'timezone':zone, 'current_time':datetime.now(ZoneInfo(zone)).isoformat()}
+    voice.ensure(config, store)
     run = Run(config, store, item, revision, live, rec)
+    found = getattr(live, 'found', None)
     chosen = source.get('chosen_targets')
     owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in source.get('messages', [])] + source.get('edits', []))
     for name in NAMES:
@@ -392,6 +399,11 @@ def run_draft(config, store, item, revision, source, images, clips, validate, re
             for name, future in (('places', first), ('media', second)):
                 try:
                     outputs[name] = future.result()
+                    if found is not None:
+                        try:
+                            found(name, outputs[name])
+                        except Exception as problem:
+                            logging.error(json.dumps({'code':'found_callback_failed', 'error':str(problem)[:200]}))
                 except Cancelled:
                     failure = failure if isinstance(failure, Cancelled) else Cancelled()
                 except Exception as problem:

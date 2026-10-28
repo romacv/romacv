@@ -314,7 +314,7 @@ def meta():
             issued, expires = meta_times(provider, saved, now)
         else:
             issued, expires = now, now + 60 * 86400
-        if expires - issued <= 3600:
+        if expires - issued < 30 * 86400:
             if saved is not None:
                 raise IdsError(name + ' contains a short-lived token; delete it before rerunning meta.')
             secret_name = provider + '_app_secret.txt'
@@ -325,7 +325,7 @@ def meta():
             reply = meta_request(provider, base.rsplit('/', 1)[0] + '/access_token', grant_type=prefix + '_exchange_token', client_secret=secret_value, access_token=token)
             new_token = reply.get('access_token')
             lifetime = reply.get('expires_in')
-            if not isinstance(new_token, str) or not new_token or type(lifetime) is not int or lifetime <= 3600:
+            if not isinstance(new_token, str) or not new_token or type(lifetime) is not int or lifetime < 30 * 86400:
                 raise IdsError(provider + ' exchange did not return a long-lived token and expiry.')
             token = new_token
             expires = issued + lifetime

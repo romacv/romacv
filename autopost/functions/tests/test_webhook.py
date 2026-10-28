@@ -174,6 +174,21 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(sent[0][1]['message_id'],900)
         self.assertNotIn('1 фото',sent[0][1]['text'])
 
+    def test_album_parts_after_done_join_the_post_and_another_album_starts_a_new_one(self):
+        self.store.put('items/item-1',{'status':'queued','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','collect_group':'g'})
+        self.store.put('sessions/inbox',{'current':'item-1'})
+        chat = {'from':{'id':1},'chat':{'id':1,'type':'private'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',return_value={'message_id':5}):
+            self.request({'update_id':60,'message':dict({'message_id':2,'media_group_id':'g','photo':[{'file_id':'p2'}]},**chat)})
+            self.request({'update_id':61,'message':dict({'message_id':3,'media_group_id':'g','video':{'file_id':'v'}},**chat)})
+            joined = self.store.get('items/item-1')
+            self.assertIsNone(self.store.get('items/item-60'))
+            self.assertIsNone(self.store.get('items/item-61'))
+            self.assertNotIn('edit_photos',joined)
+            self.assertEqual([m['message_id'] for m in joined['messages']],[1,2,3])
+            self.request({'update_id':62,'message':dict({'message_id':4,'media_group_id':'other','video':{'file_id':'v2'}},**chat)})
+        self.assertIsNotNone(self.store.get('items/item-62'))
+
     def test_bounded_sends_work_without_patched_configure(self):
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
         seen = []
@@ -197,13 +212,31 @@ class WebhookTests(unittest.TestCase):
         self.assertNotIn('sendMessage',sends)
 
     def test_album_after_post_edits_the_one_collect_message_in_place(self):
-        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900})
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900,'added':{'at':app.time.time()}})
         self.store.put('sessions/inbox',{'collecting':'item-1'})
         update = {'update_id':92,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
         with patch.object(app.platforms,'telegram',return_value={'message_id':5}) as telegram:
             self.request(update)
         calls = [call.args for call in telegram.call_args_list if call.args[0] not in ('setMessageReaction','sendChatAction')]
         self.assertEqual((calls[0][0],calls[0][1]['message_id']),('editMessageText',900))
+
+    def test_single_photos_in_a_burst_make_one_bottom_keyboard_message_with_the_count(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':0,'messages':[],'batch_token':'tok','slug':'item-1','keyboard_message':900})
+        self.store.put('sessions/inbox',{'collecting':'item-1'})
+        calls = []
+        def telegram(method,fields,files=None):
+            calls.append((method,fields))
+            return {'message_id':5}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=telegram):
+            for number in (1,2,3):
+                self.request({'update_id':300 + number,'message':{'message_id':number,'photo':[{'file_id':'p' + str(number)}],'from':{'id':1},'chat':{'id':1,'type':'private'}}})
+        calls = [call for call in calls if call[0] not in ('setMessageReaction','sendChatAction')]
+        self.assertEqual([call[0] for call in calls].count('sendMessage'),1)
+        self.assertEqual(self.store.get('items/item-1')['keyboard_message'],5)
+        self.assertTrue([call for call in calls if call[1].get('message_id') == 900 and call[0] != 'editMessageText'])
+        edits = [call[1] for call in calls if call[0] == 'editMessageText' and call[1]['message_id'] == 5]
+        self.assertIn('3 фото',edits[-1]['text'])
+        self.assertIn('Готово',edits[-1]['text'])
 
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})

@@ -25,6 +25,7 @@ CHOICE_HINT = 'Отметь, куда пойдёт пост.'
 COMMANDS = ('/post', '/skills')
 COMMANDS_HINT = 'Команды: /post — новый пост, /skills — навыки бота.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
+BURST_SECONDS = 20
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
 
@@ -251,6 +252,10 @@ def collected(item):
     return 'Добавил в пост' + titled(item) + '.'
 
 
+def bursted(item, offers, chosen):
+    return counted(item) + (' Отметь, куда, и нажми «Готово».' if offers and not chosen else ' Нажми «Готово».')
+
+
 def counted(item):
     parts = contents(item)
     return 'Добавил в пост' + titled(item) + (': ' + ', '.join(parts) if parts else '') + '.'
@@ -320,6 +325,31 @@ def progress(item, job, now):
         return name + titled(item) + ' идёт: ' + ('составляю план.' if item.get('montage') else 'готовлю превью.') + hint
     seconds = int(now - stage['since'])
     return name + titled(item) + ' идёт: ' + stage['label'].lower() + ', ' + str(seconds // 60) + ':' + format(seconds % 60, '02') + '.' + hint
+
+
+AGENT_WORDS = {'places':'места', 'media':'медиа', 'copy':'текст', 'merge':'сборка', 'montage':'монтаж'}
+AGENT_STATES = {'done':'готово', 'waiting':'ждёт', 'failed':'ошибка', 'cancelled':'отменён'}
+NUDGES = ('ну', 'и', 'что там', 'долго', 'ну что', 'как там', 'скоро', 'ау', 'эй')
+
+
+def nudge(text):
+    plain = ' '.join((text or '').lower().replace('?', ' ').replace('!', ' ').replace('.', ' ').replace('…', ' ').split())
+    return sum(c.isalpha() for c in plain) < 4 or plain in NUDGES
+
+
+def working(item):
+    return bool(item and item.get('status') in ('queued', 'drafting') and not item.get('waiting_upload'))
+
+
+def drafting_status(item, journal, job, now):
+    steps = [e for e in (journal or {}).get('steps') or [] if e.get('state') == 'running']
+    step = steps[-1] if steps else None
+    if not step or step.get('id') not in ('draft', 'edit') and not step.get('agents'):
+        return progress(item, job, now)
+    minutes = max(0, int(now - (step.get('since') or now))) // 60
+    agents = step.get('agents') or {}
+    rows = [AGENT_WORDS.get(n, n) + ' — ' + (AGENT_STATES.get(a.get('status')) or a.get('action') or 'работаю') for n, a in agents.items()]
+    return step.get('label', 'Черновик') + ' ' + ('пишется' if step.get('id') == 'draft' else 'идёт') + ' ' + (str(minutes) + ' мин' if minutes else 'меньше минуты') + ('' if not rows else ': ' + ', '.join(rows)) + '.'
 
 
 def located(message):
@@ -607,10 +637,14 @@ class Store:
         if kind == 'question':
             if opened:
                 return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
+            if working(current):
+                return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'])
             if current:
                 return answer('Пост' + titled(current) + ' сейчас в работе, статус виден в Mini App.', session['current'])
             return table()
         if kind in ('fix', 'instruction'):
+            if working(current) and not nudge(found['text']):
+                return None
             if current:
                 return answer('Пост ещё делается: пришли правку, когда будет превью.', session['current'])
             return answer('Сейчас нет поста, к которому это относится.')
@@ -733,7 +767,11 @@ class Store:
             group = message.get('media_group_id')
             drafting = bool(pending and pending.get('status') in ('queued', 'drafting')) or bool(target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'))
             running = bool(target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering') and not scheduled(target))
-            fresh = not reply_id and any(message.get(k) for k in ('photo', 'video')) and bool(group)
+            joined = False
+            if group and not name and not opened and not reply_id and drafting:
+                base = pending if pending else self.get('items/' + target['item'], tx)
+                joined = bool(base and base.get('collect_group') == group)
+            fresh = not reply_id and not joined and any(message.get(k) for k in ('photo', 'video')) and bool(group)
             starts = not name and not opened and not (drafting and not fresh) and not running and not (group and session.get('answered_group') == group) and any(message.get(k) for k in MEDIA_KEYS)
             if starts:
                 session.pop('awaiting', None)
@@ -766,6 +804,15 @@ class Store:
                     if group:
                         continuing = item.get('collect_group') == group
                         item['collect_group'] = group
+                burst = quiet = False
+                if filled and any(body.get(k) for k in MEDIA_KEYS):
+                    now = time.time()
+                    added = item.get('added')
+                    if added and now - added['at'] <= BURST_SECONDS:
+                        quiet = True
+                    elif not continuing:
+                        burst = True
+                    item['added'] = {'at':now}
                 session['collecting'] = item_id
                 self.subject = item_id
                 large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
@@ -781,17 +828,17 @@ class Store:
                 if name == '/post' and not opened:
                     reply = 'Новый пост. Присылай текст, фото, видео или голос, потом нажми кнопку.' if not filled else counted(item)
                 elif filled:
-                    reply = None if continuing else counted(item)
+                    reply = None if continuing else bursted(item, offers, item.get('chosen')) if burst else counted(item)
                 else:
                     reply = 'Пост' + titled(item) + ' уже собирается. Присылай материал и нажми «Готово».'
                 if dropped:
                     reply = 'Отменяю старые черновики: ' + ', '.join(label for entry, label in dropped) + '.\n' + reply
                 markup = collect_keyboard(item_id, item['batch_token'], offers, item.get('chosen', []))
-                if filled and not dropped and item.get('keyboard_message'):
-                    return {'item':item_id, 'revision':item['revision'], 'text':None if continuing else counted(item), 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers, item.get('chosen')), 'reply_markup':markup}}
-                if continuing and not dropped:
+                if filled and not dropped and item.get('keyboard_message') and not burst:
+                    return {'item':item_id, 'revision':item['revision'], 'text':None if continuing or quiet else counted(item), 'refresh':{'message_id':item['keyboard_message'], 'text':hinted(collected(item), offers, item.get('chosen')) if not quiet else bursted(item, offers, item.get('chosen')), 'reply_markup':markup}}
+                if (continuing or quiet) and not dropped:
                     return {'item':item_id, 'revision':item['revision'], 'text':None, 'reply_markup':markup}
-                return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':hinted(reply, offers, item.get('chosen')), 'reply_markup':markup}
+                return {'item':item_id, 'revision':item['revision'], 'group':group, 'text':reply if burst and not dropped else hinted(reply, offers, item.get('chosen')), 'reply_markup':markup}
             if message.get('video') and not name and (pending and pending.get('status') in ('queued', 'drafting') or target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit')):
                 held = pending or self.get('items/' + target['item'], tx)
                 limit = refused(held['messages'], message)
@@ -813,6 +860,27 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 self.put('sessions/inbox', session, tx)
                 return None if once() else 'Добавил в черновик' + named(target or {}, item) + ': клип.'
+            if joined and message.get('photo') and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
+                added = (note + ' ' if note else '') + '[добавлено фото]'
+                if target:
+                    previewed = target['state'] == 'previewed'
+                    self.queue_edit(tx, slug, target, added, None, identifier, session, message)
+                    if previewed and target.get('preview_message'):
+                        self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
+                else:
+                    self.add_edit(tx, pending, slug, added, None, identifier, message)
+                once(False)
+                self.put('sessions/inbox', session, tx)
+                self.put(update_path, {'received':time.time()}, tx)
+                return None
+            held = pending if working(pending) else self.get('items/' + target['item'], tx) if target and not target.get('operation') and target.get('state') == 'drafting' else None
+            if held and not name and not group and not reply_id and isinstance(text, str) and note and not any(message.get(k) for k in MEDIA_KEYS):
+                placed = said and said['kind'] in ('fix', 'instruction')
+                if nudge(note) or said and not placed:
+                    status = drafting_status(held, self.get('sessions/' + (target['item'] if target else slug), tx), self.get('renders/' + held['render'], tx) if held.get('render') else None, time.time())
+                    self.put(update_path, {'received':time.time()}, tx)
+                    self.subject = target['item'] if target else slug
+                    return status
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 if note and note.rstrip().endswith('?') and not photo and not message.get('voice'):
                     job = self.get('renders/' + pending['render'], tx) if pending.get('render') else None
@@ -1093,6 +1161,11 @@ class Store:
             payload['step'] = 'remove-keyboard'
             payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
             line = 'Отклонено.'
+        elif verb == 'acc' and not saved.get('operation') and saved['state'] in ('done', 'partial') and saved.get('results') and not saved.get('accepted'):
+            saved['state'] = 'done'
+            saved['accepted'] = True
+            payload['step'] = 'accept'
+            line = 'Принято.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
             saved['attempts'] = {t:n for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{})}
