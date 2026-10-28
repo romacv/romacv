@@ -233,50 +233,94 @@ def send_collect(config, store, result, claim=None):
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
 
 
-def pin_text(item):
-    parts = contents(item)
-    return 'Открыт пост' + titled(item) + (': ' + ', '.join(parts) if parts else '')
+PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
+
+
+def pin_stage(item, states):
+    working = 'монтаж' if item.get('montage') else 'готовлю черновик'
+    if item.get('status') == 'collecting':
+        parts = contents(item)
+        return 'собираю' + (' · ' + ', '.join(parts) if parts else '')
+    for state,label in PIN_SPEC_STAGES:
+        if state in states:
+            return label or working
+    return working if item.get('status') in ('queued','drafting') else None
+
+
+def pin_texts(store):
+    ids = {snapshot.id for snapshot in store.db.collection('items').where('status','in',['collecting','queued','drafting']).stream()}
+    states = {}
+    for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream():
+        spec = snapshot.to_dict()
+        if spec.get('item') and not spec.get('operation'):
+            states.setdefault(spec['item'],set()).add(spec['state'])
+    texts = {}
+    for key in sorted(ids | set(states)):
+        item = store.get('items/' + key)
+        stage = pin_stage(item,states.get(key,set())) if item and item.get('status') not in ('rejected','failed') else None
+        if stage:
+            texts[key] = 'Пост' + titled(item) + ': ' + stage
+    return texts
 
 
 def sync_pin(config, store):
     try:
-        session = store.get('sessions/inbox') or {}
-        item = store.get('items/' + session['collecting']) if session.get('collecting') else None
-        wanted = session['collecting'] if item and item.get('status') == 'collecting' else None
-        text = pin_text(item) if wanted else None
+        wanted = pin_texts(store)
         chat = config['roman_chat_id']
         def claim(tx):
             record = store.get('sessions/pin',tx) or {}
-            if record.get('item') == wanted and wanted and record.get('message_id'):
-                return record,'keep' if record.get('pinned') else 'pin'
-            if record.get('item') == wanted and not wanted:
-                return record,'keep'
-            if record.get('item') == wanted and time.time() - record.get('at',0) < 60:
-                return record,'keep'
-            store.put('sessions/pin',{'item':wanted,'text':text,'at':time.time()} if wanted else {},tx)
-            return record,'create' if wanted else 'retire'
-        record,action = store.atomic(claim)
-        if action != 'keep' and record.get('item') != wanted and record.get('message_id'):
-            for method in ('unpinChatMessage','deleteMessage'):
-                try:
-                    platforms.telegram(method,{'chat_id':chat,'message_id':record['message_id']})
-                except Error:
-                    pass
-        if action == 'create':
-            sent = platforms.telegram('sendMessage',{'chat_id':chat,'text':text,'reply_markup':PROGRESS_MARKUP})
-            store.change('sessions/pin',lambda value:value.update(message_id=sent['message_id']) if value.get('item') == wanted else None)
-            record = {**record,'message_id':sent['message_id']}
-            action = 'pin'
-        if action == 'pin':
-            platforms.telegram('pinChatMessage',{'chat_id':chat,'message_id':record['message_id'],'disable_notification':True})
-            store.change('sessions/pin',lambda value:value.update(pinned=True) if value.get('item') == wanted else None)
-        elif action == 'keep' and wanted and record.get('message_id') and record.get('text') != text:
+            posts = dict(record.get('posts') or {})
+            if record.get('item'):
+                posts.setdefault(record['item'],{k:record[k] for k in ('text','at','message_id','pinned') if k in record})
+            plan = {key:('retire',posts.pop(key)) for key in list(posts) if key not in wanted}
+            for key,text in wanted.items():
+                entry = posts.get(key)
+                if entry and entry.get('message_id'):
+                    plan[key] = ('keep' if entry.get('pinned') else 'pin',entry)
+                elif entry and time.time() - entry.get('at',0) < 60:
+                    plan[key] = ('keep',entry)
+                else:
+                    posts[key] = {'text':text,'at':time.time()}
+                    plan[key] = ('create',posts[key])
+            if posts != record.get('posts') or 'item' in record:
+                store.put('sessions/pin',{'posts':posts},tx)
+            return plan
+        for key,(action,entry) in store.atomic(claim).items():
             try:
-                platforms.telegram('editMessageText',{'chat_id':chat,'message_id':record['message_id'],'text':text,'reply_markup':PROGRESS_MARKUP})
-            except Error as failure:
-                if not getattr(failure,'not_modified',False):
-                    raise
-            store.change('sessions/pin',lambda value:value.update(text=text) if value.get('item') == wanted else None)
+                def update(**fields):
+                    store.change('sessions/pin',lambda value:value['posts'][key].update(fields) if key in (value.get('posts') or {}) and value['posts'][key].get('at') == entry.get('at') else None)
+                if action == 'retire':
+                    for method in ('unpinChatMessage','deleteMessage'):
+                        if entry.get('message_id'):
+                            try:
+                                platforms.telegram(method,{'chat_id':chat,'message_id':entry['message_id']})
+                            except Error:
+                                pass
+                    continue
+                text = wanted[key]
+                if action == 'create':
+                    sent = platforms.telegram('sendMessage',{'chat_id':chat,'text':text,'reply_markup':PROGRESS_MARKUP})
+                    if not store.change('sessions/pin',lambda value:value['posts'][key].update(message_id=sent['message_id']) or True if key in (value.get('posts') or {}) and value['posts'][key].get('at') == entry.get('at') else None):
+                        for method in ('unpinChatMessage','deleteMessage'):
+                            try:
+                                platforms.telegram(method,{'chat_id':chat,'message_id':sent['message_id']})
+                            except Error:
+                                pass
+                        continue
+                    entry = {**entry,'message_id':sent['message_id']}
+                    action = 'pin'
+                if action == 'pin':
+                    platforms.telegram('pinChatMessage',{'chat_id':chat,'message_id':entry['message_id'],'disable_notification':True})
+                    update(pinned=True)
+                if action in ('keep','pin') and entry.get('message_id') and entry.get('text') != text:
+                    try:
+                        platforms.telegram('editMessageText',{'chat_id':chat,'message_id':entry['message_id'],'text':text,'reply_markup':PROGRESS_MARKUP})
+                    except Error as failure:
+                        if not getattr(failure,'not_modified',False):
+                            raise
+                    update(text=text)
+            except Exception:
+                logging.error(json.dumps({'code':'pin_status_failed'}))
     except Exception:
         logging.error(json.dumps({'code':'pin_status_failed'}))
 
@@ -1021,6 +1065,7 @@ def fail_final(config,store,slug,render,after=0):
     saved = store.change('specs/' + slug,fail)
     if saved:
         announce_retry(config,store,slug,saved)
+        sync_pin(config,store)
     return bool(saved)
 
 
@@ -1519,6 +1564,7 @@ def handle_worker(request):
         try:
             step = payload['step']
             activity(config,ACTIONS.get(step),stop)
+            sync_pin(config,store)
             if payload.get('say'):
                 try:
                     tell(config,payload['say'])
@@ -1588,6 +1634,7 @@ def handle_worker(request):
                 text =('Пост' if payload.get('step') in ('run','apply-fix','fix') else 'Черновик') + name + ': ' + text
             tell(config,text,**extra)
         finally:
+            sync_pin(config,store)
             stop.set()
 
 
@@ -1664,6 +1711,7 @@ def recover_running(config,store):
         render = snapshot.to_dict().get('final_render')
         if render and (store.get('renders/' + render) or {}).get('state') != 'done':
             fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
+    sync_pin(config,store)
 
 
 @scheduler_fn.on_schedule(schedule='every 15 minutes',timezone='UTC',region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=540,min_instances=0,max_instances=1)

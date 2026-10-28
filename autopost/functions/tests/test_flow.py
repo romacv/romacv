@@ -379,7 +379,7 @@ class CollectingTests(unittest.TestCase):
         self.assertNotIn('Монтаж',reply)
         self.assertEqual(store.get('items/item-10').get('edits',[]),[])
 
-    def test_done_accepts_photos_with_clips_and_pins_then_unpins_the_status(self):
+    def test_done_accepts_photos_with_clips_and_the_pin_follows_the_stage(self):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')
         self.video(store,11,'Jakarta Chinatown')
@@ -392,7 +392,7 @@ class CollectingTests(unittest.TestCase):
             app.sync_pin(self.config,store)
             app.sync_pin(self.config,store)
             self.assertEqual([m for m,f in calls],['sendMessage','pinChatMessage'])
-            self.assertIn('1 фото, 1 клип',calls[0][1]['text'])
+            self.assertIn(': собираю · 1 фото, 1 клип',calls[0][1]['text'])
             self.assertTrue(calls[1][1]['disable_notification'])
             token = store.get('items/item-10')['batch_token']
             self.tap(store,'done','item-10',token,13)
@@ -400,8 +400,39 @@ class CollectingTests(unittest.TestCase):
         item = store.get('items/item-10')
         self.assertEqual((item['status'],item['montage']),('queued',False))
         self.assertEqual(store.get('outbox/draft-13')['payload']['step'],'draft')
-        self.assertEqual([m for m,f in calls][2:],['unpinChatMessage','deleteMessage'])
-        self.assertEqual(calls[2][1]['message_id'],500)
+        self.assertEqual([m for m,f in calls][2:],['editMessageText'])
+        self.assertEqual((calls[2][1]['message_id'],calls[2][1]['text'].endswith(': готовлю черновик')),(500,True))
+
+    def test_pins_stay_per_active_post_and_leave_with_a_closed_one(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        store.put('items/item-20',{'messages':[],'revision':0,'status':'queued','montage':True,'slug':'item-20','created':1})
+        store.put('sessions/pin',{'item':'item-10','text':'Открыт пост','at':1,'message_id':400,'pinned':True})
+        ids = iter(range(500,510))
+        calls = []
+        def telegram(method,fields=None,files=None):
+            calls.append((method,fields.get('message_id')))
+            return {'message_id':next(ids)}
+        with patch.object(app.platforms,'telegram',side_effect=telegram):
+            app.sync_pin(self.config,store)
+            self.assertEqual(sorted(store.get('sessions/pin')['posts']),['item-10','item-20'])
+            self.assertEqual(calls,[('editMessageText',400),('sendMessage',None),('pinChatMessage',501)])
+            store.put('items/item-20',{**store.get('items/item-20'),'status':'previewed'})
+            store.put('specs/item-20',{'item':'item-20','state':'done'})
+            app.sync_pin(self.config,store)
+        self.assertEqual(calls[3:],[('unpinChatMessage',501),('deleteMessage',501)])
+        self.assertEqual(list(store.get('sessions/pin')['posts']),['item-10'])
+
+    def test_a_partial_post_and_a_legacy_pin_of_a_closed_post_have_no_pin(self):
+        store = Store(FakeFirestore())
+        store.put('items/item-30',{'messages':[],'revision':0,'status':'previewed','slug':'item-30','created':1})
+        store.put('specs/item-30',{'item':'item-30','state':'partial'})
+        store.put('sessions/pin',{'item':'item-40','text':'Открыт пост','at':1,'message_id':400,'pinned':True})
+        calls = []
+        with patch.object(app.platforms,'telegram',side_effect=lambda method,fields=None,files=None:calls.append(method)):
+            app.sync_pin(self.config,store)
+        self.assertEqual(calls,['unpinChatMessage','deleteMessage'])
+        self.assertEqual(store.get('sessions/pin'),{'posts':{}})
 
     def test_pin_failure_keeps_the_status_message_and_retries_only_the_pin(self):
         store = Store(FakeFirestore())
