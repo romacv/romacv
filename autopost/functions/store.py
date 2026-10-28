@@ -681,6 +681,10 @@ class Store:
                 self.put('tokens/business', {'business_connection_id':connection['id']}, tx)
                 return 'Подключение Business сохранено; права проверяются перед публикацией.'
             session = self.get('sessions/inbox', tx) or {}
+            group = message.get('media_group_id')
+            owner = self.get('albums/' + group, tx) if group else None
+            owned = self.get('items/' + owner['item'], tx) if owner and owner.get('item') else None
+            owned_spec = self.get('specs/' + owned['slug'], tx) if owned and owned.get('slug') and owned.get('status') != 'collecting' else None
             self.subject = session.get('collecting') or session.get('current')
             origin = (message.get('forward_origin') or {}).get('sender_user') or {}
             if origin.get('id') and str(origin['id']) == str((config or {}).get('telegram_bot_id', '')):
@@ -740,6 +744,57 @@ class Store:
                     session.pop('current', None)
                     if session.get('collecting') in {entry['id'] for entry, label in dropped}:
                         session.pop('collecting', None)
+            def once(write=True):
+                if group and session.get('answered_group') == group:
+                    return True
+                if group:
+                    session['answered_group'] = group
+                    if write:
+                        self.put('sessions/inbox', session, tx)
+                return False
+            routed = None
+            if owned and not name and not reply_id and any(message.get(k) for k in MEDIA_KEYS):
+                if owned.get('status') == 'collecting':
+                    routed = 'collect'
+                elif owned_spec and not owned_spec.get('operation') and owned_spec.get('state') in ('drafting', 'previewed', 'needs-edit'):
+                    routed = 'join'
+                elif owned_spec and not owned_spec.get('operation') and owned_spec.get('state') in ('approved', 'running', 'rendering', 'done', 'partial'):
+                    routed = 'late'
+                elif not owned_spec and owned.get('status') in ('queued', 'drafting'):
+                    routed = 'join'
+                elif not owned_spec and owned.get('status') == 'rejected':
+                    routed = 'dead'
+            if routed == 'dead':
+                self.put(update_path, {'received':time.time()}, tx)
+                return None
+            if routed == 'late':
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = owned.get('slug')
+                if owner.get('refused'):
+                    return None
+                owner['refused'] = True
+                self.put('albums/' + group, owner, tx)
+                return 'Этот файл пришёл после «Опубликовать» и в пост не попал.'
+            if routed == 'join':
+                limit = refused(owned['messages'], message)
+                unique = (message.get('video') or {}).get('file_unique_id')
+                if unique and any(imaged(m).get('video', {}).get('file_unique_id') == unique for m in owned['messages']):
+                    limit = 'Этот клип уже в черновике.'
+                self.subject = owned['slug']
+                if limit:
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return None if once() else limit
+                added = (note + ' ' if note else '') + ('[добавлен клип]' if message.get('video') else '[добавлено фото]')
+                if owned_spec:
+                    previewed = owned_spec['state'] == 'previewed'
+                    self.queue_edit(tx, owned['slug'], owned_spec, added, None, identifier, session, message, owned, False)
+                    if previewed and owned_spec.get('preview_message'):
+                        self.job(tx, {'slug':owned['slug'], 'step':'remove-keyboard', 'message':owned_spec['preview_message']}, 'unkey-' + identifier)
+                else:
+                    self.add_late(tx, owned, owned['slug'], message, identifier)
+                self.put(update_path, {'received':time.time()}, tx)
+                self.put('sessions/inbox', session, tx)
+                return None if once() else 'Добавил в черновик' + named(owned_spec or {}, owned) + (': клип.' if message.get('video') else ': фото.')
             waiting = session.get('awaiting')
             if waiting and not name and (message.get('text') or waiting['kind'] == 'edit' and (photo or message.get('voice'))):
                 session.pop('awaiting')
@@ -760,29 +815,19 @@ class Store:
                 if outcome is not None:
                     return outcome
             opened = session.get('collecting')
+            redirected = routed == 'collect' and bool(opened) and opened != owner['item']
+            if routed == 'collect':
+                opened = owner['item']
             offers = offered(config, business)
             slug = session.get('current')
             target = self.get('specs/' + slug, tx) if slug else None
             pending = self.get('items/' + slug, tx) if slug and not target else None
-            group = message.get('media_group_id')
             drafting = bool(pending and pending.get('status') in ('queued', 'drafting')) or bool(target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'))
             running = bool(target and not target.get('operation') and target.get('state') in ('approved', 'running', 'rendering') and not scheduled(target))
-            joined = False
-            if group and not name and not opened and not reply_id and drafting:
-                base = pending if pending else self.get('items/' + target['item'], tx)
-                joined = bool(base and base.get('collect_group') == group)
-            fresh = not reply_id and not joined and any(message.get(k) for k in ('photo', 'video')) and bool(group)
+            fresh = not reply_id and any(message.get(k) for k in ('photo', 'video')) and bool(group)
             starts = not name and not opened and not (drafting and not fresh) and not running and not (group and session.get('answered_group') == group) and any(message.get(k) for k in MEDIA_KEYS)
             if starts:
                 session.pop('awaiting', None)
-            def once(write=True):
-                if group and session.get('answered_group') == group:
-                    return True
-                if group:
-                    session['answered_group'] = group
-                    if write:
-                        self.put('sessions/inbox', session, tx)
-                return False
             if name == '/post' or opened or starts:
                 item_id = opened or 'item-' + identifier
                 item = self.get('items/' + item_id, tx)
@@ -801,9 +846,9 @@ class Store:
                     item['messages'].append(body)
                     item['revision'] += 1
                     item['updated'] = time.time()
-                    if group:
-                        continuing = item.get('collect_group') == group
-                        item['collect_group'] = group
+                    continuing = routed == 'collect'
+                    if group and not routed:
+                        self.put('albums/' + group, {'item':item_id, 'at':time.time()}, tx)
                 burst = quiet = False
                 if filled and any(body.get(k) for k in MEDIA_KEYS):
                     now = time.time()
@@ -813,7 +858,8 @@ class Store:
                     elif not continuing:
                         burst = True
                     item['added'] = {'at':now}
-                session['collecting'] = item_id
+                if not redirected:
+                    session['collecting'] = item_id
                 self.subject = item_id
                 large = any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', m.get('video') or {}), ('.jpg', (m.get('photo') or [{}])[-1])))
                 if large:
@@ -860,19 +906,6 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 self.put('sessions/inbox', session, tx)
                 return None if once() else 'Добавил в черновик' + named(target or {}, item) + ': клип.'
-            if joined and message.get('photo') and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
-                added = (note + ' ' if note else '') + '[добавлено фото]'
-                if target:
-                    previewed = target['state'] == 'previewed'
-                    self.queue_edit(tx, slug, target, added, None, identifier, session, message)
-                    if previewed and target.get('preview_message'):
-                        self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
-                else:
-                    self.add_edit(tx, pending, slug, added, None, identifier, message)
-                once(False)
-                self.put('sessions/inbox', session, tx)
-                self.put(update_path, {'received':time.time()}, tx)
-                return None
             held = pending if working(pending) else self.get('items/' + target['item'], tx) if target and not target.get('operation') and target.get('state') == 'drafting' else None
             if held and not name and not group and not reply_id and isinstance(text, str) and note and not any(message.get(k) for k in MEDIA_KEYS):
                 placed = said and said['kind'] in ('fix', 'instruction')
@@ -1032,14 +1065,27 @@ class Store:
             return note, None
         return (note + ' [см. приложенный скриншот]' if note else 'Правка на приложенном скриншоте.'), {'message_id':message['message_id'], 'photo':photo[-1:]}
 
+    def attach(self, item, clip):
+        item['messages'].append(clip)
+        item.pop('prepared', None)
+        item['montage'] = any(imaged(m).get('video') for m in item['messages']) and not any(imaged(m).get('photo') for m in item['messages'])
+        if any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', imaged(m).get('video') or {}), ('.jpg', (imaged(m).get('photo') or [{}])[-1]))):
+            item['waiting_upload'] = True
+
+    def add_late(self, tx, item, item_id, clip, identifier):
+        self.attach(item, clip)
+        item['status'] = 'queued'
+        item['revision'] += 1
+        item['updated'] = time.time()
+        self.put('items/' + item_id, item, tx)
+        self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'late-' + identifier, 5)
+        if item.get('waiting_upload'):
+            self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
+
     def add_edit(self, tx, item, item_id, note, shot, identifier, clip=None):
         item.setdefault('edits', []).append(note)
         if clip:
-            item['messages'].append(clip)
-            item.pop('prepared', None)
-            item['montage'] = any(imaged(m).get('video') for m in item['messages']) and not any(imaged(m).get('photo') for m in item['messages'])
-            if any(v.get('file_size', 0) > 20*1024*1024 and str(m['message_id']) + suffix not in item.get('uploads', {}) for m in item['messages'] for suffix, v in (('.mp4', imaged(m).get('video') or {}), ('.jpg', (imaged(m).get('photo') or [{}])[-1]))):
-                item['waiting_upload'] = True
+            self.attach(item, clip)
         if shot:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
@@ -1052,15 +1098,16 @@ class Store:
         if item.get('waiting_upload'):
             self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
 
-    def queue_edit(self, tx, slug, spec, note, shot, identifier, session, clip=None):
-        item = self.get('items/' + spec['item'], tx)
+    def queue_edit(self, tx, slug, spec, note, shot, identifier, session, clip=None, held=None, adopt=True):
+        item = held or self.get('items/' + spec['item'], tx)
         self.add_edit(tx, item, spec['item'], note, shot, identifier, clip)
         spec['state'] = 'drafting'
         spec['hash'] = ''
         spec.pop('answered', None)
         self.put('specs/' + slug, spec, tx)
         self.put('specs/' + slug + '/edits/' + identifier, {'text':note}, tx)
-        session['current'] = slug
+        if adopt:
+            session['current'] = slug
         return item
 
     def fixable(self, saved):
@@ -1340,6 +1387,8 @@ class Store:
             if chosen and len(reasons) == len(chosen):
                 return ' '.join(skipped_lines(reasons))
         montage = video and not photos
+        last = item['messages'][-1] if item['messages'] else {}
+        late = bool(last.get('media_group_id')) or time.time() - (item.get('updated') or 0) < 5
         if session.get('collecting') == item_id:
             session.pop('collecting')
         item['revision'] += 1
@@ -1356,7 +1405,7 @@ class Store:
             session['current'] = item['slug']
             item['status'] = 'queued'
             item['montage'] = montage
-            self.job(tx, {'item':item_id, 'step':'montage' if montage else 'draft', 'revision':item['revision']}, 'draft-' + identifier)
+            self.job(tx, {'item':item_id, 'step':'montage' if montage else 'draft', 'revision':item['revision']}, 'draft-' + identifier, 5 if late else 0)
             result = None
             self.retire(taps, query, None, {'inline_keyboard':[]})
         self.put('items/' + item_id, item, tx)

@@ -163,7 +163,8 @@ class WebhookTests(unittest.TestCase):
         self.assertIn('устарела',answer['text'])
 
     def test_album_follow_up_refreshes_the_collect_message(self):
-        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900,'keyboard_group':'g','collect_group':'g'})
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','keyboard_message':900,'keyboard_group':'g'})
+        self.store.put('albums/g',{'item':'item-1','at':1})
         self.store.put('sessions/inbox',{'collecting':'item-1'})
         sent = []
         update = {'update_id':82,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
@@ -175,7 +176,8 @@ class WebhookTests(unittest.TestCase):
         self.assertNotIn('1 фото',sent[0][1]['text'])
 
     def test_album_parts_after_done_join_the_post_and_another_album_starts_a_new_one(self):
-        self.store.put('items/item-1',{'status':'queued','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','collect_group':'g'})
+        self.store.put('items/item-1',{'status':'queued','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1'})
+        self.store.put('albums/g',{'item':'item-1','at':1})
         self.store.put('sessions/inbox',{'current':'item-1'})
         chat = {'from':{'id':1},'chat':{'id':1,'type':'private'}}
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',return_value={'message_id':5}):
@@ -188,6 +190,47 @@ class WebhookTests(unittest.TestCase):
             self.assertEqual([m['message_id'] for m in joined['messages']],[1,2,3])
             self.request({'update_id':62,'message':dict({'message_id':4,'media_group_id':'other','video':{'file_id':'v2'}},**chat)})
         self.assertIsNotNone(self.store.get('items/item-62'))
+
+    def test_late_album_part_joins_its_own_item_when_current_moved(self):
+        self.store.put('items/item-1',{'status':'drafting','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1'})
+        self.store.put('items/item-2',{'status':'queued','revision':2,'messages':[{'message_id':9,'photo':[{'file_id':'q'}]}],'batch_token':'tok','slug':'item-2'})
+        self.store.put('albums/g',{'item':'item-1','at':1})
+        self.store.put('sessions/inbox',{'current':'item-2'})
+        chat = {'from':{'id':1},'chat':{'id':1,'type':'private'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',return_value={'message_id':5}):
+            self.request({'update_id':70,'message':dict({'message_id':2,'media_group_id':'g','video':{'file_id':'v'}},**chat)})
+        self.assertEqual([m['message_id'] for m in self.store.get('items/item-1')['messages']],[1,2])
+        self.assertEqual((self.store.get('items/item-1')['status'],self.store.get('items/item-1')['revision'],'edits' in self.store.get('items/item-1')),('queued',3,False))
+        self.assertEqual(len(self.store.get('items/item-2')['messages']),1)
+        self.assertIsNone(self.store.get('items/item-70'))
+
+    def test_late_album_part_joins_a_previewed_spec_without_taking_current(self):
+        self.store.put('items/item-1',{'status':'previewed','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1'})
+        self.store.put('specs/item-1',{'state':'previewed','item':'item-1','slug':'item-1','hash':'h','spec':{'targets':[]}})
+        self.store.put('albums/g',{'item':'item-1','at':1})
+        self.store.put('sessions/inbox',{'current':'item-2'})
+        chat = {'from':{'id':1},'chat':{'id':1,'type':'private'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',return_value={'message_id':5}):
+            self.request({'update_id':73,'message':dict({'message_id':2,'media_group_id':'g','photo':[{'file_id':'p2'}]},**chat)})
+        self.assertEqual([m['message_id'] for m in self.store.get('items/item-1')['messages']],[1,2])
+        self.assertEqual(self.store.get('specs/item-1')['state'],'drafting')
+        self.assertEqual(self.store.get('sessions/inbox')['current'],'item-2')
+        self.assertIsNotNone(self.store.get('updates/73'))
+
+    def test_late_album_part_after_approval_is_refused_once_without_a_new_post(self):
+        self.store.put('items/item-1',{'status':'drafting','revision':2,'messages':[{'message_id':1,'media_group_id':'g','photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1'})
+        self.store.put('specs/item-1',{'state':'approved','item':'item-1','slug':'item-1','hash':'h','approved_hash':'h','spec':{'targets':[]}})
+        self.store.put('albums/g',{'item':'item-1','at':1})
+        self.store.put('sessions/inbox',{'current':'item-1'})
+        chat = {'from':{'id':1},'chat':{'id':1,'type':'private'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',return_value={'message_id':5}):
+            first = self.request({'update_id':71,'message':dict({'message_id':2,'media_group_id':'g','photo':[{'file_id':'p2'}]},**chat)})
+            second = self.request({'update_id':72,'message':dict({'message_id':3,'media_group_id':'g','photo':[{'file_id':'p3'}]},**chat)})
+        self.assertIn('после «Опубликовать»',first.get_data(as_text=True))
+        self.assertNotIn('после «Опубликовать»',second.get_data(as_text=True))
+        self.assertEqual(len(self.store.get('items/item-1')['messages']),1)
+        self.assertIsNone(self.store.get('items/item-71'))
+        self.assertIsNone(self.store.get('items/item-72'))
 
     def test_bounded_sends_work_without_patched_configure(self):
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
