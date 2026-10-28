@@ -1,9 +1,7 @@
-from functools import lru_cache
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import threading
@@ -48,132 +46,188 @@ def ass_time(seconds):
     return f'{centiseconds//360000}:{centiseconds//6000%60:02}:{centiseconds//100%60:02}.{centiseconds%100:02}'
 
 
-def title_pin(size, color, hole):
-    from PIL import Image, ImageDraw
-    big = size*4
-    image = Image.new('RGBA',(big,int(big*1.3)),(0,0,0,0))
-    draw = ImageDraw.Draw(image)
-    radius = big//2
-    draw.ellipse((0,0,big,big),fill=color)
-    draw.polygon([(big*0.12,radius*1.45),(big*0.88,radius*1.45),(radius,int(big*1.3))],fill=color)
-    inner = big*0.19
-    draw.ellipse((radius-inner,radius-inner,radius+inner,radius+inner),fill=hole)
-    return image.resize((size,int(size*1.3)),Image.LANCZOS)
-
-
 TITLE_MARGIN = 60
-EMOJI_BASE = '[\U0001f000-\U0001faff\u2600-\u27bf\u2300-\u23ff]'
-EMOJI_MARK = '[\ufe0f\U0001f3fb-\U0001f3ff]*'
-EMOJI_CLUSTER = re.compile('[0-9#*]\ufe0f?\u20e3|[\U0001f1e6-\U0001f1ff]{2}|' + EMOJI_BASE + EMOJI_MARK + '(?:\u200d' + EMOJI_BASE + EMOJI_MARK + ')*')
+TITLE_SHRINK_FLOOR = 44
 
 
-def title_segments(text):
-    result, last = [], 0
-    def add(kind, value):
-        if kind == 'text' and result and result[-1][0] == 'text':
-            result[-1] = ('text',result[-1][1] + value)
-        elif value:
-            result.append((kind,value))
-    for found in EMOJI_CLUSTER.finditer(text):
-        add('text',text[last:found.start()])
-        cluster = found.group()
-        if cluster.rstrip('\ufe0f') == '\U0001f4cd':
-            add('pin',cluster)
-        elif title_has_emoji(cluster):
-            add('emoji',cluster)
-        else:
-            add('text',cluster.replace('\ufe0f','').replace('\u200d',''))
-        last = found.end()
-    add('text',text[last:])
-    return result
+def bold_font(size):
+    from PIL import ImageFont
+    return ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'InterDisplay-Bold.otf'),size)
 
 
-@lru_cache(maxsize=256)
-def title_has_emoji(cluster):
-    return title_strike(cluster).getbbox() is not None
+def tracked_width(text, font, tracking):
+    return sum(font.getlength(character) for character in text) + tracking*(len(text)-1)
 
 
-def title_strike(cluster):
-    from PIL import Image, ImageDraw, ImageFont
-    font = ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'NotoColorEmoji.ttf'),109)
-    ascent, descent = font.getmetrics()
-    strike = Image.new('RGBA',(round(font.getlength(cluster)),ascent+descent),(0,0,0,0))
-    ImageDraw.Draw(strike).text((0,0),cluster,font=font,embedded_color=True)
-    return strike
+def draw_tracked(draw, origin, text, font, tracking, fill):
+    x, y = origin
+    for character in text:
+        draw.text((x,y),character,font=font,fill=fill)
+        x += font.getlength(character) + tracking
 
 
-@lru_cache(maxsize=64)
-def title_emoji(cluster, height):
-    from PIL import Image
-    strike = title_strike(cluster)
-    return strike.resize((round(strike.width*height/strike.height),height),Image.LANCZOS)
-
-
-def title_run(kind, value, size):
-    if kind == 'pin':
-        return title_pin(round(size*0.62),(235,64,52,255),(255,255,255,255))
-    return title_emoji(value,round(size*1.18))
-
-
-def title_advance(kind, value, size):
-    return title_run(kind,value,size).width + (round(size*0.12) if kind == 'pin' else 0)
-
-
-def title_width(text, font):
-    return sum(font.getlength(value) if kind == 'text' else title_advance(kind,value,font.size) for kind, value in title_segments(text))
-
-
-def title_shadow(layer, radius, alpha):
-    from PIL import Image, ImageFilter
-    margin = TITLE_MARGIN
-    padded = Image.new('RGBA',(layer.width+2*margin,layer.height+2*margin),(0,0,0,0))
-    padded.alpha_composite(layer,(margin,margin))
-    mask = padded.split()[3].point(lambda value: value*alpha//255)
-    shadow = Image.new('RGBA',padded.size,(0,0,0,0))
-    shadow.putalpha(mask.filter(ImageFilter.GaussianBlur(radius)))
-    image = Image.new('RGBA',padded.size,(0,0,0,0))
-    image.alpha_composite(shadow,(0,6))
-    image.alpha_composite(padded)
-    return image
+def title_parts(text):
+    name, _, city = text.rpartition(',')
+    return (name.strip(),city.strip().upper()) if name.strip() else (city.strip(),'')
 
 
 def title_image(text, path):
-    from PIL import Image, ImageDraw, ImageFont
-    semibold = str(Path(__file__).parent / 'fonts' / 'InterDisplay-SemiBold.otf')
-    pin = title_pin(34,(235,64,52,255),(255,255,255,255))
-    padding, gap, height = 30, 14, 92
-    width = title_width(text,ImageFont.truetype(semibold,50))
-    size = min(50,int(50*(900-2*padding-gap-pin.width)/max(1,width)))
-    if size < round(50/76*44):
-        raise RuntimeError('Title cannot fit safe width')
-    font = ImageFont.truetype(semibold,size)
-    full = (2*padding+pin.width+gap+round(title_width(text,font)),height)
-    shape = Image.new('RGBA',(full[0]*4,full[1]*4),(0,0,0,0))
-    ImageDraw.Draw(shape).rounded_rectangle((0,0,full[0]*4-1,full[1]*4-1),radius=88,fill=(255,255,255,255))
-    image = shape.resize(full,Image.LANCZOS)
-    image.alpha_composite(pin,(padding,(height-pin.height)//2))
-    ascent, descent = font.getmetrics()
-    baseline = height//2 + (ascent-descent)//2
-    draw = ImageDraw.Draw(image)
-    x = padding + pin.width + gap
-    for kind, value in title_segments(text):
-        if kind == 'text':
-            draw.text((x,baseline),value,font=font,fill=(20,20,20),anchor='ls')
-            x += font.getlength(value)
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    name, city = title_parts(text)
+    size = 76
+    while size > TITLE_SHRINK_FLOOR and tracked_width(name,bold_font(size),-1) > 780:
+        size -= 2
+    lines = [name] if tracked_width(name,bold_font(size),-1) <= 780 else wrap_lines(name,bold_font(size),780)[:2]
+    line_height = round(size*1.1)
+    kicker = ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'InterDisplay-SemiBold.otf'),28)
+    name_top = 66 if city else 0
+    margin = TITLE_MARGIN
+    canvas = (round(max(max(tracked_width(line,bold_font(size),-1) for line in lines),tracked_width(city,kicker,8) if city else 0))+2*margin,name_top+(len(lines)-1)*line_height+round(size*1.3)+2*margin)
+    shade = Image.new('RGBA',canvas,(0,0,0,0))
+    front = Image.new('RGBA',canvas,(0,0,0,0))
+    for layer, kicker_fill, name_fill, offset in ((shade,(0,0,0,140),(0,0,0,150),(2,3)),(front,(255,255,255,210),(255,255,255,255),(0,0))):
+        draw = ImageDraw.Draw(layer)
+        if city:
+            draw_tracked(draw,(margin+offset[0],margin+offset[1]),city,kicker,8,kicker_fill)
+            draw.rectangle((margin+offset[0],margin+48+offset[1],margin+40+offset[0],margin+50+offset[1]),fill=kicker_fill if layer is shade else (255,255,255,255))
+        for index, line in enumerate(lines):
+            draw_tracked(draw,(margin+offset[0],margin+name_top+index*line_height+offset[1]),line,bold_font(size),-1,name_fill)
+    image = Image.new('RGBA',canvas,(0,0,0,0))
+    image.alpha_composite(shade.filter(ImageFilter.GaussianBlur(12)))
+    image.alpha_composite(front)
+    image.save(path)
+
+
+def title_position(frame):
+    scale = frame[0]/1080
+    return round((150-TITLE_MARGIN)*scale), round((330-TITLE_MARGIN)*scale)
+
+
+def edge_energy(image):
+    from PIL import ImageFilter
+    return image.convert('L').filter(ImageFilter.FIND_EDGES)
+
+
+def sharpest_frame(sources, clips, time, root):
+    from PIL import Image, ImageStat
+    start = 0
+    for clip in clips:
+        span = clip['out'] - clip['in']
+        if time < start + span or clip is clips[-1]:
+            break
+        start += span
+    origin = clip['in'] + min(max(0,time-start),span)
+    best, score = None, -1
+    for index in range(6):
+        moment = max(clip['in'],min(clip['out']-1/30,origin-0.5+index*0.2))
+        candidate = root / f'cover-candidate-{index}.jpg'
+        try:
+            run(['-ss',moment,'-i',sources[clip['source']],'-frames:v','1','-map_metadata','-1',candidate])
+            with Image.open(candidate) as image:
+                sharpness = ImageStat.Stat(edge_energy(image.resize((270,round(270*image.height/image.width))))).var[0]
+        except (RuntimeError, OSError):
             continue
-        glyph = title_run(kind,value,font.size)
-        top = baseline - glyph.height if kind == 'pin' else baseline - round(glyph.height*0.79)
-        image.alpha_composite(glyph,(round(x),round(top)))
-        x += title_advance(kind,value,font.size)
-    title_shadow(image,18,90).save(path)
+        if sharpness > score:
+            best, score = candidate, sharpness
+    if best:
+        return best
+    plain = root / 'cover-candidate-plain.jpg'
+    try:
+        run(['-ss',origin,'-i',sources[clip['source']],'-frames:v','1','-map_metadata','-1',plain])
+        Image.open(plain).close()
+    except (RuntimeError, OSError):
+        raise RuntimeError('Cover frame unavailable')
+    return plain
 
 
-def title_origin(image_size, frame):
-    return (frame[0]-image_size[0])//2, round((590-TITLE_MARGIN)*frame[0]/1080)
+def cover_blur(image, width, height):
+    from PIL import Image, ImageFilter
+    back = cover_crop(image,width,height).filter(ImageFilter.GaussianBlur(20*width/1080))
+    ratio = min(width/image.width,height/image.height)
+    front = image.resize((round(image.width*ratio),round(image.height*ratio)),Image.LANCZOS)
+    back.paste(front,((width-front.width)//2,(height-front.height)//2))
+    return back
 
 
-def title_position(image_size, draft):
-    return title_origin(image_size,frame_size(draft))
+def cover_crop(image, width, height):
+    from PIL import Image
+    wide = image.width*height > image.height*width
+    scaled = image.resize((round(image.width*height/image.height),height) if wide else (width,round(image.height*width/image.width)),Image.LANCZOS)
+    window = width if wide else height
+    energy = edge_energy(scaled).resize((scaled.width,1) if wide else (1,scaled.height),Image.BOX)
+    values = list(energy.getdata())
+    total = sum(values[:window])
+    best, offset = total, 0
+    for index in range(1,len(values)-window+1):
+        total += values[index+window-1] - values[index-1]
+        if total > best:
+            best, offset = total, index
+    return scaled.crop((offset,0,offset+window,height) if wide else (0,offset,width,offset+window))
+
+
+def wrap_lines(text, font, limit):
+    lines, current = [], ''
+    for word in text.split():
+        while font.getlength(word) > limit:
+            cut = max(1,next((index for index in range(1,len(word)+1) if font.getlength(word[:index]) > limit),len(word))-1)
+            if current:
+                lines.append(current)
+                current = ''
+            lines.append(word[:cut])
+            word = word[cut:]
+        trial = (current + ' ' + word).strip()
+        if current and font.getlength(trial) > limit:
+            lines.append(current)
+            current = word
+        else:
+            current = trial
+    return lines + ([current] if current else [])
+
+
+def cover_headline(image, text):
+    from PIL import Image, ImageDraw, ImageFilter
+    scale = image.width/1080
+    pad = round(34*scale)
+    limit = 780*scale - 2*pad
+    size = 80
+    while True:
+        font = bold_font(round(size*scale))
+        lines = wrap_lines(text,font,limit)
+        if lines and len(lines) <= 2:
+            break
+        size -= 2
+        if size < TITLE_SHRINK_FLOOR:
+            print('Cover headline dropped: does not fit',flush=True)
+            return image
+    line_height = round(size*1.05*scale)
+    top, bottom = font.getbbox('Ду')[1::2]
+    width = round(max(font.getlength(line) for line in lines)) + 2*pad
+    height = (len(lines)-1)*line_height + bottom - top + 2*pad
+    radius = round(line_height*0.45)
+    x = round(150*scale)
+    y = round(max(1250,1500-height/scale)*scale)
+    reach = round(80*scale)
+    base = image.convert('RGB')
+    region = base.crop((x-reach,y-reach,x+width+reach,y+height+reach)).filter(ImageFilter.GaussianBlur(40*scale))
+    region = Image.blend(region.point(lambda value: value*8//10),Image.new('RGB',region.size,(8,10,14)),0.45)
+    grow = 4
+    mask = Image.new('L',(width*grow,height*grow),0)
+    ImageDraw.Draw(mask).rounded_rectangle((0,0,width*grow-1,height*grow-1),radius=radius*grow,fill=255)
+    mask = mask.resize((width,height),Image.LANCZOS)
+    result = base.convert('RGBA')
+    shadow = Image.new('RGBA',result.size,(0,0,0,0))
+    ImageDraw.Draw(shadow).rounded_rectangle((x,y+round(10*scale),x+width,y+height+round(10*scale)),radius=radius,fill=(0,0,0,90))
+    result.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(22*scale)))
+    plate = region.crop((reach,reach,reach+width,reach+height)).convert('RGBA')
+    plate.putalpha(mask)
+    result.alpha_composite(plate,(x,y))
+    ring = Image.new('RGBA',(width*grow,height*grow),(0,0,0,0))
+    ImageDraw.Draw(ring).rounded_rectangle((0,0,width*grow-1,height*grow-1),radius=radius*grow,outline=(255,255,255,70),width=grow)
+    result.alpha_composite(ring.resize((width,height),Image.LANCZOS),(x,y))
+    draw = ImageDraw.Draw(result)
+    for index, line in enumerate(lines):
+        draw.text((x+pad,y+pad-top+index*line_height),line,font=font,fill=(255,255,255,255))
+    return result.convert('RGB')
 
 
 def digest_file(path):
@@ -328,11 +382,12 @@ def render(bucket, job, root):
         joined_files[target] = joined
     cover = root / 'cover.jpg'
     settings = job['edl']['cover']
-    run(['-ss',settings['time'],'-i',joined_files[leaders[settings['target']]],'-frames:v','1','-vf',f'scale={width}:{height}','-map_metadata','-1',cover])
     from PIL import Image, ImageCms, ImageFont
-    with Image.open(cover) as image:
-        clean = Image.new('RGB',image.size)
-        clean.paste(image)
+    chosen = sharpest_frame(sources,job['edl']['targets'][settings['target']]['clips'],settings['time'],root)
+    with Image.open(chosen) as image:
+        clean = (cover_blur if job['edl']['fit'] == 'blur' else cover_crop)(image.convert('RGB'),width,height)
+        if settings.get('text'):
+            clean = cover_headline(clean,settings['text'])
         clean.save(cover,'JPEG',quality=90,icc_profile=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes())
     font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',44)
     for target in groups:
@@ -357,8 +412,7 @@ def render(bucket, job, root):
             if draft:
                 with Image.open(image) as full:
                     full.resize((full.width//2,full.height//2)).save(image)
-            with Image.open(image) as placed:
-                x, y = title_position(placed.size,draft)
+            x, y = title_position((width,height))
             title_inputs += ['-i',image]
             video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x={x}:y={y}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story' and not draft:

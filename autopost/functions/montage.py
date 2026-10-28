@@ -85,10 +85,12 @@ def validate(edl, sources):
             if any(abs(edges[i] - edges[i + 1]) > 1/30 for i in range(0, len(edges), 2)):
                 errors.append(target + ': titles must cover the whole timeline from 0 to the total length without gaps')
     cover = edl.get('cover')
-    if not isinstance(cover, dict) or set(cover) != {'target', 'time'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
+    if not isinstance(cover, dict) or set(cover) != {'target', 'time', 'text'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
         errors.append('Invalid cover target')
     elif not number(cover['time']) or not 0 <= cover['time'] < totals[cover['target']]:
         errors.append('Cover time outside timeline')
+    if isinstance(cover, dict) and (not isinstance(cover.get('text'),str) or not 1 <= len(cover['text'].strip()) <= 40 or any(c in cover['text'] for c in '\n\r{}\\') or EMOJI.search(cover['text'])):
+        errors.append('Cover requires plain headline text, 1–40 characters')
     copy = edl.get('copy')
     if not isinstance(copy, dict) or set(copy) != set(targets):
         errors.append('Copy required per target')

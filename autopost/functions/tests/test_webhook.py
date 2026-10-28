@@ -135,7 +135,7 @@ class WebhookTests(unittest.TestCase):
 
     def test_refusal_is_a_multiline_alert_within_200_characters(self):
         self.config['instagram'] = {'user':1}
-        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'video':{'file_id':'v'}}],'batch_token':'tok','slug':'item-1','chosen':['ig-post']})
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1','chosen':['ig-reel']})
         update = {'update_id':80,'callback_query':{'id':'80','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:item-1:tok'}}
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram') as telegram:
             answer = json.loads(self.request(update).get_data())

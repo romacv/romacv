@@ -45,6 +45,13 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(edits[-1],'Монтирую 1 клип\nМонтаж не удался.')
 
 
+class TitleTests(unittest.TestCase):
+    def test_title_splits_at_the_last_comma(self):
+        self.assertEqual(render.title_parts('Gelora Bung Karno, Jakarta'),('Gelora Bung Karno','JAKARTA'))
+        self.assertEqual(render.title_parts('A, B, Bali'),('A, B','BALI'))
+        self.assertEqual(render.title_parts('Jakarta'),('Jakarta',''))
+
+
 class RenderSettingsTests(unittest.TestCase):
     def test_draft_is_small_and_fast_final_keeps_quality(self):
         arguments = render.encode_arguments('tg-story',True)

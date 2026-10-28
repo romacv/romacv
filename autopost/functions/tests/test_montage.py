@@ -45,6 +45,14 @@ class MontageTests(unittest.TestCase):
         story['titles'] = [{'start':0,'end':5,'text':'Jakarta'},{'start':5,'end':11,'text':'Bali'}]
         self.assertEqual(montage.validate(self.edl,self.sources),[])
 
+    def test_cover_needs_plain_headline(self):
+        for text in (None,'','x'*41,'a\nb','😀'):
+            with self.subTest(text=text):
+                self.edl['cover']['text'] = text
+                self.assertIn('Cover requires plain headline text, 1–40 characters',montage.validate(self.edl,self.sources))
+        del self.edl['cover']['text']
+        self.assertTrue(montage.validate(self.edl,self.sources))
+
     def test_cover_copy_and_language(self):
         self.edl['cover']['time'] = 100
         self.assertTrue(montage.validate(self.edl,self.sources))

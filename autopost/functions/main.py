@@ -837,11 +837,23 @@ def answer_edit(config,store,payload,item,answer):
 def restrict(config,store,payload,item,photos,video):
     chosen = chosen_targets(item.get('chosen',[]),config,store.get('tokens/business') or config.get('business')) if item.get('chosen') else []
     reasons = unsupported(chosen,photos,video)
-    store.change('items/' + payload['item'],lambda value:value.update(skipped=skipped_lines(reasons)))
+    store.change('items/' + payload['item'],lambda value:value.update(skipped=skipped_lines({t:r for t,r in reasons.items() if t != 'blog'}),work_skipped=skipped_lines({t:r for t,r in reasons.items() if t == 'blog'})))
     allowed = [t for t in chosen if t not in reasons]
     if chosen and not allowed:
         raise Error('Черновик не готов: ' + ' '.join(skipped_lines(reasons)))
     return allowed or None
+
+
+def reeled(allowed):
+    return list(dict.fromkeys('ig-reel' if t == 'ig-post' else t for t in allowed)) if allowed else allowed
+
+
+def work_skips(store,item_id,kind):
+    def settle(value):
+        lines = value.pop('work_skipped',[])
+        lines = lines if kind == 'work' else []
+        value['skipped'] = value.get('skipped',[]) + [line for line in lines if line not in value.get('skipped',[])]
+    store.change('items/' + item_id,settle)
 
 
 def edit_media(config,store,bucket,payload,item,directory):
@@ -943,7 +955,7 @@ def plan_montage(config,store,bucket,payload,directory):
         raise Error('Нет клипов для монтажа.')
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
-    allowed = restrict(config,store,payload,item,False,True)
+    allowed = reeled(restrict(config,store,payload,item,False,True))
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % len(shots)} if shots else {})} if fresh else None
@@ -1111,6 +1123,9 @@ def rendered(config,store,bucket,payload,directory):
         clips_rendered(config,store,bucket,payload,directory,job)
         return
     edl = job['edl']
+    work_skips(store,payload['item'],edl['kind'])
+    if 'ig-post' in item.get('chosen',[]) and 'ig-reel' not in item['chosen'] and 'ig-reel' in edl['targets']:
+        store.change('items/' + payload['item'],lambda value:value.update(skipped=value.get('skipped',[]) + ['Instagram-пост выйдет как Reels в ленте.']))
     spec = {'slug':item['slug'],'kind':edl['kind'],'at':datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar'))).isoformat(),'targets':list(edl['targets']),'media':{'video':'video.mp4','cover':'cover.jpg'},'copy':edl['copy'],**({'threads_tag':edl['threads_tag']} if 'threads_tag' in edl else {}),'approval':{}}
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
     preview(config,store,bucket,payload['item'],spec,assets,directory,{'edl':edl,'render':RENDER_SETTINGS} if job.get('mode') == 'draft' else None,payload['revision'])

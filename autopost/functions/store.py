@@ -75,12 +75,12 @@ def offered(config, business):
     return [key for key, label, targets in GROUPS if any(have[t] for t in targets)]
 
 
-UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужны фото или текст'}
+UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото или видео','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужны фото или текст'}
 SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
 
 
 def unsupported(targets, photos, video):
-    missing = {'ig-reel':not video,'ig-post':not photos,'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video and not photos}
+    missing = {'ig-reel':not video,'ig-post':not (photos or video),'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video and not photos}
     return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
 
 
