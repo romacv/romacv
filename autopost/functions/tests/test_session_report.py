@@ -67,13 +67,13 @@ class SessionReportTests(unittest.TestCase):
         self.assertEqual(session['table'][1]['target'], 'threads')
         self.assertIn('dialog', session)
 
-    def test_maintenance_backfills_session_and_reasons_for_old_partial(self):
+    def test_tick_backfills_session_and_reasons_for_old_partial(self):
         self.store.put('items/item-1', {'status':'approved','messages':[]})
         self.store.put('specs/s1', {'item':'item-1','state':'partial','spec':{'targets':['tg-channel','threads']},
             'results':{'tg-channel':{'url':'u'}}})
         config = {**self.config, 'webhook_url':'test'}
         with patch.object(app.platforms, 'telegram', return_value={'url':'test'}), patch.object(app.platforms, 'request', return_value={}), patch.object(app, 'enqueue'), patch.object(app, 'tell'), patch('urllib.request.urlopen', side_effect=OSError()):
-            app.maintenance(config, self.store, MagicMock())
+            app.mend_sessions(self.store)
         value = self.store.get('specs/s1')
         self.assertTrue(value['published_at'])
         self.assertTrue(value['errors']['threads'])

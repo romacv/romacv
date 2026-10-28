@@ -1955,6 +1955,25 @@ def handle_worker(request):
             stop.set()
 
 
+def mend_sessions(store):
+    now = int(time.time())
+    owned = {snapshot.id for snapshot in store.db.collection('sessions').stream()}
+    for snapshot in store.db.collection('specs').where('state','==','partial').stream():
+        def unmended(value):
+            return bool(value.get('spec')) and not value.get('operation') and (not value.get('published_at') or any(t not in value.get('results',{}) and not value.get('errors',{}).get(t) for t in platforms.live(value['spec'].get('targets',[]))))
+        def mend(value):
+            missing_errors(value,True)
+            value.setdefault('published_at',value.get('started_at') or value.get('updated') or now)
+        if unmended(snapshot.to_dict()):
+            store.change('specs/' + snapshot.id,mend)
+    for snapshot in store.db.collection('specs').stream():
+        saved = snapshot.to_dict()
+        if saved.get('item') and saved['item'] not in owned and not saved.get('operation') and saved.get('state') in ('done','partial') and (saved.get('results') or saved.get('published')) and (saved.get('published_at') or saved.get('updated') or now) > now - SESSION_AGE:
+            if store.backfill(saved['item'],store.get('items/' + saved['item']),saved):
+                owned.add(saved['item'])
+    store.flush(enqueue)
+
+
 def maintenance(config,store,bucket):
     info = platforms.telegram('getWebhookInfo')
     if info.get('url') != config['webhook_url'] or info.get('last_error_date'):
@@ -2013,20 +2032,6 @@ def maintenance(config,store,bucket):
                 enqueue({'step':'verify','slug':journal['slug'],'attempt':1},'verify-sweep-' + journal['slug'] + '-' + str(now // 86400))
             elif now - saved.get('published_at',now) > 86400:
                 store.close_session(snapshot.id,'published','опубликовано' if saved['state'] == 'done' else 'опубликовано не везде')
-    owned = {snapshot.id for snapshot in store.db.collection('sessions').stream()}
-    for snapshot in store.db.collection('specs').where('state','==','partial').stream():
-        def unmended(value):
-            return bool(value.get('spec')) and not value.get('operation') and (not value.get('published_at') or any(t not in value.get('results',{}) and not value.get('errors',{}).get(t) for t in platforms.live(value['spec'].get('targets',[]))))
-        def mend(value):
-            missing_errors(value,True)
-            value.setdefault('published_at',value.get('started_at') or value.get('updated') or now)
-        if unmended(snapshot.to_dict()):
-            store.change('specs/' + snapshot.id,mend)
-    for snapshot in store.db.collection('specs').stream():
-        saved = snapshot.to_dict()
-        if saved.get('item') and saved['item'] not in owned and not saved.get('operation') and saved.get('state') in ('done','partial') and (saved.get('results') or saved.get('published')) and (saved.get('published_at') or saved.get('updated') or now) > now - SESSION_AGE:
-            if store.backfill(saved['item'],store.get('items/' + saved['item']),saved):
-                owned.add(saved['item'])
     store.flush(enqueue)
 
 
@@ -2159,6 +2164,10 @@ def daily(event):
     platforms.configure(config,store,Path('/tmp'))
     recover_running(config,store)
     store.flush(enqueue)
+    try:
+        mend_sessions(store)
+    except Exception:
+        logging.error(json.dumps({'code':'mend_failed'}))
     local = datetime.now(ZoneInfo(config.get('timezone','Asia/Makassar')))
     if local.hour != 6 or local.minute >= 15:
         return
