@@ -1706,7 +1706,7 @@ def stop_stale(config,store):
         def stop(value):
             if value.get('status') not in ('queued','drafting') or bool(value.get('waiting_upload')) != bool(item.get('waiting_upload')) or not stale(value,now,key in busy):
                 return False
-            value.update(status='failed',stalled=True)
+            value.update(status='failed',stalled=True,**({'upload_timeout':True} if value.get('waiting_upload') else {}))
             return True
         stopped = store.change('items/' + key,stop) if item.get('status') in ('queued','drafting') else False
         held = item.get('status') in ('queued','drafting') and not stopped
@@ -1719,8 +1719,8 @@ def stop_stale(config,store):
     for snapshot in store.db.collection('items').where('stalled','==',True).stream():
         item = snapshot.to_dict()
         try:
-            tell(config,'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Начни /post.')
-            store.change('items/' + snapshot.id,lambda value:value.pop('stalled',None))
+            tell(config,('Пост' + (item_name(item) or ' без названия') + ': файл так и не загрузился, остановлен. Начни /post.') if item.get('upload_timeout') else 'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Начни /post.')
+            store.change('items/' + snapshot.id,lambda value:(value.pop('stalled',None),value.pop('upload_timeout',None)))
         except Exception:
             logging.error(json.dumps({'code':'stalled_notice_failed'}))
 

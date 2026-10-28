@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import time
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
 
@@ -130,6 +132,17 @@ class ProgressTests(unittest.TestCase):
         body = json.loads(self.call(signed()).get_data(as_text=True))
         self.assertEqual([row['title'] for row in body['active']],[])
         self.assertEqual([(w['title'],w['wait']) for w in body['waiting']],[('Большой','Жду загрузку большого файла')])
+
+    def test_spec_stage_rows_use_the_spec_time_and_scheduled_posts_wait(self):
+        now = time.time()
+        later = time.strftime('%Y-%m-%dT%H:%M:%S+00:00',time.gmtime(now + 7200))
+        self.store.put('items/a',{'messages':[{'text':'Монтаж'}],'status':'previewed','created':now - 90000,'updated':now - 90000})
+        self.store.put('items/b',{'messages':[{'text':'План'}],'status':'previewed','created':now - 90000,'updated':now - 90000})
+        self.store.put('specs/a',{'item':'a','state':'rendering','updated':now - 300,'started_at':now - 100,'spec':{'targets':['tg-channel']}})
+        self.store.put('specs/b',{'item':'b','state':'approved','updated':now - 300,'spec':{'targets':['tg-channel'],'at':later}})
+        body = json.loads(self.call(signed()).get_data(as_text=True))
+        self.assertEqual([(row['title'],round(now - row['since'])) for row in body['active']],[('Монтаж',100)])
+        self.assertEqual([(w['title'],w['wait']) for w in body['waiting']],[('План','Запланирован на ' + datetime.fromtimestamp(now + 7200,ZoneInfo('Asia/Makassar')).strftime('%d.%m %H:%M'))])
 
     def test_one_waiting_row_per_post(self):
         now = time.time()

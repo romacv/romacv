@@ -127,18 +127,29 @@ def contents(item, genitive=False):
     return parts
 
 
-PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
+PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('scheduled','запланирован'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
 
 
-def newest_states(specs):
+def scheduled(spec):
+    try:
+        return spec.get('state') == 'approved' and datetime.fromisoformat(spec['spec']['at'].replace('Z', '+00:00')) > datetime.now(timezone.utc)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def newest_specs(specs):
     tie = ['drafting','needs-edit','previewed','rendering','approved','running']
     newest = {}
     for spec in specs:
         if spec.get('item') and not spec.get('operation') and spec.get('state') in tie:
             rank = (spec.get('updated', 0), tie.index(spec['state']))
             if spec['item'] not in newest or rank >= newest[spec['item']][0]:
-                newest[spec['item']] = (rank, spec['state'])
+                newest[spec['item']] = (rank, spec)
     return {key:value[1] for key,value in newest.items()}
+
+
+def newest_states(specs):
+    return {key:'scheduled' if scheduled(spec) else spec['state'] for key,spec in newest_specs(specs).items()}
 
 
 FINAL_DEADLINE = 2400
