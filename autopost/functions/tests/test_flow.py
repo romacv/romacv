@@ -521,6 +521,19 @@ class RecoveryTests(unittest.TestCase):
         tell.assert_not_called()
         self.assertEqual(self.store.get('items/item-1')['status'],'queued')
 
+    def test_item_waiting_for_upload_over_a_day_is_failed_and_announced_once(self):
+        self.store.put('items/item-1',{'status':'queued','waiting_upload':True,'montage':True,'revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time() - 90000})
+        with patch.object(app,'tell') as tell:
+            app.recover_running(self.config,self.store)
+            app.recover_running(self.config,self.store)
+        tell.assert_called_once()
+        self.assertIn('завис и остановлен',tell.call_args[0][1])
+        self.assertEqual(self.store.get('items/item-1')['status'],'failed')
+
+    def test_pin_shows_upload_wait(self):
+        self.store.put('items/item-1',{'status':'queued','waiting_upload':True,'montage':True,'revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time()})
+        self.assertIn('жду загрузку файла',list(app.pin_texts(self.store).values())[0])
+
 
 if __name__ == '__main__':
     unittest.main()

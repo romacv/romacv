@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_states, pin_stage
+from store import GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_states, overdue, pin_stage, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -351,7 +351,8 @@ def snapshot(store, now, view='progress', skill=None):
     states = newest_states(s.to_dict() for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream())
     wanted = sorted((busy | set(working) | set(states) | {spec.get('item') for spec in specs} | {spec.get('item') for slug, spec in previews}) - {None})
     items = {s.id: s.to_dict() for s in store.db.get_all([store.db.document('items/' + key) for key in wanted]) if s.exists}
-    jobs = [job for job in jobs if not dead_render(job, items.get(job.get('item')))]
+    live = {job.get('item') for job in jobs}
+    jobs = [job for job in jobs if not dead_render(job, items.get(job.get('item'))) and not overdue(job, now)]
     busy = {job.get('item') for job in jobs}
     waiting = []
     for key, item in collecting:
@@ -367,11 +368,15 @@ def snapshot(store, now, view='progress', skill=None):
         operation = {'fix':'исправление','delete':'удаление'}.get(spec.get('operation'))
         wait = 'Нужна правка черновика' if spec['state'] == 'needs-edit' else 'Жду подтверждения: ' + operation if operation else 'Черновик показан; жду «Опубликовать»'
         waiting.append({'id':spec.get('item'),'title':title_of(item),'status':spec['state'],'wait':wait,'targets':targets_of(spec),'at':at})
+    for key in sorted(working):
+        item = items.get(key)
+        if item and item.get('waiting_upload') and item.get('status') in ('queued', 'drafting') and key not in busy:
+            waiting.append({'id':key,'title':title_of(item),'status':item['status'],'wait':'Жду загрузку большого файла','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
     waiting = sorted(waiting, key=lambda row: (row['status'] != 'collecting', -row['at']))[:LIMIT]
     active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
     for key in sorted(set(working) | set(states)):
         item = items.get(key)
-        stage = pin_stage(item, states.get(key)) if item and item.get('status') not in ('rejected', 'failed') and key not in busy else None
+        stage = pin_stage(item, states.get(key)) if item and item.get('status') not in ('rejected', 'failed') and key not in busy and not stale(item, now, key in live) else None
         if stage in WORKING:
             active.append({'id':key,'item':key,'title':title_of(item),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':item.get('updated') or item.get('created') or now,'steps':[]})
     active.sort(key=lambda row: row['since'])

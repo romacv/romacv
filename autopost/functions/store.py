@@ -141,12 +141,34 @@ def newest_states(specs):
     return {key:value[1] for key,value in newest.items()}
 
 
+FINAL_DEADLINE = 2400
+UPLOAD_DEADLINE = 86400
+
+
+DRAFT_DEADLINE = 1800
+
+
+def stale_limit(item, busy):
+    return UPLOAD_DEADLINE if item.get('waiting_upload') else DRAFT_DEADLINE + (FINAL_DEADLINE if busy else 0)
+
+
+def stale(item, now, busy):
+    return item.get('status') in ('queued','drafting') and now - (item.get('updated') or item.get('created') or 0) > stale_limit(item, busy)
+
+
+def overdue(job, now):
+    since = job.get('created') or (job.get('progress') or {}).get('since')
+    return bool(since) and now - since > FINAL_DEADLINE
+
+
 def dead_render(job, item):
     return not item or item.get('status') in ('rejected', 'failed') or bool(item.get('published')) or job.get('mode') != 'final' and 'revision' in job and job['revision'] != item.get('revision')
 
 
 def pin_stage(item, state):
     working = 'монтаж' if item.get('montage') else 'готовлю черновик'
+    if item.get('waiting_upload') and item.get('status') in ('queued','drafting'):
+        return 'жду загрузку файла'
     if item.get('status') == 'collecting':
         parts = contents(item)
         return 'собираю' + (' · ' + ', '.join(parts) if parts else '')

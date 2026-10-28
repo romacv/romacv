@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, PIN_SPEC_STAGES, newest_states, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import learning
 import progress as progress_view
@@ -41,8 +41,6 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 
 RENDER_SETTINGS = 'final-v1'
-FINAL_DEADLINE = 2400
-DRAFT_DEADLINE = 1800
 EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead.'
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
@@ -1680,15 +1678,13 @@ def recover_running(config,store):
         if (job or {}).get('state') == 'done':
             continue
         if job and job.get('state') in ('queued','running') and not spec.get('started_at'):
-            since = (job.get('progress') or {}).get('since')
-            if not since or time.time() - since < FINAL_DEADLINE:
+            if (job.get('created') or (job.get('progress') or {}).get('since')) and not overdue(job,time.time()):
                 continue
         fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
     now = time.time()
     for snapshot in store.db.collection('renders').where('state','in',['queued','running']).stream():
         job = snapshot.to_dict()
-        since = job.get('created') or (job.get('progress') or {}).get('since')
-        if dead_render(job,store.get('items/' + str(job.get('item')))) or since and now - since > FINAL_DEADLINE:
+        if dead_render(job,store.get('items/' + str(job.get('item')))) or overdue(job,now):
             store.change('renders/' + snapshot.id,lambda value:value.update(state='failed',delivered=True) if value.get('state') in ('queued','running') else None)
     stop_stale(config,store)
     sync_pin(config,store)
@@ -1705,10 +1701,10 @@ def stop_stale(config,store):
         item = store.get('items/' + key)
         if not item or item.get('status') == 'rejected':
             continue
-        limit = DRAFT_DEADLINE + (FINAL_DEADLINE if key in busy else 0)
+        limit = stale_limit(item,key in busy)
         since = item.get('updated') or item.get('created') or 0
         def stop(value):
-            if value.get('status') not in ('queued','drafting') or value.get('waiting_upload') or now - (value.get('updated') or value.get('created') or 0) <= limit:
+            if value.get('status') not in ('queued','drafting') or bool(value.get('waiting_upload')) != bool(item.get('waiting_upload')) or not stale(value,now,key in busy):
                 return False
             value.update(status='failed',stalled=True)
             return True

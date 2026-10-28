@@ -122,6 +122,15 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn('"secret"',json.dumps(progress))
         self.assertNotIn('signed.example',json.dumps(progress))
 
+    def test_overdue_render_and_upload_wait_leave_now(self):
+        now = time.time()
+        self.store.put('items/a',{'messages':[{'text':'Лазер'}],'status':'queued','montage':True,'created':now - 90000,'updated':now - 90000})
+        self.store.put('items/b',{'messages':[{'text':'Большой'}],'status':'queued','montage':True,'waiting_upload':True,'created':now,'updated':now})
+        self.store.put('renders/old',{'item':'a','mode':'prepare','state':'running','created':now - 4000,'progress':{'label':'Рендерю','since':now - 4000}})
+        body = json.loads(self.call(signed()).get_data(as_text=True))
+        self.assertEqual([row['title'] for row in body['active']],[])
+        self.assertEqual([(w['title'],w['wait']) for w in body['waiting']],[('Большой','Жду загрузку большого файла')])
+
     def test_one_waiting_row_per_post(self):
         now = time.time()
         self.store.put('items/a',{'messages':[{'text':'Выбор'}],'status':'previewed','created':now,'updated':now})
