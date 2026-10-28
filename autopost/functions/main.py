@@ -271,7 +271,8 @@ def sync_pin(config, store):
             if posts != record.get('posts') or 'item' in record:
                 store.put('sessions/pin',{'posts':posts},tx)
             return plan
-        for key,(action,entry) in store.atomic(claim).items():
+        plan = store.atomic(claim)
+        for key,(action,entry) in plan.items():
             try:
                 def update(**fields):
                     store.change('sessions/pin',lambda value:value['posts'][key].update(fields) if key in (value.get('posts') or {}) and value['posts'][key].get('at') == entry.get('at') else None)
@@ -296,6 +297,10 @@ def sync_pin(config, store):
                     entry = {**entry,'message_id':sent['message_id']}
                     action = 'pin'
                 if action == 'pin':
+                    try:
+                        platforms.telegram('unpinAllChatMessages',{'chat_id':chat})
+                    except Error:
+                        pass
                     platforms.telegram('pinChatMessage',{'chat_id':chat,'message_id':entry['message_id'],'disable_notification':True})
                     update(pinned=True)
                 if action in ('keep','pin') and entry.get('message_id') and entry.get('text') != text:
@@ -309,6 +314,11 @@ def sync_pin(config, store):
                 if getattr(failure,'status_code',None) == 400 and any(x in getattr(failure,'description','').lower() for x in ('message to edit not found','message to pin not found')):
                     store.change('sessions/pin',lambda value:value['posts'][key].pop('message_id',None) and value['posts'][key].pop('pinned',None) if key in (value.get('posts') or {}) and value['posts'][key].get('at') == entry.get('at') else None)
                 logging.error(json.dumps({'code':'pin_status_failed'}))
+        if not wanted and any(action == 'retire' for action,entry in plan.values()):
+            try:
+                platforms.telegram('unpinAllChatMessages',{'chat_id':chat})
+            except Error:
+                pass
     except Exception:
         logging.error(json.dumps({'code':'pin_status_failed'}))
 

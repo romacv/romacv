@@ -178,7 +178,7 @@ def multipart(fields, files):
     return b''.join(parts) + f'--{boundary}--\r\n'.encode(), {'Content-Type': 'multipart/form-data; boundary=' + boundary}
 
 
-IDEMPOTENT = ('editMessageText', 'editMessageCaption', 'editMessageReplyMarkup', 'deleteMessage', 'pinChatMessage', 'unpinChatMessage', 'answerCallbackQuery', 'getFile', 'getWebhookInfo', 'setMessageReaction', 'sendChatAction')
+IDEMPOTENT = ('editMessageText', 'editMessageCaption', 'editMessageReplyMarkup', 'deleteMessage', 'pinChatMessage', 'unpinChatMessage', 'answerCallbackQuery', 'getFile', 'getWebhookInfo', 'setMessageReaction', 'sendChatAction', 'unpinAllChatMessages')
 
 
 def telegram(method, fields=None, files=None):
