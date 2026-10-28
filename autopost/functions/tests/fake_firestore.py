@@ -12,6 +12,17 @@ class Snapshot:
         return copy.deepcopy(self.value)
 
 
+def reject_nested_arrays(value, inside=False):
+    if isinstance(value, dict):
+        for item in value.values():
+            reject_nested_arrays(item)
+    elif isinstance(value, (list, tuple)):
+        if inside:
+            raise ValueError('400 Property contains an invalid nested entity.')
+        for item in value:
+            reject_nested_arrays(item, True)
+
+
 class Reference:
     def __init__(self, db, path):
         self.db, self.path = db, path
@@ -33,6 +44,7 @@ class Transaction:
         self.writes = {}
 
     def set(self, reference, value):
+        reject_nested_arrays(value)
         self.writes[reference.path] = copy.deepcopy(value)
 
     def delete(self, reference):

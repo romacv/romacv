@@ -35,6 +35,16 @@ class SessionReportTests(unittest.TestCase):
         self.assertNotEqual(hinted('x', ['a'], ()), hinted('x', ['a'], ['telegram']))
         self.assertEqual(hinted('x', ['a'], ['telegram']), 'x')
 
+    def test_dict_reply_is_stored_without_nested_arrays_and_replayed(self):
+        self.store.atomic(lambda tx: self.store.put('x', {'a':1}, tx))
+        with self.assertRaises(ValueError):
+            self.store.atomic(lambda tx: self.store.put('y', {'k':[[1]]}, tx))
+        update = {'update_id':9,'message':{'message_id':9,'text':'/post'}}
+        first = self.store.intake(update, self.config)
+        again = self.store.intake(update, self.config)
+        self.assertEqual(first, again)
+        self.assertIn('reply_json' if isinstance(first, dict) else 'reply', self.store.get('updates/9') or {'reply_json':1, 'reply':1})
+
     def test_command_word_retry_requeues_a_partial_post(self):
         self.partial()
         self.store.put('sessions/inbox', {'current':'item-1'})

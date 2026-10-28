@@ -633,7 +633,11 @@ class Store:
             update_path = 'updates/' + identifier
             seen = self.get(update_path, tx)
             if seen:
-                return None if query else seen.get('reply')
+                if query:
+                    return None
+                if 'reply' in seen:
+                    return seen['reply']
+                return json.loads(seen['reply_json']) if 'reply_json' in seen else None
             business = self.get('tokens/business', tx) or config.get('business')
             if query:
                 return self.callback(tx, update_path, query, config, business, taps)
@@ -879,7 +883,7 @@ class Store:
         def apply(tx):
             result = handle(tx)
             if isinstance(result, (str, dict)) and not query:
-                self.put('updates/' + identifier, {'received':time.time(), 'reply':result}, tx)
+                self.put('updates/' + identifier, {'received':time.time(), 'reply_json':json.dumps(result, ensure_ascii=False)} if isinstance(result, dict) else {'received':time.time(), 'reply':result}, tx)
             return result
         result = self.atomic(apply)
         if not query and not replay and self.subject:
