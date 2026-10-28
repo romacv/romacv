@@ -118,7 +118,7 @@ class MixedPostTests(unittest.TestCase):
             return {'id':'1','shortcode':'abc'}
         spec = {**spec,'media':media,'targets':['ig-story'],'copy':{'ig-story':'x'}}
         urls = {key:'https://x/' + key for key in keys}
-        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
+        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'ready_all'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
             p.post_social(spec,{'steps':{}},'ig-story',urls,('tok','1','https://graph'))
         self.assertEqual([f['image_url'] for f in requests if f.get('media_type') == 'STORIES'],['https://x/image0','https://x/image1','https://x/image2'])
 
@@ -129,7 +129,7 @@ class MixedPostTests(unittest.TestCase):
             return {'id':'1','shortcode':'abc'}
         self.spec['targets'] = ['ig-post']
         urls = {'image0':'https://x/i0','clip0':'https://x/c0','clip1':'https://x/c1'}
-        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()), patch.object(p,'text_for',return_value='Home'):
+        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'ready_all'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()), patch.object(p,'text_for',return_value='Home'):
             p.post_social(self.spec,{'steps':{}},'ig-post',urls,('tok','1','https://graph'))
         children = [f for f in requests if f.get('is_carousel_item')]
         self.assertEqual([f.get('video_url') or f.get('image_url') for f in children],['https://x/c0','https://x/i0','https://x/c1'])
@@ -151,6 +151,13 @@ class PublisherTests(unittest.TestCase):
         self.store.put('items/item-1', {'status':'previewed','revision':1,'messages':[]})
         self.store.put('specs/example', {'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
 
+    def chain(self):
+        with patch.object(app,'enqueue') as enqueue:
+            app.run(self.config,self.store,None,'example',self.root)
+            while enqueue.called:
+                enqueue.reset_mock()
+                app.run(self.config,self.store,None,'example',self.root,True)
+
     def callback(self, verb='pub', digest=None, identifier=1):
         return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':f'{verb}:example:{(digest or self.digest)[:8]}'}},self.config)
 
@@ -171,8 +178,8 @@ class PublisherTests(unittest.TestCase):
     def test_completed_targets_never_repost(self):
         self.callback()
         with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
-            app.run(self.config,self.store,None,'example',self.root)
-            app.run(self.config,self.store,None,'example',self.root)
+            self.chain()
+            self.chain()
         self.assertEqual((tg.call_count,th.call_count),(1,1))
 
     def test_old_spec_with_site_target_publishes_the_rest_without_github(self):
@@ -182,7 +189,7 @@ class PublisherTests(unittest.TestCase):
         self.store.put('specs/example',{'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
         self.callback()
         with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
-            app.run(self.config,self.store,None,'example',self.root)
+            self.chain()
         self.assertEqual((tg.call_count,th.call_count),(1,1))
         saved = self.store.get('specs/example')
         self.assertEqual((saved['state'],sorted(saved['results']),saved['errors']),('done',['tg-channel','threads'],{}))

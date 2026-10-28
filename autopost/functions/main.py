@@ -1202,7 +1202,7 @@ def fail_final(config,store,slug,render,after=0):
 
 
 def announce_retry(config,store,slug,saved):
-    text = 'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.' if saved['retry_pending'] == 'final' else 'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.'
+    text = 'Финальное видео' + post_name(store,saved) + ' не собралось. Ничего не опубликовано.' if saved['retry_pending'] == 'final' else 'Публикация поста' + post_name(store,saved) + ' прервалась. Готовые цели сохранены; неопределённые исходы требуют сверки.\n' + '\n'.join(target_lines(saved))
     tell(config,text,reply_markup=buttons(slug,saved['hash'],True))
     store.change('specs/' + slug,lambda value:value.pop('retry_pending',None))
 
@@ -1352,8 +1352,39 @@ def publish_order(targets):
     return sorted(targets,key=lambda target:target == 'tg-story' and 'tg-channel' in targets)
 
 
-def run(config,store,bucket,slug,directory):
-    saved = store.claim_run(slug)
+RETRY_TEXT = 'Прервано по таймауту, повторю.'
+EXPIRED_TEXT = 'Материал истёк. Пришли файлы заново.'
+
+
+def pending_targets(saved):
+    done = {**saved.get('results',{}),**saved.get('published',{})}
+    return [t for t in publish_order(platforms.live(saved.get('spec',{}).get('targets',[]))) if t not in done and saved.get('attempts',{}).get(t,0) < 3]
+
+
+def missing_errors(saved,timeout=False):
+    errors = saved.setdefault('errors',{})
+    for target in platforms.live(saved.get('spec',{}).get('targets',[])):
+        attempted = saved.get('attempts',{}).get(target,0)
+        current = errors.get(target)
+        if target in saved.get('results',{}) or (current and current != RETRY_TEXT and (not timeout or attempted >= 3)):
+            continue
+        if timeout:
+            errors[target] = ('Прервано по таймауту, повторю.' if attempted < 3 else 'Прервано по таймауту.') if attempted else 'Не начато.'
+        else:
+            errors[target] = 'Прервано по таймауту.' if current == RETRY_TEXT else 'Операция остановлена.'
+
+
+def target_lines(saved):
+    lines = []
+    for index,target in enumerate(platforms.live(saved.get('spec',{}).get('targets',[])),1):
+        result = saved.get('results',{}).get(target)
+        text = result['url'] if result and result['verified'] else 'опубликовано, ссылка ещё не проверена' if result else saved.get('errors',{}).get(target,'Ошибка')
+        lines.append(f'{index}. {target}: {text}')
+    return lines
+
+
+def run(config,store,bucket,slug,directory,resume=False):
+    saved = store.claim_run(slug,resume)
     if not saved:
         return
     if saved.get('deleted'):
@@ -1369,27 +1400,22 @@ def run(config,store,bucket,slug,directory):
     if saved.get('basis') and not saved.get('final'):
         start_final(config,store,bucket,saved)
         return
-    for manifests in assets.values():
-        for manifest in manifests.values():
-            if not bucket.blob(manifest['object'],generation=int(manifest['generation'])).exists():
-                raise platforms.ExpiredMaterial('Материал истёк. Пришли файлы заново.')
     due = platforms.when(spec)
     if due > datetime.now(timezone.utc):
         store.change('specs/' + slug,lambda value:value.update(state='approved'))
         enqueue({'step':'run','slug':slug},'due-' + slug + '-' + secrets.token_hex(8),max(1,int((due-datetime.now(timezone.utc)).total_seconds())))
         return
     published_targets = {**saved['results'],**saved.get('published',{})}
-    for target in publish_order(platforms.live(spec['targets'])):
-        if target in published_targets:
-            continue
+    for target in pending_targets(saved)[:1]:
         attempts = saved.setdefault('attempts',{})
-        if attempts.get(target,0) >= 3:
-            continue
         attempts[target] = attempts.get(target,0) + 1
         store.change('specs/' + slug,lambda value:value.update(attempts=attempts))
         state = {'steps':{}}
         target_assets = assets.get(target,{})
         try:
+            for manifest in target_assets.values():
+                if not bucket.blob(manifest['object'],generation=int(manifest['generation'])).exists():
+                    raise platforms.ExpiredMaterial(EXPIRED_TEXT)
             media.materialize(bucket,target_assets,directory)
             target_spec = json.loads(json.dumps(spec))
             target_spec['media'],keys = target_media(spec,target_assets)
@@ -1415,29 +1441,41 @@ def run(config,store,bucket,slug,directory):
             saved['results'][target] = published
             published_targets[target] = published
             saved['errors'].pop(target,None)
-        except platforms.ExpiredMaterial:
-            raise
+        except platforms.ExpiredMaterial as failure:
+            saved['errors'][target] = str(failure)
+            attempts[target] = 3
         except Exception as failure:
             saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
         publication = state['steps'].get(target + ':publish',{})
         if target not in published_targets and publication.get('status') == 'done':
             published_targets[target] = {'url':'','verified':False,'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
-        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets))
+        store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets,attempts=attempts))
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
+    saved['published'] = published_targets
+    remaining = pending_targets(saved)
+    if remaining:
+        tries = saved['attempts'].get(remaining[0],0)
+        store.change('specs/' + slug,lambda value:value.update(started_at=time.time()))
+        enqueue({'step':'run','slug':slug,'resume':True},'run-' + slug + '-' + remaining[0] + '-' + str(tries + 1) + '-' + secrets.token_hex(4),60 * tries)
+        return
     state = 'done' if all(t in saved['results'] for t in platforms.live(spec['targets'])) else 'partial'
+    if state == 'partial':
+        missing_errors(saved)
+        store.change('specs/' + slug,lambda value:value.update(errors=saved['errors']))
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
-    learning.schedule(store,saved['item'],slug,'published')
-    store.forget(saved['item'],fix=False)
-    lines = ['Пост' + post_name(store,saved) + ':']
-    for index,target in enumerate(platforms.live(spec['targets']),1):
-        result = saved['results'].get(target)
-        text = result['url'] if result and result['verified'] else 'опубликовано, ссылка ещё не проверена' if result else saved['errors'].get(target,'Ошибка')
-        lines.append(f'{index}. {target}: {text}')
+    any_published = bool(saved['results'] or saved.get('published'))
+    if any_published:
+        learning.schedule(store,saved['item'],slug,'published')
+        store.forget(saved['item'],fix=False)
+    lines = ['Пост' + post_name(store,saved) + ':'] + target_lines(saved)
     if any(target.startswith('ig-') for target in platforms.live(spec['targets'])):
         lines.append('Facebook: посты бота туда сами не попадают, поделись вручную из Instagram.')
-    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial',True))
+    retryable = any(saved['errors'].get(t) != EXPIRED_TEXT for t in platforms.live(spec['targets']) if t not in saved['results'])
+    if state == 'partial' and not retryable:
+        lines.append(EXPIRED_TEXT)
+    message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and retryable,True))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
-    finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.')
+    finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
     store.change('specs/' + slug,lambda value:value.pop('status_message',None))
 
 
@@ -1705,7 +1743,7 @@ def handle_worker(request):
             elif step == 'apply-fix':
                 apply_fix(config,store,bucket,payload['slug'],directory)
             elif step == 'run':
-                run(config,store,bucket,payload['slug'],directory)
+                run(config,store,bucket,payload['slug'],directory,payload.get('resume',False))
             elif step == 'upload-prompt':
                 upload_prompt(config,store,bucket,payload)
             elif step == 'upload-complete':
@@ -1756,7 +1794,11 @@ def handle_worker(request):
                         store.put('specs/' + payload['slug'],value,tx)
                 store.atomic(fail_fix)
             if payload.get('step') in ('run','apply-fix') and payload.get('slug'):
-                store.change('specs/' + payload['slug'],lambda value:value.update(state='failed' if isinstance(failure,platforms.ExpiredMaterial) else 'partial'))
+                def stopped(value):
+                    value.update(state='failed' if isinstance(failure,platforms.ExpiredMaterial) else 'partial')
+                    if value['state'] == 'partial' and value.get('spec'):
+                        missing_errors(value)
+                store.change('specs/' + payload['slug'],stopped)
             text = str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.'
             extra = {}
             if payload.get('step') in ('run','apply-fix') and payload.get('slug') and not isinstance(failure,platforms.ExpiredMaterial):
@@ -1854,11 +1896,17 @@ def recover_running(config,store):
         def recover(value):
             if value.get('state') != 'running' or time.time() - value.get('started_at',time.time()) <= 600:
                 return False
+            missing_errors(value,True)
+            if pending_targets(value) and not value.get('operation'):
+                value['started_at'] = time.time()
+                return value
             value['state'] = 'partial'
             value['retry_pending'] = 'run'
             return value
         saved = store.change('specs/' + snapshot.id,recover)
-        if saved:
+        if saved and saved['state'] == 'running':
+            enqueue({'step':'run','slug':snapshot.id,'resume':True},'recover-' + snapshot.id + '-' + secrets.token_hex(4))
+        elif saved:
             announce_retry(config,store,snapshot.id,saved)
     for snapshot in store.db.collection('specs').where('state', '==', 'partial').stream():
         pending = snapshot.to_dict()

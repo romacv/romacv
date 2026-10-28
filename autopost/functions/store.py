@@ -828,6 +828,7 @@ class Store:
             line = 'Отклонено.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
+            saved['attempts'] = {t:n for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{})}
             line, status = 'Повторяю…', True
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
@@ -1027,10 +1028,10 @@ class Store:
             return copy.deepcopy(value)
         return self.change('items/' + identifier, claim)
 
-    def claim_run(self, slug):
+    def claim_run(self, slug, resume=False):
         def claim(tx):
             value = self.get('specs/' + slug, tx) or {}
-            claimed = value.get('state') == 'approved' and value.get('hash') == value.get('approved_hash')
+            claimed = value.get('state') == ('running' if resume else 'approved') and value.get('hash') == value.get('approved_hash')
             if claimed:
                 value['state'] = 'running'
                 value['started_at'] = time.time()

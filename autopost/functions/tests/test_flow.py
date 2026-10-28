@@ -261,6 +261,88 @@ class PublishOrderTests(unittest.TestCase):
         self.assertEqual(app.publish_order(['tg-story','ig-story']),['tg-story','ig-story'])
 
 
+class ChainedPublishTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_user_id':1,'roman_chat_id':1}
+        p.configure(self.config,self.store,self.root)
+        self.spec = json.loads((FUNCTIONS.parent / 'examples/example-work.json').read_text())
+        self.spec.update(targets=['tg-channel','threads'],at='2020-01-01T00:00:00+00:00')
+        self.assets = {target:{} for target in self.spec['targets']}
+        self.digest = app.asset_hash(self.spec,self.assets)
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[]})
+        self.store.put('specs/example',{'state':'approved','hash':self.digest,'approved_hash':self.digest,'item':'item-1','spec':self.spec,'assets':self.assets,'results':{},'errors':{},'keyboard_removed':True})
+
+    def test_each_invocation_publishes_one_target_and_the_last_sends_one_summary(self):
+        with patch.object(app,'tell',return_value={'message_id':9}) as tell, patch.object(app,'enqueue') as enqueue, patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1'), patch.object(p,'post_social',return_value='https://www.threads.com/@x/post/1'):
+            app.run(self.config,self.store,None,'example',self.root)
+            self.assertEqual(list(self.store.get('specs/example')['results']),['tg-channel'])
+            enqueue.assert_called_once()
+            self.assertEqual(enqueue.call_args[0][0],{'step':'run','slug':'example','resume':True})
+            tell.assert_not_called()
+            self.assertEqual(self.store.get('specs/example')['state'],'running')
+            app.run(self.config,self.store,None,'example',self.root,True)
+        enqueue.assert_called_once()
+        tell.assert_called_once()
+        self.assertEqual((self.store.get('specs/example')['state'],sorted(self.store.get('specs/example')['results'])),('done',['tg-channel','threads']))
+
+    def test_overdue_running_spec_records_reasons_and_resumes_until_attempts_run_out(self):
+        self.store.change('specs/example',lambda value:value.update(state='running',started_at=0,attempts={'tg-channel':1}))
+        with patch.object(app,'tell') as tell, patch.object(app,'enqueue') as enqueue, patch.object(app,'sync_pin'):
+            app.recover_running(self.config,self.store)
+            saved = self.store.get('specs/example')
+            self.assertEqual((saved['state'],saved['errors']),('running',{'tg-channel':'Прервано по таймауту, повторю.','threads':'Не начато.'}))
+            self.assertGreater(saved['started_at'],0)
+            enqueue.assert_called_once()
+            tell.assert_not_called()
+            self.store.change('specs/example',lambda value:value.update(started_at=0,attempts={'tg-channel':3,'threads':3}))
+            app.recover_running(self.config,self.store)
+        saved = self.store.get('specs/example')
+        self.assertEqual(saved['state'],'partial')
+        self.assertTrue(all(saved['errors'].get(target) for target in self.spec['targets']))
+        enqueue.assert_called_once()
+        tell.assert_called_once()
+        self.assertIn('tg-channel: Прервано по таймауту.',tell.call_args[0][1])
+        self.assertNotIn('повторю',tell.call_args[0][1])
+
+    def test_nothing_published_skips_learning_and_says_so(self):
+        self.store.change('specs/example',lambda value:value.update(attempts={'tg-channel':3,'threads':3},errors={'tg-channel':'x','threads':'y'}))
+        with patch.object(app,'tell',return_value={'message_id':9}), patch.object(app,'finish_status') as status, patch.object(app.learning,'schedule') as schedule, patch.object(app,'remove_keyboard'):
+            app.run(self.config,self.store,None,'example',self.root)
+        schedule.assert_not_called()
+        self.assertEqual(status.call_args[0][2],'Ничего не опубликовано.')
+
+    def test_overdue_operation_spec_is_announced_not_resumed(self):
+        self.store.change('specs/example',lambda value:value.update(state='running',started_at=0,operation='fix',attempts={}))
+        with patch.object(app,'tell') as tell, patch.object(app,'enqueue') as enqueue, patch.object(app,'sync_pin'):
+            app.recover_running(self.config,self.store)
+        enqueue.assert_not_called()
+        tell.assert_called_once()
+        self.assertEqual(self.store.get('specs/example')['state'],'partial')
+
+    def test_retry_gives_unfinished_targets_fresh_attempts(self):
+        result = {'url':'https://t.me/example/1','verified':True}
+        self.store.change('specs/example',lambda value:value.update(state='partial',results={'tg-channel':result},errors={'threads':'x'},attempts={'tg-channel':1,'threads':3}))
+        self.store.intake({'update_id':1,'callback_query':{'id':'1','data':'retry:example:' + self.digest[:8]}},self.config)
+        saved = self.store.get('specs/example')
+        self.assertEqual((saved['state'],saved['attempts']),('approved',{'tg-channel':1}))
+
+
+class BatchedPollingTests(unittest.TestCase):
+    def test_containers_are_polled_together_each_round(self):
+        rounds = {}
+        def fake(method,url,fields=None,token=None,**rest):
+            rounds[url] = rounds.get(url,0) + 1
+            return {'status_code':'FINISHED' if rounds[url] >= 2 else 'IN_PROGRESS'}
+        with patch.object(p,'request',fake), patch.object(p.time,'sleep') as sleep:
+            p.ready_all(('tok','1','https://graph'),['11','12','13'],True,lambda position:None)
+        self.assertEqual(sorted(rounds.values()),[2,2,2])
+        sleep.assert_called_once_with(30)
+
+
 class PreviewRaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

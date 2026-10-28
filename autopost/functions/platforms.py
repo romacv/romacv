@@ -279,6 +279,33 @@ def ready(session, container, instagram):
     raise Error('Container processing timed out; retry polls saved container')
 
 
+def ready_all(session, containers, instagram, invalidate):
+    token, _, base = session
+    if not all(re.fullmatch(r'[0-9]+', str(container)) for container in containers):
+        raise Error('Invalid saved container ID')
+    field = 'status_code' if instagram else 'status'
+    rounds = 6 if instagram else 8
+    waiting = dict(enumerate(containers))
+    for i in range(rounds):
+        failed = []
+        for position in list(waiting):
+            value = request('GET', f'{base}/{waiting[position]}', {'fields': field}, token=token).get(field)
+            if value == 'FINISHED':
+                del waiting[position]
+            elif value in ('ERROR', 'EXPIRED', 'PUBLISHED'):
+                failed.append((position, value))
+        for position, value in failed:
+            if value != 'PUBLISHED':
+                invalidate(position)
+        if failed:
+            raise Error('Container ' + str(failed[0][1]) + '; reconcile before retry')
+        if not waiting:
+            return
+        if i < rounds - 1:
+            time.sleep(30 if instagram else 15)
+    raise Error('Container processing timed out; retry polls saved container')
+
+
 def story_frame(path):
     from PIL import Image
     with Image.open(path) as image:
@@ -421,15 +448,13 @@ def post_social(spec, state, target, urls, session):
             raise Error('Для карусели нужно минимум два вложения')
         if stories:
             media_ids = []
+            created = []
             for position, (kind, index) in enumerate(order):
                 fields = {'media_type': 'STORIES', ('image_url' if kind == 'image' else 'video_url'): urls[('image' if kind == 'image' else 'clip') + str(index)]}
-                story = create('container' + str(position), fields)
-                try:
-                    ready(session, story, instagram)
-                except Error as failure:
-                    if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
-                        CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(position))
-                    raise
+                created.append(create('container' + str(position), fields))
+            waiting = [position for position in range(len(created)) if state['steps'].get(target + ':publish' + str(position), {}).get('status') != 'done']
+            ready_all(session, [created[position] for position in waiting], instagram, lambda i: CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(waiting[i])))
+            for position, story in enumerate(created):
                 quota(session, instagram)
                 media_ids.append(checkpoint(spec, state, target, 'publish' + str(position), lambda story=story: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': story}, token=token))))
             media_id = checkpoint(spec, state, target, 'publish', lambda: media_ids)
@@ -443,14 +468,8 @@ def post_social(spec, state, target, urls, session):
                     fields = {'image_url': urls[f'image{index}'], 'is_carousel_item': 'true', 'alt_text': images[index]['alt']}
                     if not instagram:
                         fields['media_type'] = 'IMAGE'
-                child = create('child' + str(i), fields)
-                try:
-                    ready(session, child, instagram)
-                except Error as failure:
-                    if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
-                        CONTEXT.get()[1].invalidate(spec['slug'],target + ':child' + str(i))
-                    raise
-                children.append(child)
+                children.append(create('child' + str(i), fields))
+            ready_all(session, children, instagram, lambda i: CONTEXT.get()[1].invalidate(spec['slug'], target + ':child' + str(i)))
             container = create('container', {'media_type': 'CAROUSEL', 'children': ','.join(children), **caption})
         elif target == 'ig-reel':
             fields = {'media_type': 'REELS', 'video_url': urls['video'],
