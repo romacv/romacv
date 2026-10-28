@@ -12,7 +12,6 @@ import platforms as p
 import drafter
 import main as app
 from store import Store, StateError
-from blog_commit import GitHub
 
 
 class StoryTests(unittest.TestCase):
@@ -147,7 +146,6 @@ class PublisherTests(unittest.TestCase):
         p.configure(self.config, self.store, self.root)
         self.spec = json.loads((FUNCTIONS.parent / 'examples/example-work.json').read_text())
         self.spec.update(targets=['tg-channel','threads'], at='2020-01-01T00:00:00+00:00')
-        self.spec.pop('blog')
         self.assets = {target:{} for target in self.spec['targets']}
         self.digest = app.asset_hash(self.spec,self.assets)
         self.store.put('items/item-1', {'status':'previewed','revision':1,'messages':[]})
@@ -177,6 +175,33 @@ class PublisherTests(unittest.TestCase):
             app.run(self.config,self.store,None,'example',self.root)
         self.assertEqual((tg.call_count,th.call_count),(1,1))
 
+    def test_old_spec_with_site_target_publishes_the_rest_without_github(self):
+        self.spec.update(targets=['blog','tg-channel','threads'],blog={'language':'en','title':'Old','description':'Old','body':'Old'})
+        self.assets = {target:{} for target in self.spec['targets']}
+        self.digest = app.asset_hash(self.spec,self.assets)
+        self.store.put('specs/example',{'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
+        self.callback()
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+            app.run(self.config,self.store,None,'example',self.root)
+        self.assertEqual((tg.call_count,th.call_count),(1,1))
+        saved = self.store.get('specs/example')
+        self.assertEqual((saved['state'],sorted(saved['results']),saved['errors']),('done',['tg-channel','threads'],{}))
+
+    def test_old_partial_post_with_site_result_reaches_done_on_retry(self):
+        self.spec.update(targets=['blog','tg-channel','threads'])
+        self.assets = {target:{} for target in self.spec['targets']}
+        self.digest = app.asset_hash(self.spec,self.assets)
+        site = {'url':'https://www.resrom.com/blog/example','verified':True}
+        self.store.put('specs/example',{'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
+        self.callback()
+        self.store.change('specs/example',lambda value:value.update(state='partial',results={'blog':site,'tg-channel':{'url':'https://t.me/example/1','verified':True}},errors={'threads':'setup'},attempts={}))
+        self.assertTrue(self.callback('retry',identifier=10))
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+            app.run(self.config,self.store,None,'example',self.root)
+        tg.assert_not_called()
+        th.assert_called_once()
+        self.assertEqual(self.store.get('specs/example')['state'],'done')
+
     def test_retry_skips_published_targets_and_preserves_published_precedence(self):
         self.callback()
         for results in ({},{'tg-channel':{'url':'https://t.me/example/1','verified':True}}):
@@ -197,33 +222,6 @@ class PublisherTests(unittest.TestCase):
             with self.assertRaises((p.Error,StateError)):
                 self.store.checkpoint('example','threads:create',action)
         action.assert_called_once()
-
-    def test_blog_atomic_commit_resumes_saved_checkpoints(self):
-        spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
-        (self.root/'project.html').write_text('<header>Roman</header>')
-        calls = []
-        def api(method,path,value=None):
-            calls.append((method,path,value))
-            if path == '/git/ref/heads/main':
-                return {'object':{'sha':'parent'}}
-            if path == '/git/commits/parent':
-                return {'tree':{'sha':'base'}}
-            if path == '/git/trees/base?recursive=1':
-                return {'tree':[]}
-            return {'sha':'saved-sha'}
-        github = GitHub({'github_pat':'unused','github_noreply':'example@users.noreply.github.com'})
-        with patch.object(github,'api',side_effect=api):
-            url = github.publish(spec,{'steps':{}},self.root)
-            writes = sum(method != 'GET' for method,_,_ in calls)
-            github.publish(spec,{'steps':{}},self.root)
-        self.assertEqual(url,p.SITE+'/blog/example')
-        self.assertEqual(sum(method != 'GET' for method,_,_ in calls),writes)
-        commits = [value for method,path,value in calls if method == 'POST' and path == '/git/commits']
-        self.assertEqual(len(commits),1)
-        self.assertEqual(commits[0]['author']['name'],'Roman Resenchuk')
-        self.assertEqual(commits[0]['parents'],['parent'])
-        refs = [value for method,path,value in calls if method == 'PATCH']
-        self.assertEqual(refs,[{'sha':'saved-sha','force':False}])
 
     def test_media_bytes_change_approval_hash(self):
         image = self.root/'asset.png'
@@ -265,7 +263,7 @@ class PublishedTests(unittest.TestCase):
 
     def prepare(self, operation='fix'):
         self.delete_tap() if operation == 'delete' else self.intake('ошибка в посте',20)
-        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Здесь исправленный текст.'},'blog':None}
+        corrected = {'copy':{**self.spec['copy'],'tg-channel':'Здесь исправленный текст.'}}
         with patch.object(app,'tell',return_value={'message_id':30}), patch.object(drafter,'ask',return_value=corrected):
             app.fix(self.config,self.store,'fix-100')
         return self.store.get('specs/fix-100')

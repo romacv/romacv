@@ -16,8 +16,8 @@ def plural(count, forms):
     return forms[2]
 
 
-NAMES = {'tg-channel':'Telegram-канал','tg-story':'История Telegram','ig-post':'Instagram, пост','ig-reel':'Instagram, Reels','ig-story':'Instagram, история','threads':'Threads','blog':'Блог resrom.com'}
-GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram-пост',('ig-post',)),('ig-reel','Instagram Reels',('ig-reel',)),('threads','Threads',('threads',)),('channel','Telegram-канал',('tg-channel',)),('site','Сайт',('blog',)))
+NAMES = {'tg-channel':'Telegram-канал','tg-story':'История Telegram','ig-post':'Instagram, пост','ig-reel':'Instagram, Reels','ig-story':'Instagram, история','threads':'Threads'}
+GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram-пост',('ig-post',)),('ig-reel','Instagram Reels',('ig-reel',)),('threads','Threads',('threads',)),('channel','Telegram-канал',('tg-channel',)))
 TOGGLES = {'tg' + str(index):group[0] for index,group in enumerate(GROUPS)}
 IMAGE_MIMES = ('image/jpeg', 'image/png', 'image/webp', 'image/heic')
 CHOICE_HINT = 'Отметь, куда пойдёт пост.'
@@ -67,7 +67,7 @@ def refused(messages, body):
 
 def configured(config, business):
     instagram = bool(config.get('instagram'))
-    return {'tg-channel':bool((config.get('channels') or {}).get('tg-channel')), 'tg-story':bool(business), 'ig-post':instagram, 'ig-reel':instagram, 'ig-story':instagram, 'threads':bool(config.get('threads')), 'blog':bool(config.get('github_pat'))}
+    return {'tg-channel':bool((config.get('channels') or {}).get('tg-channel')), 'tg-story':bool(business), 'ig-post':instagram, 'ig-reel':instagram, 'ig-story':instagram, 'threads':bool(config.get('threads'))}
 
 
 def offered(config, business):
@@ -75,12 +75,12 @@ def offered(config, business):
     return [key for key, label, targets in GROUPS if any(have[t] for t in targets)]
 
 
-UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото или видео','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео','blog':'нужны фото или текст'}
-SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','blog':'Сайт','threads':'Threads','tg-channel':'Telegram-канал'}
+UNSUPPORTED = {'ig-reel':'нужно видео','ig-post':'нужно фото или видео','ig-story':'нужно фото или видео','tg-story':'нужно фото или видео'}
+SKIP_NAMES = {'ig-reel':'Instagram Reels','ig-post':'Instagram-пост','ig-story':'Instagram-сторис','tg-story':'Telegram-сторис','threads':'Threads','tg-channel':'Telegram-канал'}
 
 
 def unsupported(targets, photos, video):
-    missing = {'ig-reel':not video,'ig-post':not (photos or video),'ig-story':not (photos or video),'tg-story':not (photos or video),'blog':video and not photos}
+    missing = {'ig-reel':not video,'ig-post':not (photos or video),'ig-story':not (photos or video),'tg-story':not (photos or video)}
     return {target:UNSUPPORTED[target] for target in targets if missing.get(target)}
 
 
@@ -163,7 +163,7 @@ def asking(saved, item):
 
 
 def publishing(saved, item=None):
-    targets = (saved.get('spec') or {}).get('targets', [])
+    targets = [x for x in (saved.get('spec') or {}).get('targets', []) if x in NAMES]
     if saved.get('state') == 'rendering':
         return 'Собираю пост' + named(saved, item) + ' в полном качестве, потом опубликую.'
     lines = ['Публикую пост' + named(saved, item) + ': готово ' + str(sum(1 for x in targets if x in saved.get('results', {}))) + ' из ' + str(len(targets)) + '.']

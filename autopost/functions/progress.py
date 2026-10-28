@@ -296,7 +296,7 @@ def budget_of(store):
 
 
 def targets_of(spec):
-    return [NAMES.get(target, target) for target in spec.get('targets', [])]
+    return [NAMES.get(target, 'Сайт' if target == 'blog' else target) for target in spec.get('targets', [])]
 
 
 def costs_view(store, now):
@@ -353,7 +353,7 @@ def snapshot(store, now, view='progress', skill=None):
     waiting = sorted(waiting, key=lambda row: (row['status'] != 'collecting', -row['at']))[:LIMIT]
     active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
     active.sort(key=lambda row: row['since'])
-    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item'))),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
+    published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item'))),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
     try:
         rows = (store.get('sessions/quota') or {}).get('rows') or []
     except Exception:

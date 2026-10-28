@@ -38,7 +38,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             raise Error('targets must be a nonempty unique list of supported targets')
         if chosen is not None and any(t not in chosen for t in targets):
             errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'blog', 'approval', 'overlay', 'notes', 'threads_tag'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag'}:
             errors.append('Unknown spec fields')
         if 'notes' in spec:
             note = spec['notes']
@@ -119,8 +119,6 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                     if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
                         errors.append(name + ': exceeds Telegram upload limit')
         for t in targets:
-            if t == 'blog':
-                continue
             text = text_for(spec, t)
             if not text.strip():
                 errors.append(t + ': copy is required')
@@ -149,28 +147,6 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             errors.append('personal: tg-channel and threads copy must be identical')
         errors.extend(overlay_errors(spec, targets, images, size))
         errors.extend(language_errors(spec, owner))
-        blog = spec.get('blog')
-        if blog and spec.get('kind') != 'work':
-            errors.append('blog is for work only')
-        if 'blog' in targets:
-            if spec.get('kind') != 'work' or not isinstance(blog, dict):
-                raise Error('blog target requires kind work and a blog object')
-            title, desc, body = (blog.get(k, '') for k in ('title', 'description', 'body'))
-            if blog.get('language') != 'en' or re.search('[\u0400-\u052f\u4e00-\u9fff]', title + desc + body):
-                errors.append('blog must be English, with language en')
-            if not 1 <= len(title) <= 65:
-                errors.append('blog title must be 1–65 characters')
-            if not 120 <= len(desc) <= 160:
-                errors.append('blog description must be 120–160 characters')
-            if not 400 <= len(re.findall(r'\S+', body)) <= 1200:
-                errors.append('blog body must be 400–1200 words')
-            if len(re.findall(r'^## .+', body, re.M)) < 2:
-                errors.append('blog needs at least 2 H2 headings (##)')
-            combined = '\n'.join((title, desc, body))
-            if EMOJI.search(combined):
-                errors.append('blog: no emoji')
-            if any(p in combined.lower() for p in BANNED):
-                errors.append('blog contains a banned phrase')
     except (Error, TypeError, KeyError, ValueError, AttributeError, struct.error) as e:
         errors.append(str(e) if isinstance(e, Error) else 'Invalid spec field type or media header')
     return errors
@@ -215,8 +191,6 @@ def overlay_errors(spec, targets, images, size=None):
 def language_errors(spec, owner=''):
     errors = []
     blocks = dict(spec.get('copy', {}))
-    if spec.get('blog'):
-        blocks.update({'blog.' + k:v for k,v in spec['blog'].items() if k != 'language'})
     for target, text in blocks.items():
         if not isinstance(text, str):
             errors.append(target + ': text required')
@@ -225,7 +199,7 @@ def language_errors(spec, owner=''):
         if not letters or text.strip() and text.strip() in owner:
             continue
         ratio = sum('\u0400' <= c <= '\u052f' for c in letters) / len(letters)
-        russian = target.startswith('tg-') or (spec.get('kind') == 'personal' and not target.startswith('blog'))
+        russian = target.startswith('tg-') or spec.get('kind') == 'personal'
         if russian and ratio < 0.5 or not russian and ratio > 0.1:
             errors.append(target + ': copy language mismatch')
     return errors

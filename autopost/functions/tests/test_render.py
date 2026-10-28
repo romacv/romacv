@@ -132,7 +132,7 @@ class FinalRenderTests(unittest.TestCase):
     def test_recovery_handles_draft_and_final_renders(self):
         for mode in ('draft','final'):
             self.store.put('renders/r-' + mode,{'mode':mode,'state':'done','item':'item-1','revision':1})
-        config = {**self.config,'webhook_url':'test','github_pat':'test'}
+        config = {**self.config,'webhook_url':'test'}
         with patch.object(app.platforms,'telegram',return_value={'url':'test'}), patch.object(app.platforms,'request',return_value={}), patch.object(app,'enqueue') as enqueue, patch.object(app,'tell'), patch('urllib.request.urlopen',side_effect=OSError()):
             app.maintenance(config,self.store,Mock())
         steps = sorted((call.args[0]['render'],call.args[0]['step']) for call in enqueue.call_args_list if call.args[0].get('render') in ('r-draft','r-final'))

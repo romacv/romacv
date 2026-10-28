@@ -13,11 +13,10 @@ import urllib.request
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
-SITE = 'https://www.resrom.com'
 USERNAME = 'romacv777'
 IG = 'https://graph.instagram.com/v25.0'
 THREADS = 'https://graph.threads.net/v1.0'
-TARGETS = {'tg-channel', 'tg-story', 'ig-post', 'ig-reel', 'ig-story', 'threads', 'blog'}
+TARGETS = {'tg-channel', 'tg-story', 'ig-post', 'ig-reel', 'ig-story', 'threads'}
 BANNED = ('seamless', 'unlock', 'elevate', 'effortless', 'game-changer', 'link in bio')
 EMOJI = re.compile('[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f\u200d\u20e3\u2300-\u23ff]')
 CONTEXT = ContextVar('publishing_context')
@@ -29,6 +28,10 @@ class Error(Exception):
 
 class ExpiredMaterial(Error):
     pass
+
+
+def live(targets):
+    return [t for t in targets if t in TARGETS]
 
 
 def configure(config, store, directory):
@@ -489,26 +492,6 @@ def post_social(spec, state, target, urls, session):
     return f'https://www.threads.com/@{USERNAME}/post/{code}'
 
 
-def markdown(body):
-    """Small escaped Markdown subset: headings, paragraphs and lists; no raw HTML."""
-    blocks = []
-    for block in re.split(r'\n\s*\n', body.strip()):
-        lines = block.splitlines()
-        if all(re.match(r'^#{2,3} ', line) for line in lines):
-            for line in lines:
-                level = len(line.split(' ', 1)[0])
-                blocks.append(f'<h{level}>' + html.escape(line[level + 1:]) + f'</h{level}>')
-        elif all(re.match(r'^[-*] ', line) for line in lines):
-            blocks.append('<ul>' + ''.join('<li>' + html.escape(l[2:]) + '</li>' for l in lines) + '</ul>')
-        else:
-            if lines[0].startswith(('## ', '### ')):
-                blocks.append(markdown(lines[0]))
-                lines = lines[1:]
-            if lines:
-                blocks.append('<p>' + html.escape(' '.join(lines)) + '</p>')
-    return '\n'.join(blocks)
-
-
 def social_session(provider, deleting=False):
     saved = key(provider + '-token.json')
     token = saved['access_token']
@@ -611,21 +594,22 @@ def probe(url, path, content_type=None):
         raise Error('Media warm-up failed') from None
 
 
-def link_opens(url, title=None):
+def link_opens(url):
     try:
         with urllib.request.urlopen(url,timeout=20) as response:
-            body = response.read(2000000).decode('utf-8',errors='replace')
             if response.status != 200:
                 return False
-            return title is None or ('<title>' + html.escape(title) + ' | Roman Resenchuk</title>') in body
+            return True
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
 def manual_change(target, published, spec, operation):
+    if target not in TARGETS:
+        return 'уже не публикуется'
     if target.startswith('ig-'):
         return 'удали вручную' if operation == 'delete' else 'правь вручную'
-    required = 'path' if target == 'blog' else 'message_ids' if target == 'tg-channel' else 'id'
+    required = 'message_ids' if target == 'tg-channel' else 'id'
     if published.get('deleted'):
         return 'уже удалено'
     if not published.get(required):
@@ -651,9 +635,6 @@ def change_published(target, published, spec, operation, directory, bucket=None)
         result = request('DELETE', base + '/' + str(published['id']), token=token)
         if not result.get('success'):
             raise Error('Threads delete failed')
-    elif target == 'blog':
-        from blog_commit import GitHub
-        GitHub(config()).change_post(spec, published['path'], operation, directory)
     else:
         identity = telegram_identity(target, operation)
         if target == 'tg-story':

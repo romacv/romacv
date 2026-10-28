@@ -5,7 +5,6 @@ SEED = {
 - Avoid empty marketing phrases and any AI-content label.
 - A message starting «Место:» is a venue Roman shared: the venue name is the authoritative place name. When the materials name no venue, find it with web_search (real venue, city, country; also for any title or overlay place) and use only what results confirm; never invent. Bare coordinates name no place.
 - Never infer private work, clients, unreleased features or unheard words. Public work facts come only from the supplied public project data and Roman's own material.
-- Blog images keep their aspect ratio and get meaningful alt text.
 - A reply to someone is one friendly paragraph in the reader's language, the real pain first, no invented promises, no competitor criticism, no link dumps.
 - Highlight the actual benefit, never a name inside a negation; each teaser or end-card message appears once.
 - Never substitute a title for evidence: show or state what is claimed; missing evidence blocks that claim.
@@ -29,8 +28,8 @@ SEED = {
 - Keep protected beats and approved staging when revising; never silently omit a device, caption or beat."""},
 'publishing': {'title': 'Публикация и площадки', 'body': """Choosing targets and fitting copy and media to each platform.
 - Hints win: «работа» selects work, «личное» selects personal, «только сторис» restricts targets to tg-story and ig-story.
-- Work defaults: blog, tg-channel, threads, plus ig-post for photos or ig-reel for video. Personal defaults: tg-channel, threads, ig-post for photos or ig-reel for video, plus tg-story and ig-story for any photo or video. Stories show the first photo. Blog is work only. Text-only drafts invent no media.
-- When clips are supplied with photos, draft copy for photos and clips together; blog uses the photos only.
+- Work defaults: tg-channel, threads, plus ig-post for photos or ig-reel for video. Personal defaults: tg-channel, threads, ig-post for photos or ig-reel for video, plus tg-story and ig-story for any photo or video. Stories show the first photo. Text-only drafts invent no media.
+- When clips are supplied with photos, draft copy for photos and clips together.
 - Instagram stories are standalone media: the API has no caption field, no reshare and no interactive stickers, so essential text is baked into the media (timed subtitles or the photo overlay).
 - Every video target needs a designed 9:16 cover; every platform fetches media only from our own signed bucket URL.
 - A published post is never edited or reposted by drafting; fixes go through fix mode or the next post. Facebook gets posts only when Roman reshares from Instagram.
@@ -39,7 +38,6 @@ SEED = {
 - Telegram channel @romacv777, «Канал им. Ресенчука Романа»: Russian, work or personal, the home of every post; media with copy, captions up to 1024 units.
 - Instagram: work copy in English, personal copy in Russian; feed posts, Reels and stories; hashtags carry discovery.
 - Threads: short text-first posts, work in English, personal in Russian, one topic tag per post.
-- Blog on resrom.com: work only, English, long form with headings; the full article is written before the preview.
 - Telegram stories (Business): short line over the first photo or the video.
 - Roman is not asked to share anything the networks cannot show; he reviews every preview and presses the only approval."""},
 'about-roman': {'title': 'Что знать о Романе', 'body': """Facts about Roman that shape every draft.

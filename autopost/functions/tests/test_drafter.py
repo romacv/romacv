@@ -17,7 +17,6 @@ class ValidatorTests(unittest.TestCase):
     def setUp(self):
         self.spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
         self.spec.update(targets=['tg-channel','threads'],at='2020-01-01T00:00:00+00:00')
-        self.spec.pop('blog')
         self.spec['threads_tag'] = 'iosdev'
 
     def valid(self, **extra):
@@ -29,9 +28,8 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any('exceeds' in e for e in drafter.validate(self.spec)))
         self.spec['copy']['threads'] = 'A fact.\n#one #two'
         self.assertTrue(any('question' in e for e in drafter.validate(self.spec)))
-        spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
-        spec['kind'] = 'personal'
-        self.assertTrue(any('work' in e for e in drafter.validate(spec)))
+        self.spec['targets'] = ['blog']
+        self.assertTrue(any('supported targets' in e for e in drafter.validate(self.spec)))
 
     def test_personal_channel_and_threads_copy_must_match(self):
         spec = {'slug':'a','kind':'personal','at':datetime.now(timezone.utc).isoformat(),'targets':['tg-channel','threads'],'media':{},'copy':{'tg-channel':'Привет','threads':'Пока'},'approval':{},'threads_tag':'бали'}

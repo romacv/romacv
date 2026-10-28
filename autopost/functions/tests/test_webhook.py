@@ -73,24 +73,24 @@ class WebhookTests(unittest.TestCase):
         self.task.assert_called_once()
 
     def toggle(self, identifier='9'):
-        return {'update_id':int(identifier),'callback_query':{'id':identifier,'from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'},'text':'Новый пост'},'data':'tg5:item-1:tok'}}
+        return {'update_id':int(identifier),'callback_query':{'id':identifier,'from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'},'text':'Новый пост'},'data':'tg4:item-1:tok'}}
 
-    def test_site_toggle_checks_and_a_redelivered_tap_repaints_the_keyboard(self):
-        self.config.update(github_pat='x')
+    def test_channel_toggle_checks_and_a_redelivered_tap_repaints_the_keyboard(self):
+        self.config.update(channels={'tg-channel':1})
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
         sent = []
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda method,fields,files=None:sent.append((method,fields))):
             answer = json.loads(self.request(self.toggle('9')).get_data())
             self.assertNotIn('text',answer)
-            self.assertEqual(self.store.get('items/item-1')['chosen'],['site'])
+            self.assertEqual(self.store.get('items/item-1')['chosen'],['channel'])
             sent.clear()
             self.request(self.toggle('9'))
         buttons = [b['text'] for row in sent[-1][1]['reply_markup']['inline_keyboard'] for b in row]
         self.assertEqual(sent[-1][0],'editMessageReplyMarkup')
-        self.assertIn('☑︎ Сайт',buttons)
+        self.assertIn('☑︎ Telegram-канал',buttons)
 
     def test_slow_telegram_edit_does_not_hold_the_webhook(self):
-        self.config.update(github_pat='x')
+        self.config.update(channels={'tg-channel':1})
         self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1'})
         release = app.threading.Event()
         self.addCleanup(release.set)
@@ -123,7 +123,7 @@ class WebhookTests(unittest.TestCase):
         self.assertIn('deleteMessage',calls)
 
     def test_failed_keyboard_edit_is_retried_once(self):
-        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1','chosen':['site']})
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[],'batch_token':'tok','slug':'item-1','chosen':['channel']})
         attempts = []
         def telegram(method,fields,files=None):
             attempts.append(fields)

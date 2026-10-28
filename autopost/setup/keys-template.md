@@ -25,8 +25,6 @@ Instagram JSON содержит четыре поля. Threads JSON дополн
 | threads_app_secret.txt | Threads App Secret; читается `meta` только для обмена короткого токена |
 | instagram.json | access_token, user_id, issued_at, expires_at; Instagram Login Creator |
 | threads.json | access_token, user_id, issued_at, expires_at, scopes |
-| github_pat.txt | Fine-grained PAT только romacv/romacv, Contents read/write |
-| github_noreply.txt | Адрес автора commit с окончанием @users.noreply.github.com |
 | anthropic_key.txt | Ключ workspace; prepaid, auto-reload off, месячный limit |
 | webhook_url.txt | https://us-central1-resromcom-493b4.cloudfunctions.net/webhook; сверить после deploy, адрес закреплён также в /u/ |
 | worker_url.txt | Фактический HTTPS URL приватного worker; сверить после deploy |

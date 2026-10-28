@@ -15,11 +15,16 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
-MIGRATION = 2
+MIGRATION = 3
 MIGRATIONS = [
     ('writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
     ('montage', " Short unspoken headlines are titles, not subtitles.", ""),
     ('montage', "one at the start, a new one when the location changes. Language follows the post.", "one cue covers the whole target from 0 to its end, a new one only when the location really changes, with no gap. Resolve venue and city with web_search first (event, visible signs, current_time). Language follows the post."),
+    ('writing-texts', "- Blog images keep their aspect ratio and get meaningful alt text.\n", ""),
+    ('publishing', "Work defaults: blog, tg-channel,", "Work defaults: tg-channel,"),
+    ('publishing', " Blog is work only.", ""),
+    ('publishing', "; blog uses the photos only.", "."),
+    ('roman-social-networks', "- Blog on resrom.com: work only, English, long form with headings; the full article is written before the preview.\n", ""),
 ]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 

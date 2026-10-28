@@ -31,7 +31,6 @@ class EditFlowTests(unittest.TestCase):
         p.configure(self.config, self.store, self.root)
         self.spec = json.loads((FUNCTIONS.parent / 'examples/example-work.json').read_text())
         self.spec.update(targets=['tg-channel','threads'], at='2020-01-01T00:00:00+00:00')
-        self.spec.pop('blog')
         self.assets = {target:{} for target in self.spec['targets']}
         self.digest = app.asset_hash(self.spec,self.assets)
         self.store.put('items/item-1', {'status':'previewed','revision':1,'messages':[]})
@@ -56,19 +55,13 @@ class EditFlowTests(unittest.TestCase):
             app.draft(self.config,self.store,None,{'item':'item-2','revision':1},self.root)
         self.assertIn('Unknown media fields',seen[0])
 
-    def test_video_only_post_reaches_instagram_and_the_site_line_waits_for_a_work_kind(self):
-        self.store.put('items/item-3',{'status':'drafting','revision':1,'chosen':['ig-post','ig-reel','site'],'messages':[]})
-        config = {'channels':{'tg-channel':1},'github_pat':'x','instagram':{}}
-        with patch.object(app,'chosen_targets',return_value=['ig-post','ig-reel','blog']):
-            allowed = app.restrict(config,self.store,{'item':'item-3'},self.store.get('items/item-3'),False,True)
-            self.assertEqual(allowed,['ig-post','ig-reel'])
-            self.assertEqual(app.reeled(allowed),['ig-reel'])
-            self.assertEqual(self.store.get('items/item-3')['skipped'],[])
-            app.work_skips(self.store,'item-3','personal')
-            self.assertEqual(self.store.get('items/item-3')['skipped'],[])
-            app.restrict(config,self.store,{'item':'item-3'},self.store.get('items/item-3'),False,True)
-        app.work_skips(self.store,'item-3','work')
-        self.assertEqual(self.store.get('items/item-3')['skipped'],['Не пойдёт в Сайт: нужны фото или текст.'])
+    def test_video_only_post_reaches_instagram(self):
+        self.store.put('items/item-3',{'status':'drafting','revision':1,'chosen':['ig-post','ig-reel'],'messages':[]})
+        config = {'channels':{'tg-channel':1},'instagram':{'user_id':1}}
+        allowed = app.restrict(config,self.store,{'item':'item-3'},self.store.get('items/item-3'),False,True)
+        self.assertEqual(allowed,['ig-post','ig-reel'])
+        self.assertEqual(app.reeled(allowed),['ig-reel'])
+        self.assertEqual(self.store.get('items/item-3')['skipped'],[])
 
     def test_edit_invalidates_approval_and_queues_revision(self):
         self.callback('edit')
