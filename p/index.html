@@ -214,9 +214,26 @@ function sessionBody(s){
   if(!box.hasChildNodes())box.append(el('div','hint','Подробностей пока нет.'));
   return box;
 }
+function oldDetails(kind,r){
+  const box=el('div','more');
+  if(kind==='active'){
+    if(r.session)timeline(box,r.session,r,'active');
+    if(!r.session||!r.session.current)r.steps.forEach(step=>box.append(stepLine(step)));
+  }else if(kind==='waiting'){
+    box.append(el('div','',r.wait));
+    if(r.session)timeline(box,r.session,null,'waiting');
+    if(r.targets.length)box.append(el('div','hint','Куда: '+r.targets.join(', ')));
+  }else{
+    if(!r.links.length)box.append(el('div','hint',r.state==='partial'?'Опубликовано не везде.':'Ссылок нет.'));
+    r.links.forEach(l=>{const d=el('div');d.append(link(l.name,l.url));box.append(d)});
+    if(r.session)timeline(box,r.session,null,'published');
+  }
+  if(r.cost)box.append(costs(r.cost));
+  return box;
+}
+const OLD_STATE={active:'идёт',waiting:'ждёт ответа',published:'опубликован',partial:'частично'};
 function sessionRows(){
-  const list=(data.sessions||[]).map((s,i)=>({s,i})).sort((a,b)=>(b.s.state==='open')-(a.s.state==='open')||a.i-b.i);
-  return list.map(({s,i})=>{
+  const items=(data.sessions||[]).map((s,i)=>({open:s.state==='open',t:s.opened||0,i,make(){
     const head=el('div');
     head.append(line(el('span','title',s.title||'Без названия'),el('span','time',SESSION_STATE[s.state]||'')));
     head.append(el('div','hint',s.opened?stamp(s.opened):''));
@@ -225,17 +242,34 @@ function sessionRows(){
     const old=oldRow(s), to=old&&names(old.targets);
     if(to&&to.length)head.append(el('div','hint','Куда: '+to.join(', ')));
     if(old&&old.cost&&old.cost.total!=null)head.append(el('div','hint','Итого ≈'+money(old.cost.total)));
-    head.append(bar('Прогресс',s.percent||0,true));
+    if(s.state==='open'){
+      head.append(bar('Прогресс',s.percent||0,true));
+      if(s.step)head.append(el('div','hint',s.step+(s.step_index&&s.step_count?' · шаг '+s.step_index+' из '+s.step_count:'')));
+    }else if(s.state!=='cancelled')head.append(bar('Прогресс',s.percent||0,true));
     return row('s'+(s.item||i),head,()=>sessionBody(s));
-  });
+  }}));
+  const known=new Set((data.sessions||[]).map(s=>s.item));
+  [['active',data.active],['waiting',data.waiting],['published',data.published]].forEach(([kind,list])=>list.forEach((r,j)=>{
+    if(known.has(r.item||r.id))return;
+    items.push({open:kind!=='published',t:r.at||r.opened||r.started||0,i:items.length,make(){
+      const head=el('div');
+      head.append(line(el('span','title',r.title||'Без названия'),el('span','time',OLD_STATE[kind==='published'&&r.state==='partial'?'partial':kind])));
+      const t=r.at||r.opened||r.started;
+      if(t)head.append(el('div','hint',stamp(t)));
+      if(kind==='active'&&r.label)head.append(el('div','stage',r.label));
+      if(r.cost&&r.cost.total!=null)head.append(el('div','hint','Итого ≈'+money(r.cost.total)));
+      return row(kind[0]+(r.id||r.item||j),head,()=>oldDetails(kind,r));
+    }});
+  }));
+  return items.sort((a,b)=>b.open-a.open||b.t-a.t||a.i-b.i).map(x=>x.make());
 }
 function group(id,head,rows){const box=document.getElementById(id);box.replaceChildren();if(!rows.length)return;box.append(el('h2','',head));const s=el('section');s.append(...rows);box.append(s)}
 function render(){
   if(!data)return;
   if(view==='costs'){limits();return}
   if(view==='skills'){skillsPage();return}
-  const known=new Set((data.sessions||[]).map(s=>s.item)), fresh=r=>!known.has(r.item||r.id);
-  group('sessions','Сессии',Array.isArray(data.sessions)?sessionRows():[]);
+  const grouped=Array.isArray(data.sessions), fresh=()=>!grouped;
+  group('sessions','Сессии',grouped?sessionRows():[]);
   group('active','Сейчас',data.active.filter(fresh).map((job,i)=>{
     const head=el('div'), time=el('span','time');
     head.append(line(el('span','title',job.title||'Без названия'),time));
