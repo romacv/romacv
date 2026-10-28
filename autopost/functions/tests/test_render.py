@@ -112,11 +112,12 @@ class FinalRenderTests(unittest.TestCase):
         self.assertEqual((saved['state'],saved['final'],saved['assets']['threads']['video.mp4']),('approved',True,final['videos']['threads']))
         self.assertTrue(self.store.get('renders/' + render_id)['delivered'])
         self.assertEqual(self.store.get('outbox/final-' + render_id)['payload'],{'step':'run','slug':'example'})
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':9}), patch.object(app,'start_job') as start, patch.object(app.media,'materialize') as materialize, patch.object(app.media,'signed',return_value='https://example.com/x'), patch.object(p,'probe'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_social',return_value='https://www.threads.com/@x/post/1') as publish:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':9}), patch.object(app,'enqueue') as enqueue, patch.object(app,'start_job') as start, patch.object(app.media,'materialize') as materialize, patch.object(app.media,'signed',return_value='https://example.com/x'), patch.object(p,'probe'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_social',return_value='https://www.threads.com/@x/post/1') as publish:
             bucket = Mock()
             app.run(self.config,self.store,bucket,'example',self.root)
         start.assert_not_called()
         publish.assert_called_once()
+        self.assertEqual([call[0][0]['step'] for call in enqueue.call_args_list],['verify'])
         self.assertEqual(materialize.call_args.args[1],saved['assets']['threads'])
         self.assertEqual(self.store.get('specs/example')['state'],'done')
 

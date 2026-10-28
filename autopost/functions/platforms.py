@@ -642,6 +642,34 @@ def link_opens(url):
         return False
 
 
+CONFIRM_FIELDS = {'ig-post':'id,permalink,media_type','ig-reel':'id,permalink,media_type','ig-story':'id,media_product_type','threads':'id,permalink'}
+
+
+def confirm(target, published, url):
+    if target == 'tg-story':
+        return {'api':'n/a','link':None,'url':url,'why':'Telegram не отдаёт истории по API'}
+    if target not in CONFIRM_FIELDS:
+        link = link_opens(url + '?embed=1' if target == 'tg-channel' else url)
+        return {'api':'n/a','link':link,'url':url,'why':None if link else 'ссылка не открывается'}
+    shown, link, why = url, None, None
+    try:
+        provider = 'threads' if target == 'threads' else 'instagram'
+        token, user, base = social_session(provider)
+        reply = request('GET', f'{base}/{published["id"]}', {'fields':CONFIRM_FIELDS[target]}, token=token)
+        api = 'ok'
+        shown = reply.get('permalink') or url
+        if target != 'ig-story':
+            link = link_opens(shown)
+    except Error as failure:
+        missing = failure.status_code == 404 or str(failure) == 'API failure: 100'
+        api = 'missing' if missing else 'error: ' + str(failure)[:100]
+        why = 'API не нашёл пост' if missing else api
+    except Exception as failure:
+        api = 'error: ' + type(failure).__name__
+        why = api
+    return {'api':api,'link':link,'url':shown,'why':why}
+
+
 def manual_change(target, published, spec, operation):
     if target not in TARGETS:
         return 'уже не публикуется'

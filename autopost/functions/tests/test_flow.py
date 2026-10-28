@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 FUNCTIONS = Path(__file__).resolve().parents[1]
@@ -12,6 +13,8 @@ from fake_firestore import FakeFirestore
 import platforms as p
 import main as app
 from store import Store, newest_states, pin_stage
+from test_agents import FakeAnthropic, FakeStream
+import agents
 
 PLAIN = {'roman_user_id':1,'roman_chat_id':1}
 POST = {'type':'bot_command','offset':0,'length':5}
@@ -49,10 +52,10 @@ class EditFlowTests(unittest.TestCase):
     def test_draft_validation_returns_malformed_model_media_instead_of_crashing(self):
         self.store.put('items/item-2',{'status':'queued','revision':1,'slug':'example','messages':[]})
         seen = []
-        def ask(config,source,images,validate,**kwargs):
+        def run_draft(config,store,item,revision,source,images,clips,validate,rec,live):
             seen.append(validate({**self.spec,'media':{'clips':True}}))
             return {'answer':'x'}
-        with patch.object(app.media,'intake',return_value=[]), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app.drafter,'ask',side_effect=ask), patch.object(app,'superseded',return_value=True):
+        with patch.object(app.media,'intake',return_value=[]), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app.agents,'run_draft',side_effect=run_draft), patch.object(app,'superseded',return_value=True):
             app.draft(self.config,self.store,None,{'item':'item-2','revision':1},self.root)
         self.assertIn('Unknown media fields',seen[0])
 
@@ -285,7 +288,7 @@ class ChainedPublishTests(unittest.TestCase):
             tell.assert_not_called()
             self.assertEqual(self.store.get('specs/example')['state'],'running')
             app.run(self.config,self.store,None,'example',self.root,True)
-        enqueue.assert_called_once()
+        self.assertEqual([call[0][0]['step'] for call in enqueue.call_args_list],['run','verify'])
         tell.assert_called_once()
         self.assertEqual((self.store.get('specs/example')['state'],sorted(self.store.get('specs/example')['results'])),('done',['tg-channel','threads']))
 
@@ -721,6 +724,90 @@ class RecoveryTests(unittest.TestCase):
                 with self.assertRaises(p.Error):
                     p.telegram(method,{})
             self.assertEqual(request.call_count,calls)
+
+
+class SupersededRevisionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.store = Store(FakeFirestore())
+        self.config = {'anthropic_key':'k','roman_user_id':1,'roman_chat_id':1}
+        p.configure(self.config,self.store,self.root)
+        self.store.put('items/i',{'revision':1,'status':'queued','slug':'trip','messages':[]})
+
+    def test_superseded_revision_stops_agents_and_writes_nothing(self):
+        store = self.store
+        class Bumping(FakeStream):
+            def __iter__(self):
+                yield SimpleNamespace(type='message_start')
+                store.change('items/i',lambda value:value.update(revision=2))
+                for _ in range(100):
+                    time.sleep(0.05)
+                    yield SimpleNamespace(type='content_block_stop',index=0)
+        class Fake(FakeAnthropic):
+            def stream(self, **kwargs):
+                if 'Role: places agent' in kwargs['messages'][0]['content'][-1]['text']:
+                    return Bumping('{}')
+                return super().stream(**kwargs)
+        fake = Fake({'media':[],'copy':[]})
+        with patch.dict(sys.modules,{'anthropic':fake}), patch.object(agents,'POLL',0.05), patch.object(agents,'FLUSH',0.05), patch.object(app.media,'intake',return_value=[]), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app,'preview') as preview, patch.object(app,'show_texts') as texts:
+            app.draft(self.config,self.store,None,{'item':'i','revision':1},self.root)
+        preview.assert_not_called()
+        texts.assert_not_called()
+        self.assertIsNone(self.store.get('specs/trip'))
+        self.assertEqual(self.store.get('items/i')['status'],'drafting')
+        entry = next(e for e in self.store.get('sessions/i')['steps'] if e['id'] == 'draft')
+        self.assertEqual((entry['agents']['places']['status'],entry['agents']['copy']['status']),('cancelled','cancelled'))
+
+
+class VerifyTests(unittest.TestCase):
+    def setUp(self):
+        self.store = Store(FakeFirestore())
+        self.config = {'roman_user_id':1,'roman_chat_id':1}
+        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[],'slug':'example'})
+        result = lambda target:{'url':'https://example.com/' + target,'verified':False}
+        self.store.put('specs/example',{'state':'done','item':'item-1','spec':{'targets':['tg-channel','threads']},'results':{t:result(t) for t in ('tg-channel','threads')},'published':{t:result(t) for t in ('tg-channel','threads')}})
+
+    def test_verify_closes_the_session_only_after_all_targets(self):
+        found = lambda target,published,url:{'api':'ok','link':True,'url':url,'why':None} if target == 'tg-channel' else {'api':'missing','link':None,'url':url,'why':'API не нашёл пост'}
+        with patch.object(p,'confirm',side_effect=found), patch.object(app,'enqueue') as enqueue:
+            for attempt in (1,2):
+                app.verify(self.config,self.store,'example',attempt)
+                self.assertEqual(self.store.get('sessions/item-1')['state'],'open')
+                self.assertEqual(enqueue.call_args[0][0],{'step':'verify','slug':'example','attempt':attempt + 1})
+                self.assertEqual(enqueue.call_args[0][2],60 * attempt)
+            enqueue.reset_mock()
+            app.verify(self.config,self.store,'example',3)
+        enqueue.assert_not_called()
+        saved = self.store.get('specs/example')
+        self.assertEqual((saved['results']['tg-channel']['verified'],saved['results']['threads']['verified']),(True,False))
+        session = self.store.get('sessions/item-1')
+        self.assertEqual((session['state'],session['outcome']['kind']),('published','published'))
+        rows = next(e for e in session['steps'] if e['id'] == 'verify')['targets']
+        self.assertEqual((rows['tg-channel']['status'],rows['threads']['status']),('verified','unverified'))
+        self.assertTrue(rows['threads']['why'])
+        self.assertFalse(self.store.close_session('item-1','published','again'))
+
+    def test_confirm_failure_outside_platforms_still_closes_the_session(self):
+        with patch.object(p,'link_opens',return_value=True), patch.object(p,'social_session',side_effect=KeyError('access_token')), patch.object(app,'enqueue'):
+            app.verify(self.config,self.store,'example',3)
+        session = self.store.get('sessions/item-1')
+        self.assertEqual(session['state'],'published')
+        rows = next(e for e in session['steps'] if e['id'] == 'verify')['targets']
+        self.assertEqual((rows['tg-channel']['status'],rows['threads']['status'],rows['threads']['api']),('verified','unverified','error: KeyError'))
+
+
+class SessionRevisionTests(unittest.TestCase):
+    def test_newer_revision_supersedes_the_running_step_and_older_is_refused(self):
+        store = Store(FakeFirestore())
+        store.put('items/item-1',{'status':'drafting','revision':1,'messages':[],'slug':'example'})
+        self.assertTrue(store.step('item-1','draft',{},1))
+        self.assertTrue(store.step('item-1','draft',{},2))
+        self.assertFalse(store.step('item-1','draft',{'state':'failed'},1))
+        self.assertTrue(store.step('item-1','draft',{'state':'done'},2))
+        drafts = [e for e in store.get('sessions/item-1')['steps'] if e['id'] == 'draft']
+        self.assertEqual([(e['revision'],e['state']) for e in drafts],[(1,'cancelled'),(2,'done')])
 
 
 if __name__ == '__main__':

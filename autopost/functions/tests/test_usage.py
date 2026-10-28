@@ -18,7 +18,7 @@ USAGE = NS(input_tokens=1000, output_tokens=2000, cache_read_input_tokens=10000,
 class UsageTests(unittest.TestCase):
     def test_usd_formula(self):
         row = tally(USAGE)
-        self.assertAlmostEqual(row['usd'], (1000 * 2 + 2000 * 2.5 + 1000 * 4 + 10000 * 0.1 + 2000 * 10) / 1e6 + 0.02)
+        self.assertAlmostEqual(row['usd'], (1000 * 2 + 2000 * 2.5 + 1000 * 4 + 10000 * 0.2 + 2000 * 10) / 1e6 + 0.02)
         self.assertEqual((row['cache_write_tokens'], row['web_searches'], row['calls']), (3000, 2, 1))
         self.assertAlmostEqual(tally(NS(input_tokens=0, output_tokens=0, cache_creation_input_tokens=1000))['usd'], 0.0025)
 

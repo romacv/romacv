@@ -3,6 +3,8 @@ import json
 import logging
 import re
 import struct
+import threading
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -250,6 +252,121 @@ def note(rec, response):
             logging.error(json.dumps({'code':'usage_record_failed','error':str(failure)[:200]},ensure_ascii=False))
 
 
+class Cancelled(Exception):
+    pass
+
+
+class Timeout(Error):
+    pass
+
+
+def pictures(paths):
+    blocks = [{'type':'image','source':{'type':'base64','media_type':'image/jpeg','data':base64.b64encode(path.read_bytes()).decode()}} for path in paths]
+    if blocks:
+        blocks[-1]['cache_control'] = {'type':'ephemeral'}
+    return blocks
+
+
+def prompt(store=None):
+    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\nYou run as Claude Sonnet 5.5 by Anthropic, model id ' + MODEL + '.','cache_control':{'type':'ephemeral'}}]
+    book = skills.render(skills.load(store)) if store else ''
+    if book:
+        system.append({'type':'text','text':book,'cache_control':{'type':'ephemeral'}})
+    return system
+
+
+def first_turn(payload, pool, known=()):
+    return {'role':'user','text':json.dumps(payload,ensure_ascii=False),'images':[name for name in pool if name not in known]}
+
+
+def seed(store, key, payload, images, spec, guard):
+    turns = [first_turn(payload,{path.name:path for path in images}),{'role':'assistant','text':json.dumps(spec,ensure_ascii=False)}]
+    try:
+        store.keep(key,{'turns':turns,'base':0,'tag':guard[2],'edits':len(payload.get('edits',[])),'before':0},guard)
+    except Exception as failure:
+        logging.error(json.dumps({'code':'conversation_save_failed','error':str(failure)[:200]},ensure_ascii=False))
+
+
+def stream(client, system, tools, messages, on_event, rec=None, deadline=None, cancel=None, tokens=12000):
+    import anthropic
+    import httpx
+    waited = False
+    names = ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')
+    while True:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise Timeout()
+        seen, aborted, done = {}, [], threading.Event()
+        def track(event):
+            source = getattr(getattr(event, 'message', None), 'usage', None) if event.type == 'message_start' else getattr(event, 'usage', None) if event.type == 'message_delta' else None
+            for name in names:
+                value = getattr(source, name, None)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    seen[name] = value
+        try:
+            with (client if remaining is None else client.with_options(timeout=httpx.Timeout(remaining, read=min(remaining, 60)))).messages.stream(model=MODEL, max_tokens=tokens, thinking={'type':'adaptive'}, system=system, tools=tools, messages=messages) as events:
+                def watch():
+                    while not done.wait(0.25):
+                        late = deadline is not None and time.monotonic() > deadline
+                        if done.is_set():
+                            return
+                        if late or cancel is not None and cancel.is_set():
+                            aborted.append('late' if late and not (cancel is not None and cancel.is_set()) else 'cancel')
+                            try:
+                                events.close()
+                            except Exception:
+                                pass
+                            return
+                threading.Thread(target=watch, daemon=True).start()
+                try:
+                    for event in events:
+                        if cancel is not None and cancel.is_set():
+                            aborted.append('cancel')
+                        elif deadline is not None and time.monotonic() > deadline:
+                            aborted.append('late')
+                        if aborted:
+                            break
+                        track(event)
+                        on_event(event)
+                    if not aborted:
+                        message = events.get_final_message()
+                except Exception:
+                    if not aborted:
+                        raise
+                finally:
+                    done.set()
+            if aborted:
+                if rec and seen:
+                    note_usage(rec, seen)
+                raise Cancelled() if aborted[0] == 'cancel' else Timeout()
+            note(rec, message)
+            return message
+        except anthropic.APIStatusError as failure:
+            text = str(failure)
+            if failure.status_code == 402 or 'enforced_spend_limit_reached' in text:
+                raise Error('черновик не готов: баланс Anthropic') from None
+            if failure.status_code == 429 and not waited:
+                waited = True
+                try:
+                    pause = min(float(failure.response.headers.get('retry-after')), 30)
+                except (AttributeError, TypeError, ValueError):
+                    pause = None
+                if pause is not None and (deadline is None or time.monotonic() + pause < deadline):
+                    if cancel is not None and cancel.wait(pause):
+                        raise Cancelled() from None
+                    elif cancel is None:
+                        time.sleep(pause)
+                    continue
+            raise Error('Черновик не готов: Anthropic отклонил запрос (' + str(failure.status_code) + ').') from None
+
+
+def note_usage(rec, seen):
+    try:
+        rec({'model':MODEL, **seen})
+    except Exception as failure:
+        logging.error(json.dumps({'code':'usage_record_failed','error':str(failure)[:200]},ensure_ascii=False))
+
+
 def create(client, system, messages, rec=None):
     import anthropic
     tools, used = [SEARCH], 0
@@ -309,11 +426,8 @@ def ask(config, payload, images, validator, montage=False, thread=None, follow=N
     base = len(turns)
     mark = base
     known = {name for turn in turns for name in turn.get('images', [])}
-    turns.append({'role':'user','text':json.dumps({**(follow if turns else payload),**stamp},ensure_ascii=False),'images':[name for name in pool if name not in known]})
-    system = [{'type':'text','text':Path(__file__).with_name('draft-agent.md').read_text() + '\nYou run as Claude Sonnet 5.5 by Anthropic, model id ' + MODEL + '.','cache_control':{'type':'ephemeral'}}]
-    book = skills.render(skills.load(thread[0])) if thread else ''
-    if book:
-        system.append({'type':'text','text':book,'cache_control':{'type':'ephemeral'}})
+    turns.append(first_turn({**(follow if turns else payload),**stamp},pool,known))
+    system = prompt(thread[0] if thread else None)
     for attempt in range(4):
         try:
             response = create(client, system, wire(turns, pool), rec)

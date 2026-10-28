@@ -26,7 +26,8 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+import agents
 import drafter
 import learning
 import progress as progress_view
@@ -59,6 +60,13 @@ def enqueue(payload, identifier, delay=0):
         functions.task_queue('locations/us-central1/functions/worker').enqueue({'data':payload},functions.TaskOptions(task_id=identifier,schedule_delay_seconds=delay,dispatch_deadline_seconds=540))
     except admin_exceptions.AlreadyExistsError:
         pass
+
+
+def track(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except Exception as failure:
+        logging.error(json.dumps({'code':'session_write_failed','error':str(failure)[:200]}, ensure_ascii=False))
 
 
 def item_name(item, store=None, item_id=None):
@@ -555,6 +563,7 @@ class Withdrawn(Exception):
 
 
 def preview(config, store, bucket, item_id, spec, assets, directory, basis=None, revision=None):
+    track(store.step,item_id,'preview',{},revision)
     scoped = {}
     last = []
     def withdrawn():
@@ -703,6 +712,8 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
             except Error:
                 pass
     else:
+        track(store.step,item_id,'preview',{'state':'done'},revision)
+        track(store.step,item_id,'wait',{},revision)
         finish_status(config,shown_status[0] if shown_status else None,'Черновик' + post_name(store,saved) + ' готов.')
 
 
@@ -832,9 +843,21 @@ def draft(config,store,bucket,payload,directory):
     key = 'conversations/' + payload['item']
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
-    spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit' if follow is not None else 'draft',usage))
+    track(store.step,payload['item'],'edit' if follow is not None else 'draft',{} if follow is not None else {'agents':{name:{'status':'waiting'} for name in agents.NAMES}},payload['revision'])
+    if follow is None:
+        live = agents.Live(store,payload['item'],'draft',payload['revision'])
+        live.start()
+        try:
+            spec = agents.run_draft(config,store,payload['item'],payload['revision'],source,images + shots,clips,validate,lambda kind,usage:store.record_usage(payload['item'],kind,usage),live)
+        except agents.Cancelled:
+            return
+        finally:
+            live.stop()
+    else:
+        spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit',usage))
     if superseded(store,payload):
         return
+    track(store.step,payload['item'],'edit' if follow is not None else 'draft',{'state':'done'},payload['revision'])
     if drafter.answered(spec):
         take_answer(config,store,payload,item,spec)
         return
@@ -910,6 +933,7 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
     job = {'id':identifier,'mode':'clips','item':payload['item'],'revision':payload['revision'],'sources':{stem:prepared['sources'][stem] for stem in stems},'durations':{stem:prepared['durations'][stem] for stem in stems},'formats':formats,'clips':stems,'spec':spec,'assets':assets,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message')),**({'edl':edl} if edl else {})}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
+    track(store.step,payload['item'],'render',{},payload['revision'])
     start_job(project,identifier)
 
 
@@ -1134,7 +1158,19 @@ def plan_montage(config,store,bucket,payload,directory):
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):]
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
-    edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,lambda usage:store.record_usage(payload['item'],'montage',usage))
+    spent = [0.0]
+    def montage_rec(usage):
+        spent[0] += tally(usage)['usd']
+        store.record_usage(payload['item'],'montage',usage)
+    def montage_agent(**line):
+        return {'agents':{'montage':{'action':None,'finished':time.time(),'usd':round(spent[0],6),**line}},'usd':round(spent[0],6)}
+    track(store.step,payload['item'],'montage',{'agents':{'montage':{'status':'running','action':'планирую монтаж','started':time.time()}}},payload['revision'])
+    try:
+        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
+    except Exception:
+        track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed'},payload['revision'])
+        raise
+    track(store.step,payload['item'],'montage',{**montage_agent(status='done',result=str(len(sources)) + ' клипов'),'state':'done'},payload['revision'])
     if superseded(store,payload):
         return
     if drafter.answered(edl):
@@ -1146,6 +1182,7 @@ def plan_montage(config,store,bucket,payload,directory):
     job = {'id':identifier,'mode':'draft','item':payload['item'],'revision':payload['revision'],'edl':edl,'sources':manifests,'bucket':bucket.name,'prefix':'media/' + item['slug'] + '/' + identifier,'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(edl=edl,render=identifier))
+    track(store.step,payload['item'],'render',{},payload['revision'])
     start_job(project,identifier)
     name = item_name(item,store,payload['item'])
     if edits and item.get('edl'):
@@ -1163,6 +1200,7 @@ def start_preparation(config,store,bucket,payload,item,inputs,target=None):
     job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),**({'montage':True} if item.get('montage') else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
+    track(store.step,payload['item'],'prepare',{},payload['revision'])
     start_job(project,identifier)
 
 
@@ -1184,6 +1222,7 @@ def prepared(config,store,bucket,payload):
         store.put('items/' + payload['item'],item,tx)
         store.job(tx,{'item':payload['item'],'revision':payload['revision'],'step':'montage' if item.get('montage') else 'draft'},'prepared-' + payload['render'])
     store.atomic(finish)
+    track(store.step,payload['item'],'prepare',{'state':'done' if job.get('state') == 'done' else 'failed'},payload['revision'])
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
@@ -1215,6 +1254,7 @@ def finish_final(config,store,payload,item,job):
         return
     if job.get('state') != 'done':
         fail_final(config,store,slug,payload['render'])
+        track(store.step,payload['item'],'final',{'state':'failed'})
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
         return
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
@@ -1226,6 +1266,7 @@ def finish_final(config,store,payload,item,job):
         store.put('specs/' + slug,value,tx)
         store.job(tx,{'step':'run','slug':slug},'final-' + payload['render'])
     store.atomic(finish)
+    track(store.step,payload['item'],'final',{'state':'done'})
     store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
 
 
@@ -1292,6 +1333,7 @@ def rendered(config,store,bucket,payload,directory):
         return
     if job.get('state') != 'done':
         raise Error('Рендер не завершён. Материал сохранён.')
+    track(store.step,payload['item'],'render',{'state':'done'},payload['revision'])
     if job.get('mode') == 'clips':
         clips_rendered(config,store,bucket,payload,directory,job)
         return
@@ -1324,6 +1366,7 @@ def start_final(config,store,bucket,saved):
     job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','created':time.time(),'loader':loader_for(config,saved.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier,started_at=time.time()))
+    track(store.step,saved['item'],'final',{})
     start_job(job['project'],identifier)
     try:
         tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
@@ -1406,10 +1449,12 @@ def run(config,store,bucket,slug,directory,resume=False):
         enqueue({'step':'run','slug':slug},'due-' + slug + '-' + secrets.token_hex(8),max(1,int((due-datetime.now(timezone.utc)).total_seconds())))
         return
     published_targets = {**saved['results'],**saved.get('published',{})}
+    track(store.publish_progress,slug,None,{'targets':pending_targets(saved)})
     for target in pending_targets(saved)[:1]:
         attempts = saved.setdefault('attempts',{})
         attempts[target] = attempts.get(target,0) + 1
         store.change('specs/' + slug,lambda value:value.update(attempts=attempts))
+        track(store.publish_progress,slug,target,{'status':'running','attempt':attempts[target],'run':True})
         state = {'steps':{}}
         target_assets = assets.get(target,{})
         try:
@@ -1451,6 +1496,8 @@ def run(config,store,bucket,slug,directory,resume=False):
             published_targets[target] = {'url':'','verified':False,'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
         store.change('specs/' + slug,lambda value:value.update(results=saved['results'],errors=saved['errors'],published=published_targets,attempts=attempts))
         store.change('items/' + saved['item'],lambda value:value.update(published=published_targets))
+        sent = target in saved['results']
+        track(store.publish_progress,slug,target,{'status':'done' if sent else 'failed' if attempts[target] >= 3 else 'planned','run_end':'done' if sent else 'failed','url':saved['results'][target]['url'] if sent else None,'error':None if sent else saved['errors'].get(target)})
     saved['published'] = published_targets
     remaining = pending_targets(saved)
     if remaining:
@@ -1464,9 +1511,12 @@ def run(config,store,bucket,slug,directory,resume=False):
         store.change('specs/' + slug,lambda value:value.update(errors=saved['errors']))
     store.change('specs/' + slug,lambda value:value.update(state=state,published_at=time.time()))
     any_published = bool(saved['results'] or saved.get('published'))
+    track(store.step,saved['item'],'publish',{'state':'done' if any_published else 'failed'})
     if any_published:
         learning.schedule(store,saved['item'],slug,'published')
+        track(store.step,saved['item'],'learn',{})
         store.forget(saved['item'],fix=False)
+        enqueue({'step':'verify','slug':slug,'attempt':1},'verify-' + slug + '-1-' + secrets.token_hex(4))
     lines = ['Пост' + post_name(store,saved) + ':'] + target_lines(saved)
     if any(target.startswith('ig-') for target in platforms.live(spec['targets'])):
         lines.append('Facebook: посты бота туда сами не попадают, поделись вручную из Instagram.')
@@ -1477,6 +1527,55 @@ def run(config,store,bucket,slug,directory,resume=False):
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
     finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
     store.change('specs/' + slug,lambda value:value.pop('status_message',None))
+
+
+VERIFY_ATTEMPTS = 3
+VERIFY_DELAY = 60
+
+
+def verify(config,store,slug,attempt):
+    saved = store.get('specs/' + slug)
+    if not saved:
+        return
+    item = saved['item']
+    if not saved.get('results'):
+        if saved.get('published'):
+            track(store.step,item,'verify',{'state':'done'})
+            track(store.close_session,item,'published','опубликовано' if saved.get('state') == 'done' else 'опубликовано не везде')
+        return
+    rows,passed,checked = {},{},time.time()
+    track(store.step,item,'verify',{'targets':{target:{'status':'checking','attempts':attempt} for target in saved['results']}})
+    for target,result in saved['results'].items():
+        try:
+            found = platforms.confirm(target,saved.get('published',{}).get(target,result),result['url'])
+        except Exception as failure:
+            found = {'api':'error: ' + type(failure).__name__,'link':None,'why':'error: ' + type(failure).__name__}
+        if target == 'tg-story':
+            status = 'unverifiable'
+        elif found['api'] in ('ok','n/a') and (found['link'] is not False or target in ('ig-post','ig-reel')):
+            status = 'verified'
+        else:
+            status = 'checking' if attempt < VERIFY_ATTEMPTS else 'unverified'
+        rows[target] = {'status':status,'api':found['api'],'link':found['link'],'attempts':attempt,'checked':checked,'why':found['why']}
+        if status != 'unverifiable':
+            passed[target] = status == 'verified'
+    def record(value):
+        for target,ok in passed.items():
+            for group in ('results','published'):
+                if target in value.get(group,{}):
+                    value[group][target]['verified'] = ok
+    store.change('specs/' + slug,record)
+    def record_item(value):
+        for target,ok in passed.items():
+            if target in value.get('published',{}):
+                value['published'][target]['verified'] = ok
+    store.change('items/' + item,record_item)
+    last = attempt >= VERIFY_ATTEMPTS or all(row['status'] != 'checking' for row in rows.values())
+    track(store.step,item,'verify',{'targets':rows,**({'state':'done'} if last else {})})
+    if last:
+        track(store.close_session,item,'published','опубликовано' if saved.get('state') == 'done' else 'опубликовано не везде')
+    else:
+        enqueue({'step':'verify','slug':slug,'attempt':attempt + 1},'verify-' + slug + '-' + str(attempt + 1) + '-' + secrets.token_hex(4),VERIFY_DELAY * attempt)
 
 
 def published_ids(config,spec,target,assets,publication):
@@ -1760,8 +1859,13 @@ def handle_worker(request):
                 collecting = store.get('items/' + payload['item'])
                 if collecting and collecting.get('status') == 'collecting':
                     send_collect(config,store,collect_reply(config,store,payload['item'],collecting,collected(collecting)))
+            elif step == 'verify':
+                verify(config,store,payload['slug'],payload.get('attempt',1))
             elif step == 'learn':
+                learned = payload.get('item') or (store.get(payload['record']) or {}).get('item') if payload.get('record') else None
                 learning.step(config,store,payload)
+                if learned:
+                    track(store.step,learned,'learn',{'state':'done'})
             elif step == 'skills':
                 learning.command(config,store,payload,tell)
             elif step == 'skill':
@@ -1782,6 +1886,8 @@ def handle_worker(request):
                     return False
                 current = store.atomic(fail_item)
                 if current:
+                    follow = payload['step'] == 'draft' and any(e['id'] == 'edit' and e['state'] == 'running' and e.get('revision') == payload.get('revision') for e in (store.get('sessions/' + payload['item']) or {}).get('steps',[]))
+                    track(store.step,payload['item'],'edit' if follow else {'prepared':'prepare','rendered':'render'}.get(payload['step'],payload['step']),{'state':'failed'},payload.get('revision'))
                     try:
                         finish_status(config,(store.get('items/' + payload['item']) or {}).get('status_message'),'Остановлено.')
                     except Exception:
@@ -1869,6 +1975,22 @@ def maintenance(config,store,bucket):
             store.forget(snapshot.id)
             for blob in bucket.list_blobs(prefix='inbox/' + snapshot.id + '/'):
                 blob.delete(if_generation_match=blob.generation)
+    for snapshot in store.db.collection('sessions').stream():
+        journal = snapshot.to_dict()
+        if journal.get('state') != 'open':
+            if journal.get('ended') and journal['ended'] < now - SESSION_AGE:
+                store.delete('sessions/' + snapshot.id)
+            continue
+        owner = store.get('items/' + snapshot.id)
+        if not owner or owner.get('status') == 'rejected' or owner.get('status') == 'failed' and now - owner.get('updated',now) > 7*86400:
+            store.close_session(snapshot.id,'cancelled','отменён' if owner and owner.get('status') == 'rejected' else 'без ответа 7 дней')
+            continue
+        saved = store.get('specs/' + str(journal.get('slug'))) or {}
+        if saved.get('state') in ('done','partial') and (saved.get('results') or saved.get('published')) and now - saved.get('published_at',now) > 3600:
+            if not any(e['id'] == 'verify' and e['state'] != 'planned' for e in journal['steps']):
+                enqueue({'step':'verify','slug':journal['slug'],'attempt':1},'verify-sweep-' + journal['slug'] + '-' + str(now // 86400))
+            elif now - saved.get('published_at',now) > 86400:
+                store.close_session(snapshot.id,'published','опубликовано' if saved['state'] == 'done' else 'опубликовано не везде')
     store.flush(enqueue)
 
 
@@ -1904,6 +2026,8 @@ def recover_running(config,store):
             value['retry_pending'] = 'run'
             return value
         saved = store.change('specs/' + snapshot.id,recover)
+        if saved:
+            track(store.publish_progress,snapshot.id,None,{'timeout':True})
         if saved and saved['state'] == 'running':
             enqueue({'step':'run','slug':snapshot.id,'resume':True},'recover-' + snapshot.id + '-' + secrets.token_hex(4))
         elif saved:

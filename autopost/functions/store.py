@@ -291,7 +291,7 @@ def post_phrase(item, saved=None):
 
 
 PRICED = 'claude-sonnet-5-5'
-PRICE = {'input':2.0, 'write5m':2.5, 'write1h':4.0, 'read':0.1, 'output':10.0, 'search':0.01}
+PRICE = {'input':2.0, 'write5m':2.5, 'write1h':4.0, 'read':0.2, 'output':10.0, 'search':0.01}
 
 
 def tally(usage):
@@ -305,6 +305,19 @@ def tally(usage):
     row = {'calls':1, 'input_tokens':number(usage, 'input_tokens'), 'output_tokens':number(usage, 'output_tokens'), 'cache_read_tokens':number(usage, 'cache_read_input_tokens'), 'cache_write_tokens':short + long, 'web_searches':number(tools, 'web_search_requests') if tools else 0}
     row['usd'] = (row['input_tokens'] * PRICE['input'] + short * PRICE['write5m'] + long * PRICE['write1h'] + row['cache_read_tokens'] * PRICE['read'] + row['output_tokens'] * PRICE['output']) / 1e6 + row['web_searches'] * PRICE['search']
     return row
+
+
+SESSION_AGE = 30*86400
+SESSION_STEPS = 60
+STEP_ORDER = ('collect', 'draft', 'prepare', 'montage', 'render', 'preview', 'wait', 'final', 'publish', 'verify', 'learn')
+STEP_ALIAS = {'edit':'draft'}
+STEP_LABELS = {'collect':'Собираю', 'draft':'Черновик', 'edit':'Правка', 'prepare':'Готовлю видео', 'montage':'Монтаж', 'render':'Рендер', 'preview':'Превью', 'wait':'Жду «Опубликовать»', 'final':'Финальное видео', 'publish':'Публикую', 'verify':'Проверяю', 'learn':'Учусь'}
+
+
+def merged(base, patch):
+    if isinstance(base, dict) and isinstance(patch, dict):
+        return {**base, **{key:merged(base.get(key), value) for key, value in patch.items()}}
+    return patch
 
 
 class Store:
@@ -357,7 +370,7 @@ class Store:
         return saved.get('before', 0) if saved.get('tag') == tag else saved.get('edits', 0)
 
     def forget(self, item_id, transaction=None, fix=True):
-        for suffix in ('', '-montage') + (('-fix',) if fix else ()):
+        for suffix in ('', '-montage', '-places', '-media', '-copy') + (('-fix',) if fix else ()):
             self.delete('conversations/' + item_id + suffix, transaction)
 
     def change(self, path, operation):
@@ -495,7 +508,9 @@ class Store:
                 return False
             if name == '/post' or opened or starts:
                 item_id = opened or 'item-' + identifier
-                item = self.get('items/' + item_id, tx) or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
+                item = self.get('items/' + item_id, tx)
+                new = item is None
+                item = item or {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':item_id[:40], 'batch_token':uuid.uuid4().hex[:8]}
                 body = without_command(message) if name == '/post' else message
                 filled = bool(body.get('text') or body.get('caption') or any(body.get(k) for k in MEDIA_KEYS))
                 refusal = refused(item['messages'], body) if filled else None
@@ -519,6 +534,8 @@ class Store:
                     self.job(tx, {'item':item_id, 'step':'upload-prompt', 'revision':item['revision']}, 'upload-' + identifier, 10)
                 self.discard(tx, dropped, session, identifier)
                 self.put(update_path, {'received':time.time()}, tx)
+                if new:
+                    self.open_session(tx, item_id, item['created'])
                 self.put('items/' + item_id, item, tx)
                 self.put('sessions/inbox', session, tx)
                 if name == '/post' and not opened:
@@ -658,11 +675,14 @@ class Store:
             if entry['item'] is None:
                 entry['item'] = self.get('items/' + entry['id'], tx)
         posts = {k: v for k, v in posts.items() if (v['item'] or {}).get('status') != 'rejected'}
+        for entry in posts.values():
+            entry['session'] = self.get('sessions/' + entry['id'], tx)
         return [(entry, (named(entry['specs'][0][1] if entry['specs'] else {}, entry['item']) or ' без названия').strip()) for entry in posts.values()]
 
     def discard(self, tx, dropped, session, identifier):
         for entry, label in dropped:
             item = entry['item']
+            self.close_session(entry['id'], 'cancelled', 'отменён', tx, entry.get('session'))
             if not (entry.get('learn') and any(saved['state'] == 'previewed' and saved.get('item') for slug, saved in entry['specs'])):
                 self.forget(entry['id'], tx)
             if item:
@@ -781,12 +801,13 @@ class Store:
         saved = self.get(path, tx)
         item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
         session = self.get('sessions/inbox', tx) or {}
+        journal = self.get('sessions/' + (slug if batch else saved.get('item') or ''), tx) if verb in ('cncl', 'rej') and saved and (batch or saved.get('item')) else None
         pending = self.get('specs/' + saved['deleting'], tx) if verb == 'pdel' and not batch and saved and saved.get('deleting') else None
         identifier = update_path.split('/', 1)[1]
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if batch:
-            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps, config or {}, business)
+            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps, config or {}, business, journal)
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -822,6 +843,8 @@ class Store:
         elif verb == 'rej' and saved['state'] == 'previewed':
             saved['state'] = 'rejected'
             if saved.get('item'):
+                if not saved.get('operation'):
+                    self.close_session(saved['item'], 'cancelled', 'отклонён', tx, journal)
                 self.job(tx, {'step':'learn', 'item':saved['item'], 'slug':slug, 'outcome':'rejected', 'forget':True}, 'learn-' + hashlib.sha256(query['id'].encode()).hexdigest())
             payload['step'] = 'remove-keyboard'
             payload['say'] = 'Черновик' + named(saved, item) + ' отклонён.'
@@ -873,7 +896,7 @@ class Store:
         specs = [(snapshot.id, snapshot.to_dict()) for snapshot in self.db.collection('specs').where('item', '==', item_id).stream()]
         specs = [(slug, saved) for slug, saved in specs if saved.get('state') in ('drafting', 'previewed', 'needs-edit') and not saved.get('operation')]
         session = self.get('sessions/inbox', tx) or {}
-        self.discard(tx, [({'id':item_id, 'item':item, 'specs':specs, 'learn':True, 'line':'Отклонено.'}, '')], {}, identifier)
+        self.discard(tx, [({'id':item_id, 'item':item, 'specs':specs, 'learn':True, 'line':'Отклонено.', 'session':self.get('sessions/' + item_id, tx)}, '')], {}, identifier)
         if session.get('current') in {slug for slug, saved in specs} | {item_id}:
             session.pop('current')
             self.put('sessions/inbox', session, tx)
@@ -965,13 +988,15 @@ class Store:
         session['collecting'] = target
         self.job(tx, {'item':target, 'step':'collect-prompt', 'revision':created['revision']}, 'collect-' + identifier)
         self.put('items/' + followup['item'], item, tx)
+        if created is not opened:
+            self.open_session(tx, target, created['created'])
         self.put('items/' + target, created, tx)
         self.put('sessions/inbox', session, tx)
         self.put('followups/' + identifier, followup, tx)
         self.retire(taps, query or {}, 'Новый пост открыт.')
         return 'Новый пост открыт.'
 
-    def collect_callback(self, tx, verb, item_id, token, item, session, identifier, query=None, offers=(), taps=None, config=None, business=None):
+    def collect_callback(self, tx, verb, item_id, token, item, session, identifier, query=None, offers=(), taps=None, config=None, business=None, journal=None):
         if not item or item.get('status') != 'collecting' or item.get('batch_token') != token:
             return None
         query = query or {}
@@ -1005,6 +1030,7 @@ class Store:
         if verb == 'cncl':
             item['status'] = 'rejected'
             item['waiting_upload'] = False
+            self.close_session(item_id, 'cancelled', 'отменён', tx, journal)
             result = 'Пост отменён.'
             self.retire(taps, query, 'Отменено.')
             self.job(tx, {'step':'say', 'say':'Пост' + titled(item) + ' отменён.'}, 'say-' + identifier)
@@ -1069,6 +1095,127 @@ class Store:
     def invalidate(self, slug, name):
         path = 'specs/' + slug + '/checkpoints/' + hashlib.sha256(name.encode()).hexdigest()
         self.put(path, {'state':'failed', 'name':name})
+
+    def session(self, item_id, opened, item=None):
+        return {'item':item_id, 'slug':(item or {}).get('slug'), 'state':'open', 'opened':opened, 'ended':None, 'outcome':None, 'revision':0, 'current':'collect', 'usd':0, 'updated':opened, 'steps':[{'id':'collect', 'label':STEP_LABELS['collect'], 'state':'running', 'since':opened, 'ended':None}]}
+
+    def open_session(self, tx, item_id, now):
+        self.put('sessions/' + item_id, self.session(item_id, now), tx)
+
+    def plan_steps(self, item, spec):
+        item, spec = item or {}, spec or {}
+        video = any(imaged(m).get('video') for m in item.get('messages', []))
+        targets = [t for t in (spec.get('spec') or {}).get('targets') or item.get('chosen') or [] if t in NAMES]
+        names = ['prepare'] * (video and not item.get('prepared')) + ['montage'] * bool(item.get('montage')) + ['render'] * video + ['preview', 'wait'] + ['final'] * video + ['publish', 'verify', 'learn']
+        rows = {'publish':{t:{'status':'planned', 'attempt':0, 'runs':[], 'url':None, 'error':None} for t in targets}, 'verify':{t:{'status':'planned', 'api':None, 'link':None, 'attempts':0, 'checked':None, 'why':None} for t in targets}}
+        return [{'id':name, 'label':STEP_LABELS[name], 'state':'planned', **({'targets':rows[name]} if name in rows else {})} for name in names]
+
+    def advance(self, doc, item, spec, step_id, patch, now, revision=None):
+        steps = doc['steps']
+        live = [e for e in steps if e['state'] != 'planned']
+        entry = next((e for e in reversed(live) if e['id'] == step_id and e['state'] == 'running'), None)
+        state = patch.get('state', 'running')
+        if doc.get('state') != 'open' or revision is not None and (revision < doc.get('revision', 0) or entry and (entry.get('revision') or revision) > revision):
+            return False
+        newer = revision is not None and entry is not None and (entry.get('revision') or revision) < revision
+        if entry is None and state != 'running':
+            return True
+        if (entry is None or newer) and len(live) >= SESSION_STEPS:
+            logging.error(json.dumps({'code':'session_overflow', 'item':doc['item']}))
+            return False
+        planned = {e['id']:e for e in steps if e['state'] == 'planned'}
+        steps[:] = live
+        if newer:
+            entry.update(state='cancelled', ended=now)
+            entry = None
+        if entry is None:
+            for other in steps:
+                if other['state'] == 'running' and 'learn' not in (other['id'], step_id):
+                    other.update(state='done', ended=now)
+            entry = {**planned.get(step_id, {}), 'id':step_id, 'label':STEP_LABELS[step_id], 'state':state, 'since':now, 'ended':None, **({'revision':revision} if revision is not None else {})}
+            steps.append(entry)
+        for key, value in patch.items():
+            if key != 'state':
+                entry[key] = merged(entry.get(key), value)
+        entry['state'] = state
+        if state != 'running':
+            entry['ended'] = now
+        if revision is not None:
+            doc['revision'] = max(doc.get('revision', 0), revision)
+        base = [e for e in steps if e['id'] != 'learn'] or steps
+        position = STEP_ORDER.index(STEP_ALIAS.get(base[-1]['id'], base[-1]['id']))
+        running = {e['id'] for e in steps if e['state'] == 'running'}
+        steps.extend(e for e in self.plan_steps(item, spec) if STEP_ORDER.index(e['id']) > position and e['id'] not in running)
+        doc.update(slug=(item or {}).get('slug', doc.get('slug')), current=step_id, updated=now, usd=round(sum(e.get('usd', 0) for e in live), 6))
+        return True
+
+    def touch(self, item_id, slug, change):
+        def apply(tx):
+            spec = self.get('specs/' + slug, tx) if slug else None
+            owner = item_id or (spec or {}).get('item')
+            value = self.get('sessions/' + owner, tx) if owner else None
+            item = self.get('items/' + owner, tx) if owner else None
+            spec = spec or (self.get('specs/' + item['slug'], tx) if item and item.get('slug') else None)
+            if value is None:
+                if not item:
+                    return False
+                value = self.session(owner, item.get('created') or time.time(), item)
+            if not change(value, item, spec, time.time()):
+                return False
+            self.put('sessions/' + owner, value, tx)
+            return True
+        return self.atomic(apply)
+
+    def step(self, item_id, step_id, patch, revision=None):
+        return self.touch(item_id, None, lambda value, item, spec, now: self.advance(value, item, spec, step_id, patch, now, revision))
+
+    def publish_progress(self, slug, target, patch):
+        def change(value, item, spec, now):
+            if not self.advance(value, item, spec, 'publish', {}, now):
+                return False
+            rows = next(e for e in reversed(value['steps']) if e['id'] == 'publish' and e['state'] == 'running').setdefault('targets', {})
+            fresh = lambda: {'status':'planned', 'attempt':0, 'runs':[], 'url':None, 'error':None}
+            for name in patch.get('targets', []):
+                rows.setdefault(name, fresh())
+            row = rows.setdefault(target, fresh()) if target else {}
+            row.update({key:patch[key] for key in ('status', 'attempt', 'url', 'error') if key in patch})
+            if 'run' in patch:
+                row['runs'] = (row['runs'] + [{'since':now, 'ended':None, 'status':'running', 'error':None}])[-5:]
+            if 'run_end' in patch and row.get('runs'):
+                row['runs'][-1].update(ended=now, status=patch['run_end'], error=patch.get('error'))
+            if patch.get('timeout'):
+                for name, saved in rows.items():
+                    if saved['status'] == 'running':
+                        saved['status'] = 'planned' if (spec or {}).get('attempts', {}).get(name, 0) < 3 else 'failed'
+                        if saved['runs']:
+                            saved['runs'][-1].update(ended=now, status='timeout')
+            return True
+        return self.touch(None, slug, change)
+
+    def close_session(self, item_id, kind, why, tx=None, doc=None):
+        now = time.time()
+        def close(value):
+            if not value or value.get('state') != 'open':
+                return False
+            value['steps'] = [e for e in value['steps'] if e['state'] != 'planned']
+            for entry in value['steps']:
+                if entry['state'] == 'running':
+                    entry.update(state='cancelled' if kind == 'cancelled' else 'done', ended=now)
+            value.update(state=kind, ended=now, updated=now, outcome={'kind':kind, 'at':now, 'why':why})
+            return True
+        if tx is not None:
+            value = copy.deepcopy(doc)
+            if not close(value):
+                return False
+            self.put('sessions/' + item_id, value, tx)
+            return True
+        def apply(transaction):
+            value = self.get('sessions/' + item_id, transaction)
+            if not close(value):
+                return False
+            self.put('sessions/' + item_id, value, transaction)
+            return True
+        return self.atomic(apply)
 
     def record_usage(self, item, kind, usage):
         try:

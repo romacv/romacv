@@ -177,7 +177,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_completed_targets_never_repost(self):
         self.callback()
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app,'enqueue') as enqueue, patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
             self.chain()
             self.chain()
         self.assertEqual((tg.call_count,th.call_count),(1,1))
@@ -188,7 +188,7 @@ class PublisherTests(unittest.TestCase):
         self.digest = app.asset_hash(self.spec,self.assets)
         self.store.put('specs/example',{'state':'previewed','hash':self.digest,'item':'item-1','preview_message':77,'spec':self.spec,'assets':self.assets,'results':{},'errors':{}})
         self.callback()
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app,'enqueue') as enqueue, patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram',return_value='https://t.me/example/1') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
             self.chain()
         self.assertEqual((tg.call_count,th.call_count),(1,1))
         saved = self.store.get('specs/example')
@@ -203,10 +203,11 @@ class PublisherTests(unittest.TestCase):
         self.callback()
         self.store.change('specs/example',lambda value:value.update(state='partial',results={'blog':site,'tg-channel':{'url':'https://t.me/example/1','verified':True}},errors={'threads':'setup'},attempts={}))
         self.assertTrue(self.callback('retry',identifier=10))
-        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+        with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app,'enqueue') as enqueue, patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'request',side_effect=AssertionError('network call')), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
             app.run(self.config,self.store,None,'example',self.root)
         tg.assert_not_called()
         th.assert_called_once()
+        self.assertEqual([call[0][0]['step'] for call in enqueue.call_args_list],['verify'])
         self.assertEqual(self.store.get('specs/example')['state'],'done')
 
     def test_retry_skips_published_targets_and_preserves_published_precedence(self):
@@ -216,10 +217,11 @@ class PublisherTests(unittest.TestCase):
                 published = {'tg-channel':{'url':'','verified':True,'deleted':True,'copy':'Исправленный текст'}}
                 self.store.change('specs/example',lambda value:value.update(state='partial',results=results,published=published,errors={'threads':'setup'},attempts={}))
                 self.assertTrue(self.callback('retry',identifier=10 + len(results)))
-                with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
+                with patch.object(app,'remove_keyboard'), patch.object(app,'tell',return_value={'message_id':999}), patch.object(app,'enqueue') as enqueue, patch.object(app.media,'materialize'), patch.object(p,'social_session',return_value=('token','123',p.THREADS)), patch.object(p,'link_opens',return_value=True), patch.object(p,'post_telegram') as tg, patch.object(p,'post_social',return_value='https://www.threads.com/@romacv777/post/Abc') as th:
                     app.run(self.config,self.store,None,'example',self.root)
                 tg.assert_not_called()
                 th.assert_called_once()
+                self.assertEqual([call[0][0]['step'] for call in enqueue.call_args_list],['verify'])
                 self.assertEqual(self.store.get('specs/example')['published']['tg-channel'],published['tg-channel'])
                 self.assertEqual(self.store.get('items/item-1')['published']['tg-channel'],published['tg-channel'])
 
