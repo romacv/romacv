@@ -130,14 +130,25 @@ def contents(item, genitive=False):
 PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
 
 
-def pin_stage(item, states):
+def newest_states(specs):
+    tie = ['drafting','needs-edit','previewed','rendering','approved','running']
+    newest = {}
+    for spec in specs:
+        if spec.get('item') and not spec.get('operation') and spec.get('state') in tie:
+            rank = (spec.get('updated', 0), tie.index(spec['state']))
+            if spec['item'] not in newest or rank >= newest[spec['item']][0]:
+                newest[spec['item']] = (rank, spec['state'])
+    return {key:value[1] for key,value in newest.items()}
+
+
+def pin_stage(item, state):
     working = 'монтаж' if item.get('montage') else 'готовлю черновик'
     if item.get('status') == 'collecting':
         parts = contents(item)
         return 'собираю' + (' · ' + ', '.join(parts) if parts else '')
-    for state,label in PIN_SPEC_STAGES:
-        if state in states:
-            return label or working
+    labels = dict(PIN_SPEC_STAGES)
+    if state in labels:
+        return labels[state] or working
     return working if item.get('status') in ('queued','drafting') else None
 
 
@@ -250,6 +261,8 @@ class Store:
         return snapshot.to_dict() if snapshot.exists else None
 
     def put(self, path, data, transaction=None):
+        if path.startswith('specs/') and path.count('/') == 1 and isinstance(data, dict):
+            data['updated'] = time.time()
         reference = self.db.document(path)
         if transaction is None:
             reference.set(data)
@@ -364,7 +377,8 @@ class Store:
                 dropped = self.open_drafts(tx, session, found)
                 if dropped:
                     session.pop('current', None)
-                    session.pop('collecting', None)
+                    if session.get('collecting') in {entry['id'] for entry, label in dropped}:
+                        session.pop('collecting', None)
             waiting = session.get('awaiting')
             if waiting and not name and (message.get('text') or waiting['kind'] == 'edit' and (photo or message.get('voice'))):
                 session.pop('awaiting')
@@ -517,7 +531,7 @@ class Store:
 
     def draft_ids(self):
         items, specs = set(), set()
-        for status in ('queued', 'drafting'):
+        for status in ('collecting', 'queued', 'drafting'):
             items.update(snapshot.id for snapshot in self.db.collection('items').where('status', '==', status).stream())
         for state in ('drafting', 'previewed', 'needs-edit'):
             specs.update(snapshot.id for snapshot in self.db.collection('specs').where('state', '==', state).stream())
@@ -533,7 +547,7 @@ class Store:
         current = {session['current']} if session.get('current') else set()
         for item_id in sorted(found[0] | current):
             saved = self.get('items/' + item_id, tx)
-            if saved and saved.get('status') in ('queued', 'drafting'):
+            if saved and (saved.get('status') in ('queued', 'drafting') or saved.get('status') == 'collecting' and (saved.get('messages') or item_id != session.get('collecting'))):
                 post(item_id, saved)
         for slug in sorted(found[1] | current):
             saved = self.get('specs/' + slug, tx)
@@ -591,6 +605,7 @@ class Store:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
         item['revision'] += 1
+        item['updated'] = time.time()
         item.pop('followup', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'edit-' + identifier, 10)
@@ -711,6 +726,8 @@ class Store:
             self.retire(taps, query, 'Ссылка больше не нужна.')
             return None
         self.retire(taps, query, 'Готовлю новую ссылку…')
+        item['updated'] = time.time()
+        self.put('items/' + item_id, item, tx)
         self.job(tx, {'step':'upload-prompt', 'item':item_id, 'revision':item['revision']}, 'upload-link-' + update_path.split('/', 1)[1])
         return True
 
@@ -752,6 +769,7 @@ class Store:
         else:
             item['status'] = 'queued'
             item['revision'] += 1
+            item['updated'] = time.time()
             self.job(tx, {'item':followup['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'unmove-' + identifier, 10)
         target = session['collecting'] if opened and opened.get('status') == 'collecting' else 'item-' + identifier
         created = opened if target == session.get('collecting') else {'messages':[], 'revision':0, 'status':'collecting', 'created':time.time(), 'slug':target[:40], 'batch_token':uuid.uuid4().hex[:8]}
@@ -822,6 +840,7 @@ class Store:
             if value.get('status') != 'queued' or value.get('revision') != revision or value.get('waiting_upload'):
                 return False
             value['status'] = 'drafting'
+            value['updated'] = time.time()
             return copy.deepcopy(value)
         return self.change('items/' + identifier, claim)
 

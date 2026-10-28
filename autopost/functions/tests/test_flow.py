@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -10,7 +11,7 @@ sys.path.insert(0, str(FUNCTIONS))
 from fake_firestore import FakeFirestore
 import platforms as p
 import main as app
-from store import Store
+from store import Store, newest_states, pin_stage
 
 PLAIN = {'roman_user_id':1,'roman_chat_id':1}
 POST = {'type':'bot_command','offset':0,'length':5}
@@ -308,6 +309,15 @@ class DiscardTests(unittest.TestCase):
         job = self.store.get('outbox/discard-20-alpha')['payload']
         self.assertEqual((job['step'],job['message']),('remove-keyboard',30))
 
+    def test_post_cancels_unrelated_old_unfinished_posts(self):
+        self.store.put('items/item-old',{'status':'queued','revision':1,'messages':[{'message_id':3,'text':'Old'}]})
+        self.store.put('items/item-pub',{'status':'previewed','revision':1,'messages':[{'message_id':4,'text':'Publishing'}]})
+        self.store.put('specs/pub',{'item':'item-pub','state':'approved','spec':{'slug':'pub','copy':{}},'hash':'abcdefgh'})
+        self.store.put('sessions/inbox',{})
+        self.store.intake(post_update(21),PLAIN)
+        self.assertEqual(self.store.get('items/item-old')['status'],'rejected')
+        self.assertEqual(self.store.get('specs/pub')['state'],'approved')
+
     def test_late_preview_of_a_discarded_draft_is_dropped(self):
         self.store.intake(post_update(20),PLAIN)
         with patch.object(app.platforms,'telegram') as telegram:
@@ -473,6 +483,31 @@ class RecoveryTests(unittest.TestCase):
             app.recover_running(self.config,self.store)
         tell.assert_called_once()
         self.assertEqual(self.store.get('specs/album')['state'],'partial')
+
+    def test_newest_spec_wins_over_an_old_drafting_spec(self):
+        now = time.time()
+        self.store.db.document('specs/old').set({'state':'drafting','item':'item-1','updated':now - 100,'spec':{'copy':{}}})
+        self.store.put('specs/album',{'state':'previewed','hash':'abcdefgh1','item':'item-1','spec':{'targets':['tg-channel']},'preview_message':100})
+        item = self.store.get('items/item-1')
+        states = newest_states(snapshot.to_dict() for snapshot in self.store.db.collection('specs').stream())
+        self.assertEqual(pin_stage(item,states.get('item-1')),'ждёт «Опубликовать»')
+
+    def test_stale_drafting_item_is_failed_and_announced_once(self):
+        self.store.put('items/item-1',{'status':'drafting','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time() - 2000})
+        self.store.db.document('specs/album').set({'state':'drafting','hash':'','item':'item-1','updated':time.time() - 2000,'spec':{'copy':{}}})
+        with patch.object(app,'tell') as tell:
+            app.recover_running(self.config,self.store)
+            app.recover_running(self.config,self.store)
+        tell.assert_called_once()
+        self.assertIn('завис и остановлен',tell.call_args[0][1])
+        self.assertEqual((self.store.get('items/item-1')['status'],self.store.get('specs/album')['state']),('failed','failed'))
+
+    def test_stale_item_waiting_for_upload_is_not_failed(self):
+        self.store.put('items/item-1',{'status':'queued','waiting_upload':True,'revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'album','created':0,'updated':time.time() - 5000})
+        with patch.object(app,'tell') as tell:
+            app.recover_running(self.config,self.store)
+        tell.assert_not_called()
+        self.assertEqual(self.store.get('items/item-1')['status'],'queued')
 
 
 if __name__ == '__main__':

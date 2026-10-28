@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, PIN_SPEC_STAGES, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, PIN_SPEC_STAGES, newest_states, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import learning
 import progress as progress_view
@@ -42,6 +42,7 @@ RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.
 
 RENDER_SETTINGS = 'final-v1'
 FINAL_DEADLINE = 2400
+DRAFT_DEADLINE = 1800
 EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead.'
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media.'
 
@@ -238,15 +239,11 @@ def send_collect(config, store, result, claim=None):
 
 def pin_texts(store):
     ids = {snapshot.id for snapshot in store.db.collection('items').where('status','in',['collecting','queued','drafting']).stream()}
-    states = {}
-    for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream():
-        spec = snapshot.to_dict()
-        if spec.get('item') and not spec.get('operation'):
-            states.setdefault(spec['item'],set()).add(spec['state'])
+    states = newest_states(snapshot.to_dict() for snapshot in store.db.collection('specs').where('state','in',[state for state,label in PIN_SPEC_STAGES]).stream())
     texts = {}
     for key in sorted(ids | set(states)):
         item = store.get('items/' + key)
-        stage = pin_stage(item,states.get(key,set())) if item and item.get('status') not in ('rejected','failed') else None
+        stage = pin_stage(item,states.get(key)) if item and item.get('status') not in ('rejected','failed') else None
         if stage:
             texts[key] = 'Пост' + titled(item) + ': ' + stage
     return texts
@@ -686,7 +683,7 @@ def upload_complete(config,store,bucket,payload,directory):
         saved = store.get('items/' + payload['item'],tx)
         if saved['revision'] != payload['revision'] or not saved.get('waiting_upload'):
             return
-        saved.update(uploads=uploads,waiting_upload=False)
+        saved.update(uploads=uploads,waiting_upload=False,updated=time.time())
         store.put('items/' + payload['item'],saved,tx)
         if saved['status'] == 'queued':
             store.job(tx,{'item':payload['item'],'revision':saved['revision'],'step':'montage' if saved.get('montage') else 'draft'},'upload-ready-' + payload['item'] + '-' + str(saved['revision']))
@@ -1036,9 +1033,9 @@ def prepared(config,store,bucket,payload):
             raise Error('Подготовка медиа не завершена. Пришли материал заново.')
         if job.get('target') == 'edit':
             item.setdefault('edit_prepared',{}).setdefault('audio',{}).update(job['outputs']['audio'])
-            item['status'] = 'queued'
+            item.update(status='queued',updated=time.time())
         else:
-            item.update(prepared=job['outputs'],status='queued')
+            item.update(prepared=job['outputs'],status='queued',updated=time.time())
         store.put('items/' + payload['item'],item,tx)
         store.job(tx,{'item':payload['item'],'revision':payload['revision'],'step':'montage' if item.get('montage') else 'draft'},'prepared-' + payload['render'])
     store.atomic(finish)
@@ -1047,7 +1044,7 @@ def prepared(config,store,bucket,payload):
 
 def fail_final(config,store,slug,render,after=0):
     def fail(value):
-        if value.get('final_render') != render or value.get('state') != 'rendering' or after and time.time() - value.get('started_at',time.time()) < after:
+        if value.get('final_render') != render or value.get('state') != 'rendering' or after and time.time() - value.get('started_at',0) < after:
             return False
         value['state'] = 'partial'
         value['retry_pending'] = 'final'
@@ -1181,7 +1178,7 @@ def start_final(config,store,bucket,saved):
     identifier = secrets.token_hex(16)
     job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','loader':loader_for(config,saved.get('status_message'))}
     store.put('renders/' + identifier,job)
-    store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier))
+    store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier,started_at=time.time()))
     start_job(job['project'],identifier)
     try:
         tell(config,'Собираю' + post_name(store,saved) + ' в полном качестве, потом опубликую.')
@@ -1671,10 +1668,53 @@ def recover_running(config,store):
         if pending.get('retry_pending'):
             announce_retry(config,store,snapshot.id,pending)
     for snapshot in store.db.collection('specs').where('state', '==', 'rendering').stream():
-        render = snapshot.to_dict().get('final_render')
-        if render and (store.get('renders/' + render) or {}).get('state') != 'done':
-            fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
+        spec = snapshot.to_dict()
+        render = spec.get('final_render')
+        job = store.get('renders/' + render) if render else None
+        if (job or {}).get('state') == 'done':
+            continue
+        if job and job.get('state') in ('queued','running') and not spec.get('started_at'):
+            since = (job.get('progress') or {}).get('since')
+            if not since or time.time() - since < FINAL_DEADLINE:
+                continue
+        fail_final(config,store,snapshot.id,render,FINAL_DEADLINE)
+    stop_stale(config,store)
     sync_pin(config,store)
+
+
+def stop_stale(config,store):
+    now = time.time()
+    renders = [snapshot.to_dict() for snapshot in store.db.collection('renders').where('state','in',['queued','running','done']).stream()]
+    busy = {job.get('item') for job in renders if job['state'] != 'done' or not job.get('delivered')}
+    drafting = [(snapshot.id,snapshot.to_dict()) for snapshot in store.db.collection('specs').where('state','==','drafting').stream()]
+    drafting = [(slug,spec) for slug,spec in drafting if spec.get('item') and not spec.get('operation')]
+    keys = {snapshot.id for snapshot in store.db.collection('items').where('status','in',['queued','drafting']).stream()} | {spec['item'] for slug,spec in drafting}
+    for key in sorted(keys):
+        item = store.get('items/' + key)
+        if not item or item.get('status') == 'rejected':
+            continue
+        limit = DRAFT_DEADLINE + (FINAL_DEADLINE if key in busy else 0)
+        since = item.get('updated') or item.get('created') or 0
+        def stop(value):
+            if value.get('status') not in ('queued','drafting') or value.get('waiting_upload') or now - (value.get('updated') or value.get('created') or 0) <= limit:
+                return False
+            value.update(status='failed',stalled=True)
+            return True
+        stopped = store.change('items/' + key,stop) if item.get('status') in ('queued','drafting') else False
+        held = item.get('status') in ('queued','drafting') and not stopped
+        newest = newest_states(snapshot.to_dict() for snapshot in store.db.collection('specs').where('item','==',key).stream())
+        for slug,spec in drafting:
+            if spec['item'] == key and not held and (stopped or now - (spec.get('updated') or since) > limit):
+                if not stopped and item.get('status') != 'failed' and newest.get(key) == 'drafting':
+                    store.change('items/' + key,lambda value:value.update(stalled=True))
+                store.change('specs/' + slug,lambda value:value.update(state='failed') if value.get('state') == 'drafting' else None)
+    for snapshot in store.db.collection('items').where('stalled','==',True).stream():
+        item = snapshot.to_dict()
+        try:
+            tell(config,'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Начни /post.')
+            store.change('items/' + snapshot.id,lambda value:value.pop('stalled',None))
+        except Exception:
+            logging.error(json.dumps({'code':'stalled_notice_failed'}))
 
 
 @scheduler_fn.on_schedule(schedule='every 15 minutes',timezone='UTC',region=REGION,service_account=RUNTIME_SERVICE_ACCOUNT,secrets=[AUTOPOST],timeout_sec=540,min_instances=0,max_instances=1)

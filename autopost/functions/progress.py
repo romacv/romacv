@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES, PIN_SPEC_STAGES, pin_stage
+from store import GROUPS, NAMES, PIN_SPEC_STAGES, newest_states, pin_stage
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -337,11 +337,7 @@ def snapshot(store, now, view='progress', skill=None):
     specs = sorted((spec for spec in specs if spec.get('state') in ('done', 'partial')), key=lambda spec: -spec['published_at'])[:LIMIT]
     busy = {job.get('item') for job in jobs}
     working = {s.id: s.to_dict() for s in store.db.collection('items').where('status', 'in', ['queued', 'drafting']).stream()}
-    states = {}
-    for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream():
-        spec = s.to_dict()
-        if spec.get('item') and not spec.get('operation'):
-            states.setdefault(spec['item'], set()).add(spec['state'])
+    states = newest_states(s.to_dict() for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream())
     wanted = sorted((busy | set(working) | set(states) | {spec.get('item') for spec in specs} | {spec.get('item') for spec in previews}) - {None})
     items = {s.id: s.to_dict() for s in store.db.get_all([store.db.document('items/' + key) for key in wanted]) if s.exists}
     waiting = []
@@ -361,7 +357,7 @@ def snapshot(store, now, view='progress', skill=None):
     active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
     for key in sorted(set(working) | set(states)):
         item = items.get(key)
-        stage = pin_stage(item, states.get(key, set())) if item and item.get('status') not in ('rejected', 'failed') and key not in busy else None
+        stage = pin_stage(item, states.get(key)) if item and item.get('status') not in ('rejected', 'failed') and key not in busy else None
         if stage in WORKING:
             active.append({'id':key,'item':key,'title':title_of(item),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':item.get('updated') or item.get('created') or now,'steps':[]})
     active.sort(key=lambda row: row['since'])
