@@ -5,7 +5,10 @@ import mimetypes
 from pathlib import Path
 import re
 import secrets
+import shutil
 import struct
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -340,6 +343,47 @@ def story_areas(spec, state, text):
     return ([link_area(link)] if link else []) + ([link_area('https://www.instagram.com/' + brand.group(1).rstrip('.'), 83)] if brand else [])
 
 
+def photo_story_video(path):
+    try:
+        import imageio_ffmpeg
+        binary = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        binary = shutil.which('ffmpeg')
+    if not binary:
+        return None
+    directory = Path(tempfile.mkdtemp(prefix='story-'))
+    target = directory / 'photo-story.mp4'
+    base = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-loop', '1', '-framerate', '30', '-i', str(path), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '5',
+            '-vf', 'scale=720:1280:out_range=tv,setsar=1,format=yuv420p', '-pix_fmt', 'yuv420p', '-r', '30',
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-shortest', '-map_metadata', '-1']
+    tail = ['-movflags', '+faststart', str(target)]
+    for codec in (['-c:v', 'libx265', '-tag:v', 'hvc1', '-x265-params', 'keyint=30:min-keyint=30:scenecut=0', '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k'],
+                  ['-c:v', 'libx264', '-g', '30', '-crf', '23', '-maxrate', '3M', '-bufsize', '6M']):
+        try:
+            if subprocess.run(base + codec + tail, capture_output=True, timeout=120).returncode == 0 and target.is_file() and 0 < target.stat().st_size <= 30 * 1024 * 1024:
+                return target
+        except (OSError, subprocess.SubprocessError):
+            pass
+    shutil.rmtree(directory, ignore_errors=True)
+    return None
+
+
+def post_story(fields, path):
+    try:
+        return telegram('postStory', fields, {'asset': path})
+    except Error as failure:
+        if fields['content']['type'] != 'photo' or failure.status_code != 400:
+            raise
+        video = photo_story_video(path)
+        if not video:
+            raise
+        try:
+            content = {'type': 'video', 'video': 'attach://asset', 'duration': 5.0, 'cover_frame_timestamp': 0.0}
+            return telegram('postStory', {**fields, 'content': content}, {'asset': video})
+        finally:
+            shutil.rmtree(video.parent, ignore_errors=True)
+
+
 def post_telegram(spec, state, target):
     identity = telegram_identity(target)
     files, text = media_files(spec), text_for(spec, target)
@@ -359,7 +403,7 @@ def post_telegram(spec, state, target):
                 if areas:
                     fields['areas'] = areas
             try:
-                stories.append(checkpoint(spec, state, target, 'story' + str(position), lambda fields=fields, name=name: telegram('postStory', fields, {'asset': files[name]})))
+                stories.append(checkpoint(spec, state, target, 'story' + str(position), lambda fields=fields, name=name: post_story(fields, files[name])))
             except Error as failure:
                 reason = getattr(failure, 'description', '')
                 raise Error('Telegram не принял историю ' + str(position + 1) + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None
@@ -381,7 +425,7 @@ def post_telegram(spec, state, target):
         if areas:
             fields['areas'] = areas
         try:
-            result = checkpoint(spec, state, target, 'publish', lambda: telegram('postStory', fields, {'asset': files['video' if video else 'image0']}))
+            result = checkpoint(spec, state, target, 'publish', lambda: post_story(fields, files['video' if video else 'image0']))
         except Error as failure:
             reason = getattr(failure, 'description', '')
             raise Error('Telegram не принял историю' + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None

@@ -52,6 +52,26 @@ class StoryTests(unittest.TestCase):
         self.assertIn('Telegram не принял историю',str(caught.exception))
         self.assertIn("can't download",str(caught.exception))
 
+    def test_rejected_photo_story_is_retried_as_a_video_story(self):
+        failure = p.Error('API failure: 400',status_code=400)
+        failure.description = "Bad Request: can't download or generate the file"
+        self.spec['targets'] = ['tg-story']
+        calls = []
+        def fake(method, fields=None, files=None):
+            calls.append((method,fields,files))
+            if method == 'postStory' and fields['content']['type'] == 'photo':
+                raise failure
+            return {'id':7}
+        def convert(path):
+            video = self.root/'photo-story.mp4'
+            video.write_bytes(b'mp4')
+            return video
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()), patch.object(p,'photo_story_video',convert):
+            url = p.post_telegram(self.spec,{'steps':{}},'tg-story')
+        stories = [(f['content']['type'],files['asset'].name) for method,f,files in calls if method == 'postStory']
+        self.assertEqual(stories,[('photo','image0.jpg'),('video','photo-story.mp4')])
+        self.assertTrue(url.endswith('/s/7'))
+
 
 class MixedPostTests(unittest.TestCase):
     def setUp(self):
