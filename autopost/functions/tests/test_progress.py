@@ -122,6 +122,15 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn('"secret"',json.dumps(progress))
         self.assertNotIn('signed.example',json.dumps(progress))
 
+    def test_working_post_is_active(self):
+        now = time.time()
+        self.store.put('items/a',{'messages':[{'text':'Кофе'}],'status':'drafting','created':now - 60,'updated':now - 30})
+        self.store.put('items/b',{'messages':[{'text':'Ждёт'}],'status':'previewed','created':now,'updated':now})
+        self.store.put('specs/b',{'item':'b','state':'previewed','targets':['tg-channel']})
+        body = app.snapshot(self.store,now)
+        self.assertEqual([(r['title'],r['label'],r['steps']) for r in body['active']],[('Кофе','Готовлю черновик',[])])
+        self.assertEqual([w['title'] for w in body['waiting']],['Ждёт'])
+
     def test_anthropic_balance(self):
         self.store.put('usage/anthropic-2026-10',{'usd':1.5})
         self.store.put('usage/anthropic-2026-11',{'usd':2.25})

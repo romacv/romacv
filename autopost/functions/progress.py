@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import GROUPS, NAMES
+from store import GROUPS, NAMES, PIN_SPEC_STAGES, pin_stage
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -21,6 +21,7 @@ QUOTA_DEADLINE = 10
 PREVIEW_LIMIT = 50
 NEAR_FREE = 80
 WAITING_AGE = 7 * 86400
+WORKING = ('готовлю черновик','монтаж','публикую')
 PUBLIC_HOSTS = ('t.me', 'www.instagram.com', 'instagram.com', 'www.threads.net', 'www.threads.com', 'threads.net', 'threads.com', 'resrom.com', 'www.resrom.com')
 PACIFIC = ZoneInfo('America/Los_Angeles')
 RUN_CPU = 'run.googleapis.com/container/cpu/allocation_time'
@@ -335,7 +336,13 @@ def snapshot(store, now, view='progress', skill=None):
     specs = [s.to_dict() for s in store.db.collection('specs').where('published_at', '>=', now - MAX_AGE).stream()]
     specs = sorted((spec for spec in specs if spec.get('state') in ('done', 'partial')), key=lambda spec: -spec['published_at'])[:LIMIT]
     busy = {job.get('item') for job in jobs}
-    wanted = sorted((busy | {spec.get('item') for spec in specs} | {spec.get('item') for spec in previews}) - {None})
+    working = {s.id: s.to_dict() for s in store.db.collection('items').where('status', 'in', ['queued', 'drafting']).stream()}
+    states = {}
+    for s in store.db.collection('specs').where('state', 'in', [state for state, label in PIN_SPEC_STAGES]).stream():
+        spec = s.to_dict()
+        if spec.get('item') and not spec.get('operation'):
+            states.setdefault(spec['item'], set()).add(spec['state'])
+    wanted = sorted((busy | set(working) | set(states) | {spec.get('item') for spec in specs} | {spec.get('item') for spec in previews}) - {None})
     items = {s.id: s.to_dict() for s in store.db.get_all([store.db.document('items/' + key) for key in wanted]) if s.exists}
     waiting = []
     for key, item in collecting:
@@ -352,6 +359,11 @@ def snapshot(store, now, view='progress', skill=None):
         waiting.append({'id':spec.get('item'),'title':title_of(item),'status':spec['state'],'wait':wait,'targets':targets_of(spec),'at':at})
     waiting = sorted(waiting, key=lambda row: (row['status'] != 'collecting', -row['at']))[:LIMIT]
     active = [{'id':job['id'],'item':job.get('item'),'title':title_of(items.get(job.get('item'))),'mode':job.get('mode'),'state':job['state'],'label':(job.get('progress') or {}).get('label',''),'since':(job.get('progress') or {}).get('since', now),'steps':steps_of(job, now)} for job in jobs]
+    for key in sorted(set(working) | set(states)):
+        item = items.get(key)
+        stage = pin_stage(item, states.get(key, set())) if item and item.get('status') not in ('rejected', 'failed') and key not in busy else None
+        if stage in WORKING:
+            active.append({'id':key,'item':key,'title':title_of(item),'mode':None,'state':'running','label':stage[0].upper() + stage[1:],'since':item.get('updated') or item.get('created') or now,'steps':[]})
     active.sort(key=lambda row: row['since'])
     published = [{'id':spec.get('slug') or spec.get('item'),'item':spec.get('item'),'title':title_of(items.get(spec.get('item'))),'at':spec['published_at'],'state':spec['state'],'links':[{'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'url':(result or {}).get('url')} for target, result in {**spec.get('results', {})}.items() if public((result or {}).get('url'))]} for spec in specs]
     try:

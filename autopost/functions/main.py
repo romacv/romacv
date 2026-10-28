@@ -26,7 +26,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import contents, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import contents, PIN_SPEC_STAGES, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import drafter
 import learning
 import progress as progress_view
@@ -78,20 +78,20 @@ def superseded(store, payload):
     return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
 
 
-ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing','skill':'typing'}
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing','skill':'typing','learn':None,'remove-keyboard':None}
 
 
 def activity(config, kind, stop):
     if not kind:
         return
     def beat():
-        wait = 1.5
-        while not stop.wait(wait):
+        while True:
             try:
                 platforms.telegram('sendChatAction',{'chat_id':config['roman_chat_id'],'action':kind})
             except Exception:
                 pass
-            wait = 4
+            if stop.wait(4):
+                return
     threading.Thread(target=contextvars.copy_context().run,args=(beat,),daemon=True).start()
 
 
@@ -99,8 +99,10 @@ def loader_for(config, record):
     return {'chat_id':config['roman_chat_id'],'action':'upload_video',**({'message_id':record['id'],'text':(record['text'] + '\n' + (record.get('line') or '')).strip()} if record else {})}
 
 
-def edit_message(config, identifier, text, markup=None):
+def edit_message(config, identifier, text, markup=None, entities=None):
     fields = {'chat_id':config['roman_chat_id'],'message_id':identifier,'text':text}
+    if entities:
+        fields['entities'] = entities
     if markup is not None:
         fields['reply_markup'] = markup
     try:
@@ -133,7 +135,8 @@ def retire_taps(config, store, taps):
                 except Exception:
                     pass
         else:
-            edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip())
+            struck = tap['text'].strip() if tap.get('strike') else ''
+            edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip(),entities=[{'type':'strikethrough','offset':0,'length':len(struck.encode('utf-16-le')) // 2}] if struck else None)
 
 
 WEBHOOK_EDIT_SECONDS = 8
@@ -231,20 +234,6 @@ def send_collect(config, store, result, claim=None):
             edit_message(config,identifier,fresh['text'],fresh['reply_markup'])
     except Exception:
         logging.error(json.dumps({'code':'keyboard_retire_failed'}))
-
-
-PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
-
-
-def pin_stage(item, states):
-    working = 'монтаж' if item.get('montage') else 'готовлю черновик'
-    if item.get('status') == 'collecting':
-        parts = contents(item)
-        return 'собираю' + (' · ' + ', '.join(parts) if parts else '')
-    for state,label in PIN_SPEC_STAGES:
-        if state in states:
-            return label or working
-    return working if item.get('status') in ('queued','drafting') else None
 
 
 def pin_texts(store):
@@ -394,6 +383,15 @@ def webhook(request):
     if not authorized(value,config) or 'update_id' not in value:
         return https_fn.Response('{}',content_type='application/json')
     message = value.get('message')
+    if isinstance(message,dict) and message.get('message_id'):
+        kind = 'upload_photo' if message.get('photo') else 'upload_video' if message.get('video') else 'typing'
+        def react():
+            for method,fields in (('setMessageReaction',{'chat_id':config['roman_chat_id'],'message_id':message['message_id'],'reaction':[{'type':'emoji','emoji':'👀'}]}),('sendChatAction',{'chat_id':config['roman_chat_id'],'action':kind})):
+                try:
+                    platforms.telegram(method,fields)
+                except Exception:
+                    pass
+        bounded(react,WEBHOOK_EDIT_SECONDS)
     if isinstance(message,dict) and not any(message.get(key) for key in ('photo','video','voice','audio','document','animation','video_note','media_group_id')):
         name = command(message)
         listed = str(message.get('reply_to_message',{}).get('message_id',''))
@@ -1537,7 +1535,7 @@ def handle_worker(request):
         stop = threading.Event()
         try:
             step = payload['step']
-            activity(config,ACTIONS.get(step),stop)
+            activity(config,ACTIONS.get(step,'typing'),stop)
             sync_pin(config,store)
             if payload.get('say'):
                 try:

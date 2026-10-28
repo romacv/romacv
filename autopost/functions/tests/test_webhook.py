@@ -24,6 +24,9 @@ class WebhookTests(unittest.TestCase):
         self.pin = patch.object(app,'sync_pin')
         self.pin.start()
         self.addCleanup(self.pin.stop)
+        self.telegram = patch.object(app.platforms,'telegram')
+        self.telegram.start()
+        self.addCleanup(self.telegram.stop)
 
     def request(self,value,secret='test-secret',method='POST',origin=None):
         request = Mock(method=method)
@@ -142,6 +145,11 @@ class WebhookTests(unittest.TestCase):
         self.assertTrue(answer['show_alert'])
         self.assertLessEqual(len(answer['text']),200)
 
+    def test_text_message_gets_a_reaction_and_typing(self):
+        with patch.object(app.platforms,'telegram') as telegram:
+            self.request(self.message())
+        self.assertEqual([call.args for call in telegram.call_args_list[:2]],[('setMessageReaction',{'chat_id':1,'message_id':7,'reaction':[{'type':'emoji','emoji':'👀'}]}),('sendChatAction',{'chat_id':1,'action':'typing'})])
+
     def test_stale_button_alerts(self):
         update = {'update_id':81,'callback_query':{'id':'81','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:gone:tok'}}
         answer = json.loads(self.request(update).get_data())
@@ -155,6 +163,7 @@ class WebhookTests(unittest.TestCase):
         update = {'update_id':82,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
         with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram',side_effect=lambda method,fields,files=None:sent.append((method,fields))):
             self.request(update)
+        sent = [call for call in sent if call[0] not in ('setMessageReaction','sendChatAction')]
         self.assertEqual(sent[0][0],'editMessageText')
         self.assertEqual(sent[0][1]['message_id'],900)
         self.assertIn('1 фото',sent[0][1]['text'])
@@ -188,7 +197,7 @@ class WebhookTests(unittest.TestCase):
         update = {'update_id':92,'message':{'message_id':2,'media_group_id':'g','video':{'file_id':'v'},'from':{'id':1},'chat':{'id':1,'type':'private'}}}
         with patch.object(app.platforms,'telegram',return_value={'message_id':5}) as telegram:
             self.request(update)
-        self.assertEqual(telegram.call_args_list[0].args[0],'sendMessage')
+        self.assertEqual([call.args[0] for call in telegram.call_args_list if call.args[0] not in ('setMessageReaction','sendChatAction')][0],'sendMessage')
 
     def test_upload_receipt_requires_origin_expiry_and_hmac(self):
         self.store.put('items/item-1',{'revision':1,'waiting_upload':True})

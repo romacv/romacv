@@ -127,6 +127,20 @@ def contents(item, genitive=False):
     return parts
 
 
+PIN_SPEC_STAGES = [('running','публикую'),('approved','публикую'),('rendering','монтаж'),('needs-edit','жду правку'),('drafting',None),('previewed','ждёт «Опубликовать»')]
+
+
+def pin_stage(item, states):
+    working = 'монтаж' if item.get('montage') else 'готовлю черновик'
+    if item.get('status') == 'collecting':
+        parts = contents(item)
+        return 'собираю' + (' · ' + ', '.join(parts) if parts else '')
+    for state,label in PIN_SPEC_STAGES:
+        if state in states:
+            return label or working
+    return working if item.get('status') in ('queued','drafting') else None
+
+
 def taken(item):
     parts = contents(item, True)
     if not parts:
@@ -546,12 +560,12 @@ class Store:
                 if saved.get('preview_message'):
                     self.job(tx, {'slug':slug, 'step':'remove-keyboard', 'message':saved['preview_message'], 'line':'Черновик отменён.'}, 'discard-' + identifier + '-' + slug)
 
-    def retire(self, taps, query, line, markup=None):
+    def retire(self, taps, query, line, markup=None, strike=False):
         message = query.get('message') or {}
         if taps is None or not message.get('message_id'):
             return None
         base = (message.get('text') or '').replace('\n' + CHOICE_HINT, '')
-        taps.append({'message_id':message['message_id'], 'text':base, 'line':line, 'markup':markup})
+        taps.append({'message_id':message['message_id'], 'text':base, 'line':line, 'markup':markup, **({'strike':True} if strike else {})})
         return {'id':message['message_id'], 'text':base, 'line':line}
 
     def edit_note(self, message):
@@ -680,7 +694,7 @@ class Store:
         else:
             return None
         if line:
-            record = self.retire(taps, query, line)
+            record = self.retire(taps, query, line, strike=verb == 'edit')
             if record and status:
                 saved['status_message'] = record
         self.put(path, saved, tx)
