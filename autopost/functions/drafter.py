@@ -101,7 +101,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             if 'ig-reel' in targets and not media.get('video') and not clips:
                 errors.append('ig-reel needs video')
             for t in ('ig-story', 'tg-story'):
-                if t in targets and not (media.get('video') or images):
+                if t in targets and not (media.get('video') or images or clips):
                     errors.append(t + ' needs an image or video')
             if any(t.startswith('ig-') for t in targets):
                 for name, path in files.items():
