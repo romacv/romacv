@@ -15,17 +15,21 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
-MIGRATION = 4
+MIGRATION = 5
 MIGRATIONS = [
-    ('writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
-    ('montage', " Short unspoken headlines are titles, not subtitles.", ""),
-    ('montage', "one at the start, a new one when the location changes. Language follows the post.", "one cue covers the whole target from 0 to its end, a new one only when the location really changes, with no gap. Resolve venue and city with web_search first (event, visible signs, current_time). Language follows the post."),
-    ('writing-texts', "- Blog images keep their aspect ratio and get meaningful alt text.\n", ""),
-    ('publishing', "Work defaults: blog, tg-channel,", "Work defaults: tg-channel,"),
-    ('publishing', " Blog is work only.", ""),
-    ('publishing', "; blog uses the photos only.", "."),
-    ('roman-social-networks', "- Blog on resrom.com: work only, English, long form with headings; the full article is written before the preview.\n", ""),
-    ('roman-social-networks', "- Telegram stories (Business): short line over the first photo or the video.\n", "- Telegram stories (Business): short line over the first photo or the video.\n- The voice comes from his own posts: see the «Мои тексты» skill.\n"),
+    (4, 'writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
+    (4, 'montage', " Short unspoken headlines are titles, not subtitles.", ""),
+    (4, 'montage', "one at the start, a new one when the location changes. Language follows the post.", "one cue covers the whole target from 0 to its end, a new one only when the location really changes, with no gap. Resolve venue and city with web_search first (event, visible signs, current_time). Language follows the post."),
+    (4, 'writing-texts', "- Blog images keep their aspect ratio and get meaningful alt text.\n", ""),
+    (4, 'publishing', "Work defaults: blog, tg-channel,", "Work defaults: tg-channel,"),
+    (4, 'publishing', " Blog is work only.", ""),
+    (4, 'publishing', "; blog uses the photos only.", "."),
+    (4, 'roman-social-networks', "- Blog on resrom.com: work only, English, long form with headings; the full article is written before the preview.\n", ""),
+    (4, 'roman-social-networks', "- Telegram stories (Business): short line over the first photo or the video.\n", "- Telegram stories (Business): short line over the first photo or the video.\n- The voice comes from his own posts: see the «Мои тексты» skill.\n"),
+    (5, 'publishing', '', "\n- In tg-channel and Threads copy an Instagram account is its URL https://www.instagram.com/<handle>, never @handle: there a handle opens a Telegram or Threads user."),
+    (5, 'publishing', '', "\n- Telegram and Instagram stories with the same media are previewed once, in one step, labelled for both networks."),
+    (5, 'publishing', '', "\n- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object."),
+    (5, 'publishing', '', "\n- ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."),
 ]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 
@@ -62,15 +66,17 @@ def migrate(store, found):
         if marker.get('version', 1) >= MIGRATION:
             return {}
         now = time.time()
-        docs = {key: store.get('skills/' + key, tx) for key in {k for k, _, _ in MIGRATIONS}}
+        docs = {key: store.get('skills/' + key, tx) for key in {k for _, k, _, _ in MIGRATIONS}}
         changed = {}
-        for key, old, new in MIGRATIONS:
+        for since, key, old, new in MIGRATIONS:
+            if since <= marker.get('version', 1):
+                continue
             doc = docs[key]
-            if doc and old in doc.get('body', ''):
+            if doc and (old in doc.get('body', '') if old else new.strip() not in doc.get('body', '')):
                 if key not in changed:
                     remember(doc, 'migration', now)
                     changed[key] = doc
-                doc['body'] = doc['body'].replace(old, new)
+                doc['body'] = doc['body'].replace(old, new) if old else doc['body'].rstrip() + new
         for key, doc in changed.items():
             doc['revision'] = doc.get('revision', 1) + 1
             doc['updated_at'] = now

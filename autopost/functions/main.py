@@ -27,7 +27,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import EXPIRED_TEXT, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, bursted, BURST_SECONDS, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import EXPIRED_TEXT, TOKEN_PREFIX, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, bursted, BURST_SECONDS, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import agents
 import drafter
 import voice
@@ -341,6 +341,8 @@ def tell(config, text, **extra):
 
 
 def failure_text(failure, target, fallback):
+    if str(failure) == 'API failure: 190':
+        return 'Нужен новый токен ' + ('Threads' if target == 'threads' else 'Instagram' if target.startswith('ig-') else target) + '.'
     if isinstance(failure,Error) and getattr(failure,'description',''):
         return ('Telegram не принял публикацию: ' if target.startswith('tg-') else 'Платформа не приняла запрос: ') + failure.description
     return str(failure) if isinstance(failure,(Error,StateError)) else fallback
@@ -669,7 +671,7 @@ def preview_label(targets, title):
     parts = [PHRASES[t] + (' «' + title + '»' if t == 'tg-channel' and title else '') for t in targets if t in PHRASES]
     networks = sorted(STORIES[t] for t in targets if t in STORIES)
     if networks:
-        parts.append('сторис ' + ' и '.join(networks))
+        parts.append('сторис ' + ', '.join(networks))
     return 'Это ' + (', '.join(parts[:-1]) + ' и ' if len(parts) > 1 else '') + parts[-1]
 
 
@@ -686,7 +688,7 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
         files = {}
         for name, manifest in assets.get(target,{}).items():
             files.setdefault(manifest.get('sha256') or json.dumps(manifest,sort_keys=True),(name,manifest))
-        text = '' if target == 'ig-story' else spec['copy'].get(target,'')
+        text = '' if target in STORIES else spec['copy'].get(target,'')
         entry = groups.setdefault((frozenset(files),text),[files,text,[]])
         entry[2].append(target)
     counter = 0
@@ -822,10 +824,30 @@ def upload_complete(config,store,bucket,payload,directory):
         tell(config,text)
 
 
+def hints_of(item):
+    return media.speech_hints(*[m.get(k) or '' for m in item.get('messages',[]) for k in ('text','caption')],*[e for e in item.get('edits',[]) if isinstance(e,str)],*item.get('instructions',[]))
+
+
+def side_voice(config,store,payload,item,name,spoken):
+    if name in item.get('voice_routed',{}) or len(spoken.split()) > 15:
+        return
+    item.setdefault('voice_routed',{})[name] = True
+    store.change('items/' + payload['item'],lambda value:value.setdefault('voice_routed',{}).update({name:True}))
+    try:
+        kind = (drafter.classify(config,spoken,{'collecting':False,'title':None,'status':item.get('status')},lambda usage:store.record_usage(payload['item'],'classify',usage)) or {}).get('kind')
+    except Exception:
+        return
+    if kind == 'rule':
+        enqueue({'step':'skills','text':spoken},'skills-voice-' + hashlib.sha256((payload['item'] + name).encode()).hexdigest())
+    elif kind == 'question':
+        saved = store.latest(('done','partial'))
+        tell(config,table_of(config,store,store.get('specs/' + saved)) if saved else 'Опубликованных постов пока нет.')
+
+
 def transcript(config,store,bucket,payload,item,attachment,key):
     value = item.get('transcripts',{}).get(key)
     if value is None:
-        value = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],config)
+        value = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + attachment['name'],config,hints=hints_of(item))
         item.setdefault('transcripts',{})[key] = value
         store.change('items/' + payload['item'],lambda saved:saved.setdefault('transcripts',{}).update({key:value}))
     return value
@@ -944,7 +966,7 @@ def draft(config,store,bucket,payload,directory):
     if not item:
         return
     key = 'conversations/' + payload['item']
-    early = item.get('edits',[])[store.seen(key,payload['revision']):]
+    early = item.get('edits',[])[store.seen(key,payload['revision']):] if store.get('specs/' + item['slug']) else []
     if not item.get('montage'):
         acknowledge_remount(config,store,payload,item)
     step = 'edit' if early else 'draft'
@@ -993,7 +1015,9 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             images.append(destination)
             files[destination.name] = destination
         elif attachment['kind'] == 'voice':
-            transcripts.append(transcript(config,store,bucket,payload,item,attachment,attachment['name']))
+            heard = transcript(config,store,bucket,payload,item,attachment,attachment['name'])
+            side_voice(config,store,payload,item,attachment['name'],heard['text'].strip())
+            transcripts.append(heard)
         else:
             clips.append(attachment['path'].stem)
     stages('edits','Читаю правки',0.4)
@@ -1027,7 +1051,7 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             detail = 'Invalid media path ' + json.dumps(wrong,ensure_ascii=False) + '; use only these available_images paths exactly: ' + json.dumps(list(files))
             errors = [detail if x == 'Invalid media path' else x for x in errors]
         return list(dict.fromkeys(errors))
-    fresh = edits[store.seen(key,payload['revision']):]
+    fresh = edits[store.seen(key,payload['revision']):] if store.get('specs/' + item['slug']) else []
     follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{} if follow is not None else {'agents':{name:{'status':'waiting'} for name in agents.NAMES}},payload['revision'])
     if follow is None:
@@ -1156,6 +1180,9 @@ def take_answer(config,store,payload,item,value):
         name = item_name(item,store,payload['item'])
         if store.atomic(lambda tx:store.cancel_post(tx,payload['item'],identifier)):
             tell(config,'Черновик' + name + ' отклонён.')
+    elif value['action'] == 'skills':
+        enqueue({'step':'skills','text':payload.get('text') or (item.get('edits') or [''])[-1]},'skills-' + identifier)
+        answer_edit(config,store,payload,item,'Записываю в навыки, черновик не менял.')
     elif value['action'] == 'edit':
         if not store.atomic(lambda tx:store.edit_from_question(tx,payload['slug'],payload['text'],identifier)):
             tell(config,'Черновик уже менялся: напиши правку ещё раз.')
@@ -1167,8 +1194,8 @@ def take_answer(config,store,payload,item,value):
             tell(config,'Не нашёл сообщения для нового поста: пришли /post.')
 
 
-QUESTION_ACTIONS = ('cancel','new-post','edit')
-QUESTION = 'Question mode: Roman asked about the current draft. Return {"answer":"Russian reply, at most 200 characters"}, or {"action":"cancel"} / {"action":"new-post"} only when he explicitly asks to cancel the draft or to make it a new post, or {"action":"edit"} when the question is really a request to change the draft ("Сделаешь короче?", "Можешь убрать хэштеги?"). No Markdown fence.'
+QUESTION_ACTIONS = ('cancel','new-post','edit','skills')
+QUESTION = 'Question mode: Roman asked about the current draft. Return {"answer":"Russian reply, at most 200 characters"}, or {"action":"cancel"} / {"action":"new-post"} only when he explicitly asks to cancel the draft or to make it a new post, or {"action":"skills"} when he orders to record or change a skill, or {"action":"edit"} when the question is really a request to change the draft ("Сделаешь короче?", "Можешь убрать хэштеги?"). No Markdown fence.'
 
 
 def question(config,store,payload):
@@ -1280,7 +1307,7 @@ def edit_media(config,store,bucket,payload,item,directory):
         name = attachment['name']
         text = item.get('edit_transcripts',{}).get(name)
         if text is None:
-            result = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + name,{**config,'prepared_audio':audio})
+            result = media.transcribe(bucket,store,attachment['path'],payload['item'] + '/' + name,{**config,'prepared_audio':audio},hints=hints_of(item))
             text = result['text'].strip() or 'Голосовое сообщение без распознанной речи.'
             store.change('items/' + payload['item'],lambda saved:saved.setdefault('edit_transcripts',{}).update({name:text}))
         spoken[name] = text
@@ -1336,6 +1363,7 @@ def plan_montage(config,store,bucket,payload,directory):
         if attachment['kind'] == 'voice':
             spoken = transcript(config,store,bucket,payload,item,attachment,attachment['name'])['text'].strip()
             if spoken:
+                side_voice(config,store,payload,item,attachment['name'],spoken)
                 notes.append(spoken)
         if attachment['kind'] != 'video':
             continue
@@ -1358,7 +1386,7 @@ def plan_montage(config,store,bucket,payload,directory):
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
     allowed = reeled(restrict(config,store,payload,item,False,True))
     key = 'conversations/' + payload['item'] + '-montage'
-    fresh = edits[store.seen(key,payload['revision']):]
+    fresh = edits[store.seen(key,payload['revision']):] if item.get('edl') else []
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
     spent = [0.0]
     def montage_rec(usage):
@@ -1743,6 +1771,8 @@ def run(config,store,bucket,slug,directory,resume=False):
                 attempts[target] = 3
             except Exception as failure:
                 saved['errors'][target] = failure_text(failure,target,'Target failed; reconcile saved checkpoints')
+                if saved['errors'][target].startswith(TOKEN_PREFIX):
+                    attempts[target] = 3
             publication = state['steps'].get(target + ':publish',{})
             if target not in published_targets and publication.get('status') == 'done':
                 published_targets[target] = {'url':'','verified':False,'at':time.time(),'copy':spec.get('copy',{}).get(target),**published_ids(config,spec,target,target_assets,publication.get('value'))}
@@ -1781,11 +1811,11 @@ def run(config,store,bucket,slug,directory,resume=False):
     if any(target.startswith('ig-') for target in platforms.live(spec['targets'])):
         lines.append('Facebook: посты бота туда сами не попадают, поделись вручную из Instagram.')
     can_retry = retryable(saved)
-    if state == 'partial' and not can_retry:
+    if state == 'partial' and not can_retry and any(saved.get('errors',{}).get(t) == EXPIRED_TEXT for t in spec['targets']):
         lines.append(EXPIRED_TEXT)
     lost = [ROLES[t][0] + ': ' + ROLES[t][1] + ' — ' + saved['errors'][t] for t in platforms.live(spec['targets']) if t not in saved['results'] and saved.get('errors',{}).get(t) and saved['errors'][t] != EXPIRED_TEXT and not saved['errors'][t].startswith(('Прервано','Операция остановлена','Не начато'))]
     if lost:
-        lines.append('Не опубликовано:\n' + '\n'.join(lost) + '\nПовторить попробует снова.')
+        lines.append('Не опубликовано:\n' + '\n'.join(lost) + ('\nПовторить попробует снова.' if can_retry else ''))
     message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and can_retry,True,bool(saved['results'])))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
     store.talk(saved['item'],None,'\n'.join(lines))
@@ -1893,7 +1923,7 @@ def fix(config,store,slug):
     if saved['operation'] == 'fix':
         def validate(value):
             if drafter.answered(value):
-                return drafter.answer_errors(value)
+                return drafter.answer_errors(value,('table','skills'))
             if not isinstance(value,dict) or set(value) != {'copy'}:
                 return ['Return exactly copy']
             if not isinstance(value['copy'],dict) or set(value['copy']) != set(spec['copy']):
@@ -1901,11 +1931,15 @@ def fix(config,store,slug):
             candidate = {**spec,'copy':value['copy']}
             return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
         status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in platforms.live(source['spec']['targets'])}
-        retry = source.get('state') == 'partial' and bool(source.get('hash')) and any(source.get('errors',{}).get(t) and t not in source.get('results',{}) for t in source['spec']['targets'])
+        retry = source.get('state') == 'partial' and bool(source.get('hash')) and retryable(source) and any(source.get('errors',{}).get(t) and t not in source.get('results',{}) for t in source['spec']['targets'])
         asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'table':table_rows(source,store.get('items/' + source['item']),config.get('timezone','Asia/Makassar')),'instruction':saved['instruction'],**({'retry_available':True} if retry else {})}
         corrected = drafter.ask(config,asked,[],validate,thread=(store,'conversations/' + saved['item'] + '-fix',slug,0,('specs/' + slug,'state','drafting')),follow=asked,rec=lambda usage:store.record_usage(saved['item'],'fix',usage))
         if drafter.answered(corrected):
-            message = tell(config,corrected['answer'],**({'reply_markup':buttons(saved['source'],source['hash'],True)} if retry else {}))
+            if corrected.get('action') == 'skills':
+                enqueue({'step':'skills','text':saved['instruction']},'skills-' + slug)
+                store.change('specs/' + slug,lambda value:value.update(state='rejected'))
+                return
+            message = tell(config,table_of(config,store,source) if corrected.get('action') == 'table' else corrected['answer'],**({'reply_markup':buttons(saved['source'],source['hash'],True)} if retry else {}))
             store.change('specs/' + slug,lambda value:value.update(state='rejected'))
             store.put('published-messages/' + str(message['message_id']),{'slug':saved['source']})
             return

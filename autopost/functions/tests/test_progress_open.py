@@ -58,14 +58,12 @@ class PublishAndAlbumTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.object(app.platforms,'telegram_identity'), patch.object(app.platforms,'live',side_effect=lambda t:list(t)), patch.object(app.media,'materialize'), patch.object(app,'remove_keyboard'):
             app.offer({'roman_chat_id':1},store,None,'item-9',spec,assets,Path(temporary),None,None,{'slug':'example'},'d',{},send,say,[],{})
         methods = [m for m,f in sent]
-        self.assertEqual(methods[:6],['sendMediaGroup','say','sendPhoto','say','sendPhoto','say'])
+        self.assertEqual(methods,['sendMediaGroup','say','sendPhoto','say','say'])
         self.assertEqual(sent[0][1]['media'][0]['caption'],'text')
         self.assertNotIn('caption',sent[0][1]['media'][1])
         self.assertEqual(sent[1][1]['text'],'Это пост Instagram и пост Threads')
         self.assertEqual(sent[1][1]['reply_parameters']['message_id'],10)
         self.assertNotIn('caption',sent[2][1])
-        self.assertEqual(sent[3][1]['text'],'Это сторис Instagram')
+        self.assertEqual(sent[3][1]['text'],'Это сторис Instagram, Telegram')
         self.assertEqual(sent[3][1]['reply_parameters']['message_id'],30)
-        self.assertEqual(sent[4][1]['caption'],'story text')
-        self.assertEqual(sent[5][1]['text'],'Это сторис Telegram')
-        self.assertEqual(sent[5][1]['reply_parameters']['message_id'],50)
+        self.assertIn('куда пойдёт',sent[4][1]['text'])

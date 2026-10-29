@@ -145,6 +145,13 @@ class WebhookTests(unittest.TestCase):
         self.assertTrue(answer['show_alert'])
         self.assertLessEqual(len(answer['text']),200)
 
+    def test_successful_done_tap_is_a_silent_toast(self):
+        self.store.put('items/item-1',{'status':'collecting','revision':1,'messages':[{'message_id':1,'photo':[{'file_id':'p'}]}],'batch_token':'tok','slug':'item-1'})
+        update = {'update_id':83,'callback_query':{'id':'83','from':{'id':1},'message':{'message_id':77,'chat':{'id':1,'type':'private'}},'data':'done:item-1:tok'}}
+        with patch.object(app.platforms,'configure'), patch.object(app.platforms,'telegram'):
+            answer = json.loads(self.request(update).get_data())
+        self.assertFalse(answer.get('show_alert'))
+
     def test_text_message_gets_a_reaction_and_typing(self):
         with patch.object(app.platforms,'telegram') as telegram:
             self.request(self.message())

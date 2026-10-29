@@ -33,7 +33,11 @@ SEED = {
 - Instagram stories are standalone media: the API has no caption field, no reshare and no interactive stickers, so essential text is baked into the media (timed subtitles or the photo overlay).
 - Every video target needs a designed 9:16 cover; every platform fetches media only from our own signed bucket URL.
 - A published post is never edited or reposted by drafting; fixes go through fix mode or the next post. Facebook gets posts only when Roman reshares from Instagram.
-- Never add location metadata to outgoing posts; clean every file's metadata."""},
+- Never add location metadata to outgoing posts; clean every file's metadata.
+- In tg-channel and Threads copy an Instagram account is its URL https://www.instagram.com/<handle>, never @handle: there a handle opens a Telegram or Threads user.
+- Telegram and Instagram stories with the same media are previewed once, in one step, labelled for both networks.
+- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object.
+- ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."""},
 'roman-social-networks': {'title': 'Соцсети Романа', 'body': """What each of Roman's networks is for and how it sounds.
 - Telegram channel @romacv777, «Канал им. Ресенчука Романа»: Russian, work or personal, the home of every post; media with copy, captions up to 1024 units.
 - Instagram: work copy in English, personal copy in Russian; feed posts, Reels and stories; hashtags carry discovery.

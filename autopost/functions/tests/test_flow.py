@@ -153,6 +153,34 @@ class PublishedMessageTests(unittest.TestCase):
     def say(self, identifier, text):
         return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
 
+    def test_typed_accept_accepts_the_latest_published_post(self):
+        self.store.put('specs/album',{'state':'partial','item':'item-1','published_at':5,'spec':{'targets':['tg-channel','threads']},'results':{'tg-channel':{'url':'u','at':1}},'errors':{'threads':'x'}})
+        self.assertEqual(self.say(14,'Принять'),'')
+        self.assertTrue(self.store.get('specs/album')['accepted'])
+
+    def test_question_on_a_previewed_draft_is_kept_without_a_read_after_write(self):
+        self.store.put('items/item-2',{'status':'previewed','revision':2,'messages':[{'message_id':1,'text':'x'}],'slug':'item-2'})
+        self.store.put('specs/item-2',{'state':'previewed','item':'item-2','spec':{'targets':['tg-channel']},'hash':'abcdefgh'})
+        self.store.put('sessions/inbox',{'current':'item-2'})
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        self.assertEqual(self.say(15,'ты поправил? покажи'),'')
+        self.assertTrue(self.store.get('followups/15')['answered'])
+
+    def test_repeated_publishing_status_is_sent_once(self):
+        self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['ig-story','tg-story']},'results':{'ig-story':{}},'errors':{}})
+        self.assertIn('готово 1 из 2',self.say(11,'ну как?'))
+        self.assertIsNone(self.say(12,'и что?'))
+
+    def test_question_while_publishing_shows_the_current_post_not_the_previous(self):
+        self.store.put('items/old',{'status':'done','revision':1,'messages':[],'slug':'old','title':'Старый'})
+        self.store.put('specs/old',{'state':'done','item':'old','published_at':99,'spec':{'targets':['tg-channel']},'results':{'tg-channel':{'url':'https://t.me/old/1','at':1}}})
+        self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
+        self.store.put('items/album',{'status':'approved','revision':1,'messages':[],'slug':'album'})
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        reply = self.say(13,'покажи ссылки')
+        self.assertNotIn('t.me/old',reply)
+        self.assertIn('Пост',reply)
+
     def test_message_during_publishing_gets_status_not_the_post_hint(self):
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['ig-story','tg-story']},'results':{'ig-story':{}},'errors':{'tg-story':'API failure: 400'}})
         reply = self.say(10,'ну как, опубликовал?')

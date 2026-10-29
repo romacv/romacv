@@ -215,7 +215,7 @@ def answered(value):
 
 def answer_errors(value, actions=False, limit=200):
     if set(value) == {'action'}:
-        return [] if actions and value['action'] in (actions if isinstance(actions, tuple) else ('cancel', 'new-post')) else ['action is not allowed here']
+        return [] if actions and value['action'] in (actions if isinstance(actions, tuple) else ('cancel', 'new-post', 'skills')) else ['action is not allowed here']
     if isinstance(value.get('answer'), str) and 1 <= len(value['answer']) <= limit and sum('\u0400' <= c <= '\u052f' for c in value['answer']) >= len(value['answer']) / 4:
         return []
     return ['answer must be a short Russian string of at most ' + str(limit) + ' characters']
@@ -410,7 +410,7 @@ def converse(config, system, text, tokens=4000, rec=None):
 
 
 CLASSIFIER_MODEL = 'claude-haiku-5-5'
-CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (text that belongs to the post as material), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (he asks something about the post, its status, links or publications), rule (a standing rule for all future posts or bot behaviour; value is the rule), fix (a change to the already published post). Context JSON: collecting says whether a post is being collected, title and status describe the current post. When unsure, return caption.'
+CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (material that is part of the post itself, never an address to the bot), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (a request to the bot that is not a text change: show links, the draft or the table, status, what is published, "публикуй", "повтори", "попробуй ещё раз", why something failed), rule (an order to change or remember the bot itself: "запиши в скиллы", "поправь скилл", "добавь в примеры", "запомни", "всегда делай так"; value is the rule in his words), fix (a change to the already published post). Examples: "покажи все ссылки последнего поста" is question; "добавь в примеры мои соц сети" is rule; "ну; публикуй" is question; "нет, пост это «Гонконг»" is title; "пост черновик" is question. Context JSON: collecting says whether a post is being collected, title and status describe the current post. When unsure between caption and question, return caption if collecting is true, else question.'
 
 
 def classify(config, text, context, rec=None):

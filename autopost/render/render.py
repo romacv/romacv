@@ -103,6 +103,27 @@ def title_position(frame):
     return round((150-TITLE_MARGIN)*scale), round((330-TITLE_MARGIN)*scale)
 
 
+def emptiest_title_y(frame, x, size, scale):
+    from PIL import Image, ImageFilter
+    cell = max(1,round(10*scale))
+    with Image.open(frame) as image:
+        small = image.convert('L').filter(ImageFilter.FIND_EDGES).resize((image.width//cell,image.height//cell),Image.BOX)
+    columns, rows = small.size
+    data = small.tobytes()
+    low, high = round((300-TITLE_MARGIN)*scale), round(1250*scale) - size[1]
+    c0, c1 = max(0,x//cell), min(columns,-(-(x+size[0])//cell))
+    span = max(1,-(-size[1]//cell))
+    best = (None,low)
+    for top in range(low,max(low,high)+1,cell):
+        r0 = top//cell
+        r1 = min(rows,r0+span)
+        values = [data[r*columns+c] for r in range(r0,r1) for c in range(c0,c1)]
+        cost = sum(values)/max(1,len(values)) + 14*(top-low)/max(1,high-low)
+        if best[0] is None or cost < best[0]:
+            best = (cost,top)
+    return best[1]
+
+
 def edge_energy(image):
     from PIL import ImageFilter
     return image.convert('L').filter(ImageFilter.FIND_EDGES)
@@ -413,6 +434,14 @@ def render(bucket, job, root):
                 with Image.open(image) as full:
                     full.resize((full.width//2,full.height//2)).save(image)
             x, y = title_position((width,height))
+            grab = root / f'{target}-title-{index}.jpg'
+            try:
+                run(['-ss',f"{(cue['start']+cue['end'])/2:.3f}",'-i',joined_files[target],'-frames:v','1','-q:v','3',grab])
+                with Image.open(image) as full:
+                    y = emptiest_title_y(grab,x,full.size,width/1080)
+            except (RuntimeError,OSError):
+                pass
+            grab.unlink(missing_ok=True)
             title_inputs += ['-i',image]
             video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x={x}:y={y}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story' and not draft:
@@ -470,9 +499,9 @@ def render_clips(bucket, job, root):
             made += 1
             if output.stat().st_size > CLIP_FORMATS[fmt]:
                 raise RuntimeError('Clip exceeds upload limit')
-            measured = json.loads(subprocess.run(['ffprobe','-v','error','-show_format','-of','json',str(output)],capture_output=True,check=True).stdout)
+            measured = json.loads(subprocess.run(['ffprobe','-v','error','-show_format','-show_streams','-select_streams','v:0','-of','json',str(output)],capture_output=True,check=True).stdout)
             seconds = float(measured['format']['duration'])
-            outputs['clips'].setdefault(fmt,{})[stem] = {**put(bucket,output,job['prefix'] + '/' + output.name),'seconds':seconds,'trimmed':float(job['durations'][stem]) > CLIP_LIMIT + 0.01}
+            outputs['clips'].setdefault(fmt,{})[stem] = {**put(bucket,output,job['prefix'] + '/' + output.name),'seconds':seconds,'width':measured['streams'][0]['width'],'height':measured['streams'][0]['height'],'trimmed':float(job['durations'][stem]) > CLIP_LIMIT + 0.01}
             output.unlink()
         source.unlink()
     if job.get('edl'):

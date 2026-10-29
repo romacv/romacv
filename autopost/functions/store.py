@@ -26,6 +26,7 @@ COMMANDS = ('/post', '/skills')
 COMMANDS_HINT = 'Команды: /post — новый пост, /skills — навыки бота.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
 BURST_SECONDS = 20
+STATUS_REPEAT = 600
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
 
@@ -107,7 +108,7 @@ def hinted(text, offers, chosen=()):
     return text + '\n' + CHOICE_HINT if text and offers and not chosen else text
 
 
-WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
+WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'принять':'accept', 'принимаю':'accept', 'принято':'accept', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
 KINDS = ('caption', 'title', 'instruction', 'question', 'rule', 'fix')
 CONTAINER_AGE = 23 * 3600
 DIALOG_LIMIT = 200
@@ -131,6 +132,8 @@ def target_status(saved, target):
         return 'опубликовано'
     if made or (saved.get('published') or {}).get(target):
         return 'опубликовано, ссылка не получена'
+    if error and error.startswith(TOKEN_PREFIX):
+        return error.rstrip('.')
     if error:
         low = error.lower()
         return 'прервано' if low.startswith(('прервано', 'операция остановлена')) else 'не начато' if low.startswith('не начато') else 'ошибка: ' + error.rstrip('.')
@@ -138,11 +141,12 @@ def target_status(saved, target):
 
 
 EXPIRED_TEXT = 'Материал истёк. Пришли файлы заново.'
+TOKEN_PREFIX = 'Нужен новый токен'
 RETRY_AGE = 48 * 3600
 
 
 def retryable(saved):
-    return any((saved.get('errors') or {}).get(t) != EXPIRED_TEXT for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES and t not in (saved.get('results') or {}))
+    return any(not str((saved.get('errors') or {}).get(t) or '').startswith((EXPIRED_TEXT, TOKEN_PREFIX)) for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES and t not in (saved.get('results') or {}))
 
 
 def table_rows(saved, item, zone='Asia/Makassar'):
@@ -562,6 +566,8 @@ class Store:
         current = self.get('items/' + session['current'], tx) if session.get('current') and not opened else None
         finished = self.get('specs/' + found['finished'], tx) if found.get('finished') else None
         finished_item = self.get('items/' + finished['item'], tx) if finished else None
+        live = self.get('specs/' + current['slug'], tx) if current and current.get('slug') else None
+        live = live if live and live.get('state') in ('approved', 'running', 'rendering') else None
         retrying = self.get('specs/' + found['retry'], tx) if found.get('retry') else None
         journal = self.get('sessions/' + (opened or current or {}).get('slug', ''), tx) if opened or current else None
         update_path = 'updates/' + identifier
@@ -570,21 +576,34 @@ class Store:
             self.put(update_path, {'received':time.time()}, tx)
             return text
         def table():
-            if not finished:
+            shown, shown_item = (live, current) if live else (finished, finished_item)
+            if not shown:
                 return answer('Опубликованных постов пока нет.')
-            return answer(table_text(finished, finished_item, zone), finished['item'])
-        if kind == 'command' and value == 'table' or kind == 'question' and finished and not opened and not (current and current.get('status') in ('queued', 'drafting')):
+            return answer(table_text(shown, shown_item, zone), shown['item'])
+        if kind == 'command' and value == 'table' or kind == 'question' and (finished or live) and not opened and not (current and current.get('status') in ('queued', 'drafting', 'previewed')):
             return table()
+        if kind == 'command' and value == 'accept':
+            target = finished
+            if not target or target.get('operation') or not target.get('results'):
+                return answer('Принимать нечего: нет опубликованного поста.')
+            if target.get('accepted'):
+                return answer('Пост' + named(target, finished_item) + ' уже принят.', finished['item'])
+            target['state'] = 'done'
+            target['accepted'] = True
+            self.put('specs/' + found['finished'], target, tx)
+            self.job(tx, {'slug':found['finished'], 'step':'accept'}, 'accept-' + hashlib.sha256(identifier.encode()).hexdigest())
+            return answer('', finished['item'])
         if kind == 'command' and value == 'retry':
             if not retrying or retrying.get('state') != 'partial':
                 return answer('Повторять нечего: нет поста с неопубликованными целями.')
             if time.time() - (retrying.get('updated') or retrying.get('published_at') or 0) > RETRY_AGE:
                 return answer('Повторять поздно: прошло больше двух суток, пришли материал заново.', retrying['item'])
             if not retryable(retrying):
-                return answer(EXPIRED_TEXT, retrying['item'])
+                token = [e for e in ((retrying.get('errors') or {}).get(t) for t in (retrying.get('spec') or {}).get('targets', []) if t not in (retrying.get('results') or {})) if str(e or '').startswith(TOKEN_PREFIX)]
+                return answer(token[0] if token and all(e != EXPIRED_TEXT for e in (retrying.get('errors') or {}).values()) else EXPIRED_TEXT, retrying['item'])
             retrying_item = self.get('items/' + retrying['item'], tx)
             retrying['state'] = 'approved'
-            retrying['attempts'] = {t:n for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {})}
+            retrying['attempts'] = {t:(3 if str((retrying.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX) else n) for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {}) or str((retrying.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX)}
             self.put('specs/' + found['retry'], retrying, tx)
             self.job(tx, {'slug':found['retry'], 'step':'run'}, 'callback-' + hashlib.sha256(identifier.encode()).hexdigest())
             return answer('Повторяю публикацию' + named(retrying, retrying_item) + '.', retrying['item'])
@@ -629,7 +648,7 @@ class Store:
                 self.subject = finished['item']
                 return line + '\n' + table_text(finished, finished_item, zone)
             return answer(line, session.get('collecting') or session.get('current'))
-        if kind in ('fix', 'instruction') and finished and not opened and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
+        if kind in ('fix', 'instruction') and finished and not live and not opened and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
             self.put(update_path, {'received':time.time()}, tx)
             self.queue_fix(tx, found['finished'], finished, 'fix', found['text'], identifier)
             self.subject = finished['item']
@@ -639,6 +658,11 @@ class Store:
                 return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
             if working(current):
                 return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'])
+            if current and current.get('status') == 'previewed':
+                self.keep_question(tx, current, identifier, current['slug'], session['current'], found['text'], {'text':found['text']})
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = session['current']
+                return ''
             if current:
                 return answer('Пост' + titled(current) + ' сейчас в работе, статус виден в Mini App.', session['current'])
             return table()
@@ -752,6 +776,15 @@ class Store:
                     if write:
                         self.put('sessions/inbox', session, tx)
                 return False
+            def status(line):
+                if once():
+                    return None
+                last = session.get('status_line') or {}
+                if last.get('text') == line and time.time() - last.get('at', 0) < STATUS_REPEAT:
+                    return None
+                session['status_line'] = {'text':line, 'at':time.time()}
+                self.put('sessions/inbox', session, tx)
+                return line
             routed = None
             if owned and not name and not reply_id and any(message.get(k) for k in MEDIA_KEYS):
                 if owned.get('status') == 'collecting':
@@ -853,10 +886,11 @@ class Store:
                 if filled and any(body.get(k) for k in MEDIA_KEYS):
                     now = time.time()
                     added = item.get('added')
-                    if added and now - added['at'] <= BURST_SECONDS:
+                    if added and now - added['at'] <= BURST_SECONDS or group and session.get('burst_group') == group:
                         quiet = True
                     elif not continuing:
                         burst = True
+                        session['burst_group'] = group
                     item['added'] = {'at':now}
                 if not redirected:
                     session['collecting'] = item_id
@@ -943,10 +977,10 @@ class Store:
                     self.queue_fix(tx, slug, target, 'fix', note, identifier)
                     return asking(target, held)
                 if scheduled(target):
-                    return None if once() else due_line(target, held, (config or {}).get('timezone', 'Asia/Makassar'))
+                    return status(due_line(target, held, (config or {}).get('timezone', 'Asia/Makassar')))
                 if target['state'] in ('approved', 'running', 'rendering'):
-                    return None if once() else publishing(target, held)
-                return None if once() else 'Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.'
+                    return status(publishing(target, held))
+                return status('Пост' + named(target, held) + ' уже опубликован. Правка текстом, новый пост: /post.')
             if pending and pending.get('status') in ('queued', 'drafting') and pending.get('waiting_upload') and (note or photo or message.get('voice')):
                 self.put(update_path, {'received':time.time()}, tx)
                 return None if once() else 'Пост' + titled(pending) + ': ' + pin_stage(pending, None) + '.'
@@ -1166,7 +1200,8 @@ class Store:
         self.put(update_path, {'received':time.time()}, tx)
         self.put(callback_path, {'received':time.time()}, tx)
         if batch:
-            return self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps, config or {}, business, journal)
+            result = self.collect_callback(tx, verb, slug, short_hash, saved, session, identifier, query, offered(config or {}, business), taps, config or {}, business, journal)
+            return True if result is None and taps else result
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -1215,7 +1250,7 @@ class Store:
             line = 'Принято.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
-            saved['attempts'] = {t:n for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{})}
+            saved['attempts'] = {t:(3 if str((saved.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX) else n) for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{}) or str((saved.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX)}
             line, status = 'Повторяю…', True
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
             return 'Жду правку: напиши, что поменять.'

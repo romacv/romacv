@@ -368,6 +368,25 @@ def photo_story_video(path):
     return None
 
 
+def video_size(path):
+    try:
+        import imageio_ffmpeg
+        binary = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        binary = shutil.which('ffmpeg')
+    if not binary:
+        return {}
+    try:
+        found = re.search(r'Video:.*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]', subprocess.run([binary, '-hide_banner', '-nostdin', '-i', str(path)], capture_output=True, timeout=30).stderr.decode(errors='replace'))
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return {'width': int(found.group(1)), 'height': int(found.group(2))} if found else {}
+
+
+def video_fields(path):
+    return {**video_size(path), 'supports_streaming': True}
+
+
 def post_story(fields, path):
     try:
         return telegram('postStory', fields, {'asset': path})
@@ -434,7 +453,7 @@ def post_telegram(spec, state, target):
     chat_id = identity['id']
     def send():
         if 'video' in files:
-            return telegram('sendVideo', {'chat_id': chat_id, 'caption': text, 'cover': 'attach://cover'}, {'video': files['video'], 'cover': files['cover']})
+            return telegram('sendVideo', {'chat_id': chat_id, 'caption': text, 'cover': 'attach://cover', **video_fields(files['video'])}, {'video': files['video'], 'cover': files['cover']})
         images = spec.get('media', {}).get('images', [])
         if len(images) > 1 and target != 'ig-story':
             media = [{'type': 'photo', 'media': 'attach://image' + str(i), **({'caption': text} if i == 0 else {})} for i in range(len(images))]
@@ -451,9 +470,9 @@ def post_telegram(spec, state, target):
             start += size
             if len(chunk) == 1:
                 kind, name = chunk[0]
-                sent.extend(checkpoint(spec, state, target, 'album' + str(number), lambda kind=kind, name=name, caption=caption: [telegram('sendPhoto' if kind == 'photo' else 'sendVideo', {'chat_id': chat_id, **caption}, {kind: files[name]})]))
+                sent.extend(checkpoint(spec, state, target, 'album' + str(number), lambda kind=kind, name=name, caption=caption: [telegram('sendPhoto' if kind == 'photo' else 'sendVideo', {'chat_id': chat_id, **caption, **(video_fields(files[name]) if kind == 'video' else {})}, {kind: files[name]})]))
                 continue
-            group = [{'type': kind, 'media': 'attach://' + name, **({'supports_streaming': True} if kind == 'video' else {}), **(caption if position == 0 else {})} for position, (kind, name) in enumerate(chunk)]
+            group = [{'type': kind, 'media': 'attach://' + name, **(video_fields(files[name]) if kind == 'video' else {}), **(caption if position == 0 else {})} for position, (kind, name) in enumerate(chunk)]
             sent.extend(checkpoint(spec, state, target, 'album' + str(number), lambda group=group, chunk=chunk: telegram('sendMediaGroup', {'chat_id': chat_id, 'media': group}, {name: files[name] for kind, name in chunk})))
         send = lambda sent=sent: sent
     result = checkpoint(spec, state, target, 'publish', send)

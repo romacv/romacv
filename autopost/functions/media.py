@@ -272,12 +272,12 @@ def measure(text, font):
     return sum(font.getlength(value) if kind == 'text' else run_advance(kind,value,font.size) for kind, value in segments(text))
 
 
-def draw_runs(layer, x, baseline, text, font, fill):
+def draw_runs(layer, x, baseline, text, font, fill, outline=None):
     from PIL import ImageDraw
     draw = ImageDraw.Draw(layer)
     for kind, value in segments(text):
         if kind == 'text':
-            draw.text((x,baseline),value,font=font,fill=fill,anchor='ls')
+            draw.text((x,baseline),value,font=font,fill=fill,anchor='ls',**({'stroke_width':2,'stroke_fill':outline} if outline else {}))
             x += font.getlength(value)
             continue
         image = run_image(kind,value,font.size)
@@ -362,7 +362,7 @@ def story_line(text, align, dark=False):
     for i, line in enumerate(lines):
         room = width - measure(line,font)
         x = pad + {'left':0,'center':room/2,'right':room}[align]
-        draw_runs(layer,x,pad+step*i+ascent,line,font,(20,20,20) if dark else (255,255,255))
+        draw_runs(layer,x,pad+step*i+ascent,line,font,(20,20,20) if dark else (255,255,255),(255,255,255,200) if dark else (0,0,0,150))
     if dark:
         return soft_shadow(layer,14,200,(255,255,255),0)
     return soft_shadow(layer,18,90)
@@ -392,30 +392,63 @@ def story_block(overlay, dark):
     return block, box
 
 
+def edge_map(canvas):
+    from PIL import Image, ImageFilter
+    small = canvas.convert('L').filter(ImageFilter.FIND_EDGES).resize((108,192),Image.BOX)
+    cells = list(small.tobytes())
+    total = [[0]*109 for _ in range(193)]
+    for row in range(192):
+        for col in range(108):
+            total[row+1][col+1] = cells[row*108+col] + total[row][col+1] + total[row+1][col] - total[row][col]
+    return total
+
+
+def emptiest_top(total, left, width, height, low, high):
+    c0, c1 = max(0,left//10), min(108,-(-(left+width)//10))
+    rows = max(1,round(height/10))
+    best = None
+    for top in range(low,high-height+1,10):
+        r0 = top//10
+        r1 = min(192,r0+rows)
+        density = (total[r1][c1]-total[r0][c1]-total[r1][c0]+total[r0][c0])/max(1,(r1-r0)*(c1-c0))
+        cost = density + 14*(top-low)/max(1,high-low)
+        if best is None or cost < best[0]:
+            best = (cost,top)
+    return best[1] if best else low
+
+
+def backdrop(canvas, box):
+    from PIL import Image, ImageDraw, ImageFilter
+    box = (max(0,box[0]),max(0,box[1]),min(1080,box[2]),min(1920,box[3]))
+    blurred = canvas.crop(box).filter(ImageFilter.GaussianBlur(14))
+    mask = Image.new('L',blurred.size,0)
+    ImageDraw.Draw(mask).rounded_rectangle((0,0,blurred.width-1,blurred.height-1),radius=28,fill=200)
+    canvas.paste(blurred,box[:2],mask.filter(ImageFilter.GaussianBlur(8)))
+
+
 def compose_story(source, destination, overlay):
     from PIL import Image, ImageOps, ImageCms
     source, destination = Path(source), Path(destination)
     with Image.open(source) as original:
         photo = ImageOps.exif_transpose(original).convert('RGB')
     scale = max(1080/photo.width,1920/photo.height)
-    left, top = (photo.width*scale-1080)/2, (photo.height*scale-1920)/2
+    left = (photo.width*scale-1080)/2
     canvas = ImageOps.fit(photo,(1080,1920)).convert('RGBA')
-    align = overlay['align']
     ax = overlay['anchor'][0]*photo.width*scale - left
-    ay = overlay['anchor'][1]*photo.height*scale - top
+    busy = edge_map(canvas)
     def place(block):
         margin = block.info['margin']
         width, height = block.size
         x = round(min(max(ax - width/2,STORY_SAFE[0]-margin),STORY_SAFE[2]-width+margin))
-        y = round(min(max(ay-height/2,STORY_SAFE[1]-margin),STORY_SAFE[3]-height+margin))
-        return x, y
+        return x, emptiest_top(busy,x+margin,width-2*margin,height-2*margin,STORY_SAFE[1],STORY_SAFE[3]) - margin
     block, box = story_block(overlay,False)
     x, y = place(block)
     if is_light(canvas.crop((x+box[0],y+box[1],x+box[2],y+box[3]))):
-        block = story_block(overlay,True)[0]
+        block, box = story_block(overlay,True)
         x, y = place(block)
     margin = block.info['margin']
     width, height = block.size
+    backdrop(canvas,(x+box[0]-24,y+box[1]-12,x+box[2]+24,y+box[3]+12))
     canvas.alpha_composite(block,(x,y))
     profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
     canvas.convert('RGB').save(destination,'JPEG',quality=90,icc_profile=profile)
@@ -424,7 +457,18 @@ def compose_story(source, destination, overlay):
     return x+margin, y+margin, x+width-margin, y+height-margin
 
 
-def transcribe(bucket, store, path, source_id, config):
+def speech_hints(*texts):
+    words = []
+    for text in (re.sub(r'https?://\S+|www\.\S+','',t) for t in texts if isinstance(t,str)):
+        for found in re.finditer(r"[A-Za-zА-Яа-яЁё0-9][\w'’-]{2,}",text):
+            word = found.group()
+            starts = not re.search(r'[^\s"«(]',text[:found.start()]) or re.search(r'[.!?…\n]["»)]*\s*$',text[:found.start()])
+            if (re.search(r'[A-Za-z]',word) or word[0].isupper() and not starts) and word.lower() not in (w.lower() for w in words):
+                words.append(word)
+    return words[:100]
+
+
+def transcribe(bucket, store, path, source_id, config, hints=()):
     from google.cloud import speech
     info = config['prepared_audio'][path.name]
     if not info['audio']:
@@ -435,8 +479,9 @@ def transcribe(bucket, store, path, source_id, config):
     language = config.get('speech_language','ru-RU')
     if language not in ('ru-RU','en-US'):
         raise Error('Unsupported speech language')
+    phrases = speech_hints(*hints,*config.get('speech_phrases',()))
     client = speech.SpeechClient()
-    operation = client.long_running_recognize(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.FLAC,sample_rate_hertz=16000,language_code=language,alternative_language_codes=['en-US' if language == 'ru-RU' else 'ru-RU'],enable_word_time_offsets=True,enable_automatic_punctuation=True),audio=speech.RecognitionAudio(uri='gs://' + bucket.name + '/' + name))
+    operation = client.long_running_recognize(config=speech.RecognitionConfig(encoding=speech.RecognitionConfig.AudioEncoding.FLAC,sample_rate_hertz=16000,language_code=language,alternative_language_codes=['en-US' if language == 'ru-RU' else 'ru-RU'],enable_word_time_offsets=True,enable_automatic_punctuation=True,speech_contexts=[speech.SpeechContext(phrases=phrases,boost=15.0)] if phrases else []),audio=speech.RecognitionAudio(uri='gs://' + bucket.name + '/' + name))
     response = operation.result(timeout=240)
     text, words = [], []
     for result in response.results:
