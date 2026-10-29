@@ -3,6 +3,13 @@
     "public": ".",
     "cleanUrls": true,
     "trailingSlash": false,
+    "redirects": [
+      {
+        "source": "/contact",
+        "destination": "/projects/contact",
+        "type": 301
+      }
+    ],
     "ignore": [
       "firebase.json",
       "firestore.rules",

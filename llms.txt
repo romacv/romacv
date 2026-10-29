@@ -17,7 +17,7 @@
 
 ## Contact
 - Website: https://www.resrom.com/#contact
-- Contact form: https://resrom.com/contact
+- Contact form: https://resrom.com/projects/contact
 - Telegram: https://t.me/romacv
 - LinkedIn: https://linkedin.com/in/romanres
 
