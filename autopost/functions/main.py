@@ -1600,7 +1600,7 @@ def start_final(config,store,bucket,saved):
     item = store.get('items/' + saved['item'])
     draft = store.get('renders/' + item['render'])
     identifier = secrets.token_hex(16)
-    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'prefix':'media/' + slug + '/' + identifier,'state':'queued','created':time.time(),'loader':loader_for(config,saved.get('status_message'))}
+    job = {**{key:draft[key] for key in ('item','revision','sources','bucket','project','worker_url','service_account')},'id':identifier,'mode':'final','edl':saved['basis']['edl'],'title_y':draft.get('outputs',{}).get('title_y',{}),'prefix':'media/' + slug + '/' + identifier,'state':'queued','created':time.time(),'loader':loader_for(config,saved.get('status_message'))}
     store.put('renders/' + identifier,job)
     store.change('specs/' + slug,lambda value:value.update(state='rendering',final_render=identifier,started_at=time.time()))
     track(store.step,saved['item'],'final',{})
