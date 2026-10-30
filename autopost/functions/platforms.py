@@ -132,11 +132,38 @@ def when(spec):
         raise Error('at must be an ISO timestamp with timezone') from None
 
 
-def text_for(spec, target):
+def copy_for(spec, target):
     value = spec.get('copy', {}).get(target, '')
     if not isinstance(value, str):
         raise Error('Each copy value must be a plain string: ' + target)
     return value
+
+
+def text_for(spec, target):
+    value = copy_for(spec, target)
+    place = spec.get('place')
+    if target == 'tg-channel' and place:
+        media = spec.get('media', {})
+        line = value + '\n\n' + place['name'] + ': ' + place['maps_url']
+        if units(line) <= (1024 if media.get('images') or media.get('video') or media.get('clips') else 4096):
+            return line
+    return value
+
+
+def closing_question(text, owner=''):
+    lines = [x.strip() for x in text.strip().splitlines() if x.strip()]
+    while lines and re.fullmatch(r'(?:#\w+\s*)+', lines[-1]):
+        lines.pop()
+    if not lines:
+        return False
+    last = lines[-1]
+    stripped = last
+    while True:
+        shorter = EMOJI.sub('', stripped).rstrip(' \t»"\')]”’')
+        if shorter == stripped:
+            break
+        stripped = shorter
+    return stripped.endswith('?') and last not in owner and stripped not in owner
 
 
 def units(text):
@@ -343,10 +370,32 @@ def link_area(url, y=73):
     return {'position': {'x_percentage': 50, 'y_percentage': y, 'width_percentage': 83, 'height_percentage': 7, 'rotation_angle': 0, 'corner_radius_percentage': 4}, 'type': {'type': 'link', 'url': url}}
 
 
+def location_area(spec, sent=()):
+    place = spec.get('place')
+    if not place:
+        return None
+    taken = [(a['position']['y_percentage'] - a['position']['height_percentage'] / 2, a['position']['y_percentage'] + a['position']['height_percentage'] / 2) for a in sent]
+    box = ((place.get('boxes') or {}).get('tg-story') or {})
+    foot = box.get('foot')
+    pill = box.get('pill')
+    if pill and any(pill[1] / 19.2 < high and pill[3] / 19.2 > low for low, high in taken):
+        pill = None
+    if not pill:
+        blocked = taken + ([(foot[1] / 19.2, foot[3] / 19.2)] if foot else [])
+        top = next((y for y in (20, 33, 46, 59) if all(y + 3 < low or y - 3 > high for low, high in blocked)), None)
+        if top is None:
+            return None
+        pill = (270, (top - 3) * 19.2, 810, (top + 3) * 19.2)
+    left, up, right, down = pill
+    return {'position': {'x_percentage': round((left + right) / 21.6, 2), 'y_percentage': round((up + down) / 38.4, 2), 'width_percentage': round((right - left) / 10.8, 2), 'height_percentage': round((down - up) / 19.2, 2), 'rotation_angle': 0, 'corner_radius_percentage': 50}, 'type': {'type': 'location', 'latitude': place['lat'], 'longitude': place['lng']}}
+
+
 def story_areas(spec, state, text):
     link = channel_post_url(spec, state)
     brand = story_handles(text)[:1]
-    return ([link_area(link)] if link else []) + [link_area('https://www.instagram.com/' + handle, 83) for handle in brand]
+    sent = ([link_area(link)] if link else []) + [link_area('https://www.instagram.com/' + handle, 83) for handle in brand]
+    spot = location_area(spec, sent)
+    return sent + ([spot] if spot else [])
 
 
 def story_handles(text):
@@ -584,11 +633,11 @@ def post_telegram(spec, state, target):
     return f'https://t.me/{prefix}/{result["message_id"]}'
 
 
-def lookup(text, network):
+def lookup(text, network, place=None):
     import geo
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        return pool.submit(contextvars.copy_context().run, geo.location, config(), text, network).result(timeout=8)
+        return pool.submit(contextvars.copy_context().run, geo.location, config(), text, network, place).result(timeout=8)
     except Exception:
         return None
     finally:
@@ -629,15 +678,20 @@ def post_social(spec, state, target, urls, session):
             caption['topic_tag'] = spec['threads_tag']
         if target == 'ig-story':
             caption = {}
-        elif spec.get('location'):
-            found = lookup(spec['location'], 'instagram' if instagram else 'threads')
-            if found:
-                caption['location_id'] = found
         def untag():
             checkpoint(spec, state, target, 'untagged', lambda: True)
         tags = {'user_tags': json.dumps([{'username': handle} for handle in story_handles(text)])} if target == 'ig-story' and story_handles(text) and target + ':untagged' not in state['steps'] else {}
         order = sequence(spec)
         stories = target == 'ig-story' and (bool(spec.get('media', {}).get('sequence')) or len(order) > 1)
+        carousel = len(order) > 1 and target != 'ig-story'
+        if target != 'ig-story' and spec.get('location') and not (instagram and carousel):
+            found = lookup(spec['location'], 'instagram' if instagram else 'threads', spec.get('place'))
+            if found:
+                caption['location_id'] = found
+            elif not instagram and spec.get('place'):
+                linked = text + '\n' + spec['place']['maps_url']
+                if len(linked.encode('utf-8')) <= 500 and len(set(re.findall(r'(?:https?://|www\.)\S+', linked))) <= 5:
+                    caption['text'] = linked
         if spec.get('media', {}).get('clips') and target != 'ig-story' and len(order) < 2:
             raise Error('Для карусели нужно минимум два вложения')
         if stories:
@@ -660,7 +714,7 @@ def post_social(spec, state, target, urls, session):
                 media_ids.append(checkpoint(spec, state, target, 'publish' + str(position), lambda story=story: numeric(request('POST', f'{base}/{user}/{publish_edge}', {'creation_id': story}, token=token))))
             media_id = checkpoint(spec, state, target, 'publish', lambda: media_ids)
             container = None
-        elif len(order) > 1 and target != 'ig-story':
+        elif carousel:
             children = []
             for i, (kind, index) in enumerate(order):
                 if kind == 'clip':
@@ -776,11 +830,13 @@ def request(method, url, fields=None, token=None, data=None, headers=None, timeo
         safe = safe_error(failure.reply)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         safe = {'code': 'network', 'description': 'Outcome uncertain; inspect checkpoints'}
-    logging.error(json.dumps({**safe, **({'api': label} if label else {})}))
+    not_modified = status == 400 and 'message is not modified' in safe.get('description', '').lower()
+    if not not_modified:
+        logging.error(json.dumps({**safe, **({'api': label} if label else {})}))
     failure = Error('API failure: ' + str(safe['code']), status_code=status)
     failure.description = safe.get('description', '')
     failure.retry_after = retry
-    failure.not_modified = status == 400 and 'message is not modified' in safe.get('description', '').lower()
+    failure.not_modified = not_modified
     raise failure from None
 
 
@@ -931,5 +987,5 @@ def change_published(target, published, spec, operation, directory, bucket=None)
                 telegram('deleteMessages', {**fields,'message_ids':published['message_ids']})
             else:
                 caption = published['caption']
-                telegram('editMessageCaption' if caption else 'editMessageText', {**fields,'message_id':published['message_ids'][0], 'caption' if caption else 'text':spec['copy'][target]})
+                telegram('editMessageCaption' if caption else 'editMessageText', {**fields,'message_id':published['message_ids'][0], 'caption' if caption else 'text':text_for(spec, target)})
     return 'удалено' if operation == 'delete' else 'исправлено'

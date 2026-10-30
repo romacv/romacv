@@ -398,6 +398,7 @@ def story_block(overlay, dark, text=None, place=True, limit=STORY_WIDTH):
         pill_left = margin + (inner_max-(pill.width-2*pill.info['margin']))//2
         shapes.append((pill_left,margin,pill_left+pill.width-2*pill.info['margin'],margin+pill.height-2*pill.info['margin']))
     foot = (min(r[0] for r in shapes),min(r[1] for r in shapes),max(r[2] for r in shapes),max(r[3] for r in shapes))
+    block.info['pill'] = shapes[1] if len(parts) > 1 else None
     return block, box, foot
 
 
@@ -524,7 +525,7 @@ def story_variants(overlay):
     return [v for i, v in enumerate(variants) if v[0] and v not in variants[:i]]
 
 
-def compose_story(source, destination, overlay):
+def compose_story(source, destination, overlay, found=None):
     from PIL import Image, ImageOps, ImageCms
     source, destination = Path(source), Path(destination)
     with Image.open(source) as original:
@@ -558,6 +559,9 @@ def compose_story(source, destination, overlay):
     canvas.convert('RGB').save(destination,'JPEG',quality=90,icc_profile=profile)
     if destination.stat().st_size > 8_000_000:
         raise Error('Story image exceeds 8 MB')
+    if found is not None:
+        pill = block.info['pill']
+        found.update(pill=[x+pill[0],y+pill[1],x+pill[2],y+pill[3]] if pill else None, foot=[x+foot[0],y+foot[1],x+foot[2],y+foot[3]])
     return x+foot[0], y+foot[1], x+foot[2], y+foot[3]
 
 

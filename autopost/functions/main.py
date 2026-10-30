@@ -960,11 +960,13 @@ def watch_agents(stages, live, stop):
     threading.Thread(target=contextvars.copy_context().run,args=(beat,),daemon=True).start()
 
 
-def places_text(value):
-    rows = []
+def places_text(value, found=None, query=None):
+    rows = ['• ' + found['name'] + ' — ' + found['maps_url']] if found else []
     for place in (value.get('places') if isinstance(value,dict) else None) or []:
         if isinstance(place,dict) and place.get('name'):
             label = ', '.join(str(x) for x in (place['name'],place.get('city')) if x)
+            if found and label.lower() == str(query).lower():
+                continue
             rows.append('• ' + label + ' — ' + (place.get('maps_url') or 'https://www.google.com/maps/search/?api=1&query=' + quote(label)))
     return ('Места:\n' + '\n'.join(rows[:6])) if rows else ''
 
@@ -1069,7 +1071,7 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{} if follow is not None else {'agents':{name:{'status':'waiting'} for name in agents.NAMES}},payload['revision'])
     if follow is None:
         live = agents.Live(store,payload['item'],'draft',payload['revision'])
-        live.found = lambda name,value:name == 'places' and (setattr(stages,'places',places_text(value)),stages('places','Нашёл места',0.6,stages.places,True))
+        live.found = lambda name,value:name == 'places' and (setattr(stages,'found',value),setattr(stages,'places',places_text(value)),stages('places','Нашёл места',0.6,stages.places,True))
         live.start()
         stages('agents','Пишу черновик',0.45,force=True)
         halt = threading.Event()
@@ -1092,13 +1094,15 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
         stages.finish('Ответил.')
         take_answer(config,store,payload,item,spec)
         return
-    shown = (stages.places + '\n\n' if stages.places else '') + draft_text(spec)
+    listed = places_text(getattr(stages,'found',None),spec.get('place'),spec.get('location')) if spec.get('place') else stages.places
+    shown = (listed + '\n\n' if listed else '') + draft_text(spec)
     stages('texts','Готовлю файлы',0.9,shown,True)
     if fresh:
         markup = newp_markup(store,payload['item'])
         tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),reply_markup={'inline_keyboard':([markup] if markup else []) + [cancel_button(payload['item'],payload['revision'])]})
     assets = {}
     composed = {}
+    boxes = {}
     dropped = []
     total = len(spec['targets'])
     for number,target in enumerate(list(spec['targets']),1):
@@ -1114,13 +1118,15 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
                     media.clean_image(path,cleaned)
                     composed[key] = directory/(target + '-overlay-' + str(index) + '.jpg')
                     try:
-                        media.compose_story(cleaned,composed[key],overlay)
+                        media.compose_story(cleaned,composed[key],overlay,boxes.setdefault(key,{}))
                     except media.Error:
                         composed[key] = None
                 if composed[key] is None:
                     dropped.append(target)
                     break
                 path = composed[key]
+                if target == 'tg-story' and spec.get('place'):
+                    spec['place'].setdefault('boxes',{})[target] = boxes[key]
             elif target in ('ig-story','tg-story','ig-post','threads','tg-channel'):
                 converted = directory/(target + '-' + str(index) + '.jpg')
                 media.clean_image(path,converted,target in ('ig-story','tg-story'),target not in ('ig-story','tg-story'))
@@ -1451,6 +1457,7 @@ def plan_montage(config,store,bucket,payload,directory):
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
     allowed = reeled(restrict(config,store,payload,item,False,True))
+    owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):] if item.get('edl') else []
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
@@ -1462,7 +1469,7 @@ def plan_montage(config,store,bucket,payload,directory):
         return {'agents':{'montage':{'action':None,'finished':time.time(),'usd':round(spent[0],6),**line}},'usd':round(spent[0],6)}
     track(store.step,payload['item'],'montage',{'agents':{'montage':{'status':'running','action':'планирую монтаж','started':time.time()}}},payload['revision'])
     try:
-        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(first_draft_skill(payload,item,'an EDL') if follow is None and value == {'action':'skills'} else drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
+        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(first_draft_skill(payload,item,'an EDL') if follow is None and value == {'action':'skills'} else drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources,owner) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
     except Exception as failure:
         track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed','error':(str(failure) if isinstance(failure,(Error,StateError)) else 'Монтаж не удался.')[:300]},payload['revision'])
         raise

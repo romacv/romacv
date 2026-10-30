@@ -20,14 +20,17 @@ class ValidatorTests(unittest.TestCase):
         self.spec['threads_tag'] = 'iosdev'
 
     def valid(self, **extra):
-        return {'slug':'a','kind':'work','at':'2026-01-01T00:00:00+00:00','targets':['threads'],'media':{},'copy':{'threads':'A concrete fact.\nWhat next?'},'approval':{},'threads_tag':'iosdev',**extra}
+        return {'slug':'a','kind':'work','at':'2026-01-01T00:00:00+00:00','targets':['threads'],'media':{},'copy':{'threads':'A concrete fact.\nNext comes the build.'},'approval':{},'threads_tag':'iosdev',**extra}
 
     def test_example_threads_and_personal_rules(self):
         self.assertEqual(drafter.validate(self.spec),[])
         self.spec['copy']['threads'] = 'Я'*251 + '?'
         self.assertTrue(any('exceeds' in e for e in drafter.validate(self.spec)))
         self.spec['copy']['threads'] = 'A fact.\n#one #two'
-        self.assertTrue(any('question' in e for e in drafter.validate(self.spec)))
+        self.assertTrue(any('hashtag' in e for e in drafter.validate(self.spec)))
+        self.spec['copy']['threads'] = 'A fact.\nWould you pair breakfast with a sauna?'
+        self.assertIn('threads: no closing question to readers unless Roman wrote it',drafter.validate(self.spec))
+        self.assertEqual(drafter.validate(self.spec,owner='Would you pair breakfast with a sauna?'),[])
         self.spec['targets'] = ['blog']
         self.assertTrue(any('supported targets' in e for e in drafter.validate(self.spec)))
 

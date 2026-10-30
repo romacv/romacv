@@ -1,6 +1,10 @@
 import copy
 import threading
 
+import geo
+
+geo.fetch = lambda text: None
+
 
 class Snapshot:
     def __init__(self, path, value):

@@ -22,6 +22,11 @@ class MontageTests(unittest.TestCase):
         self.edl['copy'].pop('threads')
         self.assertNotIn('threads needs threads_tag',montage.validate(self.edl,self.sources))
 
+    def test_closing_question_to_readers_is_rejected(self):
+        self.edl['copy']['threads'] += '\nВы так делаете?\n#bali'
+        self.assertIn('threads: no closing question to readers unless Roman wrote it',montage.validate(self.edl,self.sources))
+        self.assertNotIn('threads: no closing question to readers unless Roman wrote it',montage.validate(self.edl,self.sources,'Вы так делаете?'))
+
     def test_invalid_source_times(self):
         self.assertEqual(montage.validate(self.edl,self.sources),[])
         for start,end in [(-1,3),(1,1),(0,99),(False,2),(0,float('nan')),(0,float('inf'))]:

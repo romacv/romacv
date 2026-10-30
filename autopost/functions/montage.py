@@ -1,14 +1,14 @@
 import math
 import re
 from drafter import language_errors
-from platforms import EMOJI, BANNED, units
+from platforms import EMOJI, BANNED, units, closing_question
 
 
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def validate(edl, sources):
+def validate(edl, sources, owner=''):
     errors = []
     if not isinstance(edl, dict) or not isinstance(sources, dict):
         return ['EDL and sources must be objects']
@@ -107,6 +107,8 @@ def validate(edl, sources):
             length = len(text.encode()) if target == 'threads' else units(text) if target.startswith('tg-') else len(text)
             if length > limit or EMOJI.search(text) or any(x in text.lower() for x in BANNED):
                 errors.append(target + ': invalid copy')
+            if closing_question(text, owner):
+                errors.append(target + ': no closing question to readers unless Roman wrote it')
             tags = re.findall(r'(?<!\w)#\w+',text)
             if any(tag.lower() in ('#fyp','#viral') for tag in tags):
                 errors.append('Generic hashtags forbidden')
@@ -114,8 +116,8 @@ def validate(edl, sources):
                 errors.append('Reel needs 3–5 specific hashtags')
             if target == 'threads':
                 first = text.strip().splitlines()[0]
-                if len(tags) > 1 or not text.rstrip().endswith('?') or first.endswith('?') or first.startswith(('#','http','@')):
-                    errors.append('Threads requires fact first and question last')
+                if len(tags) > 1 or first.endswith('?') or first.startswith(('#','http','@')):
+                    errors.append('Threads requires a fact first and at most one hashtag')
                 if len(set(re.findall(r'(?:https?://|www\.)\S+',text))) > 5:
                     errors.append('Threads allows at most five links')
     return errors

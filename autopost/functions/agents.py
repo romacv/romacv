@@ -366,6 +366,9 @@ def merge(item, source, places, media, copy, clips, chosen, owner):
     where = geo.query(places)
     if where:
         spec['location'] = where[:120]
+        found = geo.place(spec['location']) or (geo.place(where.rsplit(',', 1)[1]) if ',' in where else None)
+        if found:
+            spec['place'] = found
     stories = [t for t in spec['targets'] if t in ('ig-story', 'tg-story') and isinstance(blocks.get(t), str)]
     if images and stories:
         place = next((p['name'] for p in (places or {}).get('places', []) if isinstance(p, dict) and isinstance(p.get('name'), str) and 1 <= len(p['name']) <= 40 and p.get('confidence') == 'high'), None)

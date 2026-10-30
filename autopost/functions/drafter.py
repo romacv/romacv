@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import skills
-from platforms import Error, slug, when, media_files, image_size, text_for, units, TARGETS, BANNED, EMOJI
+from platforms import Error, slug, when, media_files, image_size, copy_for, closing_question, units, TARGETS, BANNED, EMOJI
 
 HISTORY_BYTES = 200_000
 MODEL = 'claude-sonnet-5-5'
@@ -40,7 +40,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             raise Error('targets must be a nonempty unique list of supported targets')
         if chosen is not None and any(t not in chosen for t in targets):
             errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag', 'location'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag', 'location', 'place'}:
             errors.append('Unknown spec fields')
         if 'notes' in spec:
             note = spec['notes']
@@ -51,6 +51,10 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                 errors.append('notes must be short plain Russian with no technical words, or omitted')
         if 'location' in spec and (not isinstance(spec['location'], str) or not 1 <= len(spec['location']) <= 120):
             errors.append('location must be a string of 1–120 characters')
+        if 'place' in spec:
+            found = spec['place']
+            if not isinstance(found, dict) or not {'name', 'address', 'lat', 'lng', 'maps_url'} <= set(found) <= {'name', 'address', 'lat', 'lng', 'maps_url', 'boxes'} or not isinstance(found['name'], str) or not 1 <= len(found['name']) <= 120 or not isinstance(found['address'], str) or not isinstance(found['maps_url'], str) or not found['maps_url'].startswith('https://') or len(found['maps_url']) > 500 or not all(isinstance(found[k], (int, float)) and not isinstance(found[k], bool) for k in ('lat', 'lng')) or not -90 <= found['lat'] <= 90 or not -180 <= found['lng'] <= 180 or not isinstance(found.get('boxes', {}), dict):
+                errors.append('place must hold name, address, lat, lng and an https maps_url')
         tag = spec.get('threads_tag')
         if 'threads' in targets and tag is None and not copy_only:
             errors.append('threads needs threads_tag')
@@ -123,7 +127,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                     if path.stat().st_size > (50_000_000 if name == 'video' else 10_000_000):
                         errors.append(name + ': exceeds Telegram upload limit')
         for t in targets:
-            text = text_for(spec, t)
+            text = copy_for(spec, t)
             if not text.strip():
                 errors.append(t + ': copy is required')
             limit = 500 if t == 'threads' else 2200 if t.startswith('ig-') else 2048 if t == 'tg-story' else 1024 if images or media.get('video') else 4096
@@ -138,13 +142,15 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             if t in ('ig-post', 'ig-reel') and not 3 <= len(tags) <= 5:
                 errors.append(t + ': use 3–5 specific hashtags')
             if t == 'threads':
-                if len(tags) > 1 or not text.rstrip().endswith('?'):
-                    errors.append('threads: at most one hashtag and end with a question')
+                if len(tags) > 1:
+                    errors.append('threads: at most one hashtag')
                 first = text.strip().splitlines()[0] if text.strip() else ''
                 if first.startswith(('#', 'http', '@')) or first.endswith('?'):
                     errors.append('threads: first line must be a situation or fact')
             if foreign_emoji(text, owner):
                 errors.append(t + ': no emoji unless Roman wrote it')
+            if closing_question(text, owner):
+                errors.append(t + ': no closing question to readers unless Roman wrote it')
             if t == 'threads' and len(set(re.findall(r'(?:https?://|www\.)\S+', text))) > 5:
                 errors.append('threads: at most 5 unique links')
         if spec.get('kind') == 'personal' and 'tg-channel' in targets and 'threads' in targets and (spec.get('copy') or {}).get('tg-channel') != (spec.get('copy') or {}).get('threads'):

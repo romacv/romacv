@@ -11,7 +11,7 @@
   },
   "copy": {
     "tg-channel": "Как подготовить заметку о релизе: начинаю с видимого изменения, собираю публичные подтверждения и пишу статью до публикации. Это пример процесса, а не объявление о новом релизе.",
-    "threads": "A release checklist starts with the change someone can actually see.\nI draft the article before preparing the post and review the exact files before publishing.\nWhat do you check before sharing a release?"
+    "threads": "A release checklist starts with the change someone can actually see.\nI draft the article before preparing the post and review the exact files before publishing.\nThe last check is always the exact files."
   },
   "threads_tag": "iosdev",
   "approval": {}

@@ -14,6 +14,7 @@ FUNCTIONS = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(FUNCTIONS))
 import agents
 import drafter
+import geo
 import platforms as p
 from fake_firestore import FakeFirestore
 from store import Store
@@ -124,8 +125,11 @@ class AgentTests(unittest.TestCase):
 
     def test_merge_produces_a_spec_the_validator_accepts(self):
         good = copy_reply('Тихое утро в Убуде и кофе с видом на рисовые террасы.')
-        spec, errors = agents.merge(None,self.source,PLACES,MEDIA,good,[],None,'Отличное утро')
+        found = {'name':'Suka Espresso','address':'Ubud','lat':-8.5,'lng':115.26,'maps_url':'https://maps.google.com/?cid=1'}
+        with patch.object(geo,'place',return_value=found):
+            spec, errors = agents.merge(None,self.source,PLACES,MEDIA,good,[],None,'Отличное утро')
         self.assertEqual(errors,{})
+        self.assertEqual(spec['place'],found)
         self.assertEqual(spec['media']['images'],[{'path':'clean-1.jpg','alt':MEDIA['images'][0]['alt']}])
         bad = copy_reply('Тихое утро в Убуде. Link in bio.')
         fake = FakeAnthropic({'places':[PLACES],'media':[MEDIA],'copy':[bad,good]})
