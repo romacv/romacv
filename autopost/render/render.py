@@ -490,8 +490,10 @@ def clip_arguments(source, fmt, output):
         graph = 'scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,setsar=1,fps=30'
     elif fmt == 'channel':
         graph = 'scale=1280:1280:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=30'
+    elif fmt == 'story-tg':
+        graph = clip_filters('blur',False) + ',scale=720:1280,format=yuv420p'
     else:
-        graph = clip_filters('blur',False) + (',scale=720:1280' if fmt == 'story-tg' else '')
+        graph = clip_filters('blur',False)
     codec = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if fmt == 'story-tg' else ['-c:v','libx264','-preset','fast','-crf','22','-maxrate','5M','-bufsize','10M','-g','30']
     audio = bool(json.loads(subprocess.run(['ffprobe','-v','error','-select_streams','a','-show_entries','stream=index','-of','json',str(source)],capture_output=True,check=True).stdout).get('streams'))
     silence = [] if audio else ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']

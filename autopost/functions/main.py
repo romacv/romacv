@@ -1500,8 +1500,10 @@ def prepared(config,store,bucket,payload):
         if job.get('target') == 'edit':
             item.setdefault('edit_prepared',{}).setdefault('audio',{}).update(job['outputs']['audio'])
             item.update(status='queued',updated=time.time())
+            item.pop('stop_why', None)
         else:
             item.update(prepared=job['outputs'],status='queued',updated=time.time())
+            item.pop('stop_why', None)
         store.put('items/' + payload['item'],item,tx)
         store.job(tx,{'item':payload['item'],'revision':payload['revision'],'step':'montage' if item.get('montage') else 'draft'},'prepared-' + payload['render'])
     store.atomic(finish)
@@ -2492,7 +2494,7 @@ def stop_stale(config,store):
         def stop(value):
             if value.get('status') not in ('queued','drafting') or bool(value.get('waiting_upload')) != bool(item.get('waiting_upload')) or not stale(value,now,key in busy):
                 return False
-            value.update(status='failed',stalled=True,failed_at=now,**({'upload_timeout':True} if value.get('waiting_upload') else {}))
+            value.update(status='failed',stalled=True,failed_at=now,stop_why='upload' if value.get('waiting_upload') else 'stalled',**({'upload_timeout':True} if value.get('waiting_upload') else {}))
             return True
         stopped = store.change('items/' + key,stop) if item.get('status') in ('queued','drafting') else False
         held = item.get('status') in ('queued','drafting') and not stopped
@@ -2500,7 +2502,7 @@ def stop_stale(config,store):
         for slug,spec in drafting:
             if spec['item'] == key and not held and (stopped or now - (spec.get('updated') or since) > limit):
                 if not stopped and item.get('status') != 'failed' and newest.get(key) == 'drafting':
-                    store.change('items/' + key,lambda value:value.update(stalled=True))
+                    store.change('items/' + key,lambda value:value.update(stalled=True,stop_why='stalled'))
                 store.change('specs/' + slug,lambda value:value.update(state='failed') if value.get('state') == 'drafting' else None)
     for snapshot in store.db.collection('items').where('status','==','collecting').stream():
         item = snapshot.to_dict()
