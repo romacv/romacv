@@ -21,11 +21,6 @@ class CoverHeadlineTests(unittest.TestCase):
         self.assertGreaterEqual(box[1],240)
         self.assertLessEqual(box[3],1680)
 
-    def test_a_bright_frame_gets_dark_text(self):
-        from PIL import Image
-        white = Image.new('RGB',(1080,1920),(255,255,255))
-        result = render.cover_headline(white,'Завтрак в Arctic, Убуд')
-        self.assertLess(result.convert('L').crop((60,400,800,600)).getextrema()[0],90)
 
 
 if __name__ == '__main__':

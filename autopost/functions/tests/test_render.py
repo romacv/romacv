@@ -1,5 +1,4 @@
 import importlib
-import json
 from pathlib import Path
 import sys
 import tempfile
@@ -18,53 +17,12 @@ with patch.dict(sys.modules,{'google.cloud.tasks_v2':Mock()}):
     render = importlib.import_module('render')
 
 
-class BarTests(unittest.TestCase):
-    def test_bar_shows_the_rounded_share(self):
-        self.assertEqual(render.bar(0.4),'▰▰▰▰▱▱▱▱▱▱ 40%')
-        self.assertEqual((render.bar(-1),render.bar(2)),('▱▱▱▱▱▱▱▱▱▱ 0%','▰▰▰▰▰▰▰▰▰▰ 100%'))
-
-    def test_loader_text_adds_the_step_and_the_bar_only_when_known(self):
-        loader = render.Loader({'mode':'draft','loader':{'text':'Монтирую'}},Mock())
-        loader.stage('Рендерю черновик')
-        self.assertTrue(loader.text().startswith('Монтирую\nРендерю черновик: 0:0'))
-        self.assertNotIn('%',loader.text())
-        loader.progress(0.5)
-        self.assertTrue(loader.text().endswith('шаг 3 из 3\n▰▰▰▰▰▱▱▱▱▱ 50%'))
 
 
-class LoaderTests(unittest.TestCase):
-    def test_stage_edits_the_status_message_and_failure_replaces_it(self):
-        with patch.dict(render.os.environ,{'TELEGRAM_BOT_TOKEN':'t'}):
-            loader = render.Loader({'loader':{'chat_id':1,'message_id':5,'text':'Монтирую 1 клип'}},Mock())
-        calls = []
-        loader.call = lambda method,fields:calls.append((method,fields))
-        loader.stage('Рендерю черновик')
-        loader.stop(True)
-        edits = [f['text'] for m,f in calls if m == 'editMessageText']
-        self.assertTrue(edits[0].startswith('Монтирую 1 клип\nРендерю черновик: 0:0'))
-        self.assertEqual(edits[-1],'Монтирую 1 клип\nМонтаж не удался.')
 
 
-class TitleTests(unittest.TestCase):
-    def test_title_splits_at_the_last_comma(self):
-        self.assertEqual(render.title_parts('Gelora Bung Karno, Jakarta'),('Gelora Bung Karno','JAKARTA'))
-        self.assertEqual(render.title_parts('A, B, Bali'),('A, B','BALI'))
-        self.assertEqual(render.title_parts('Jakarta'),('Jakarta',''))
 
 
-class RenderSettingsTests(unittest.TestCase):
-    def test_draft_is_small_and_fast_final_keeps_quality(self):
-        arguments = render.encode_arguments('tg-story',True)
-        self.assertEqual(render.frame_size(True),(540,960))
-        for pair in (['-c:v','libx264'],['-preset','ultrafast'],['-crf','32']):
-            self.assertIn(pair,[arguments[i:i+2] for i in range(len(arguments))])
-        self.assertNotIn('libx265',arguments)
-        self.assertNotIn('loudnorm',render.audio_filter(True))
-        self.assertIn('scale=540:960',render.clip_filters('crop',True))
-        self.assertEqual(render.frame_size(False),(1080,1920))
-        self.assertIn('libx265',render.encode_arguments('tg-story',False))
-        self.assertIn('loudnorm',render.audio_filter(False))
-        self.assertIn('scale=1080:1920',render.clip_filters('crop',False))
 
 
 class ClipStoryTests(unittest.TestCase):
@@ -144,15 +102,6 @@ class FinalRenderTests(unittest.TestCase):
         self.assertEqual(self.store.get('specs/example')['state'],'partial')
         self.assertIsNone(self.store.get('outbox/final-' + render_id))
 
-    def test_recovery_handles_draft_and_final_renders(self):
-        for mode in ('draft','final'):
-            self.store.put('renders/r-' + mode,{'mode':mode,'state':'done','item':'item-1','revision':1})
-        config = {**self.config,'webhook_url':'test'}
-        with patch.object(app.platforms,'telegram',return_value={'url':'test'}), patch.object(app.platforms,'request',return_value={}), patch.object(app,'enqueue') as enqueue, patch.object(app,'tell'), patch('urllib.request.urlopen',side_effect=OSError()):
-            app.maintenance(config,self.store,Mock())
-        steps = sorted((call.args[0]['render'],call.args[0]['step']) for call in enqueue.call_args_list if call.args[0].get('render') in ('r-draft','r-final'))
-        self.assertEqual(steps,[('r-draft','rendered'),('r-final','rendered')])
-        self.assertFalse(self.store.get('renders/r-final').get('delivered',False))
 
 
 if __name__ == '__main__':

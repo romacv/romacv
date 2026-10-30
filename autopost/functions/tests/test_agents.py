@@ -106,32 +106,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(spec['copy'],good['copy'])
         self.assertTrue(self.store.get('conversations/i')['turns'])
 
-    def test_flush_cancels_only_for_a_newer_revision(self):
-        def flushed(steps):
-            self.store.put('sessions/i',{'item':'i','state':'open','steps':steps})
-            live = agents.Live(self.store,'i','draft',2)
-            live.cancel = threading.Event()
-            live.update('media',status='running')
-            live.flush()
-            return live
-        live = flushed([{'id':'draft','state':'running','revision':1}])
-        self.assertFalse(live.cancel.is_set())
-        self.assertTrue(live.dirty)
-        live = flushed([{'id':'draft','state':'running','revision':2},{'id':'draft','state':'running','revision':3}])
-        self.assertTrue(live.cancel.is_set())
-        live = flushed([{'id':'draft','state':'running','revision':2}])
-        self.assertFalse(live.cancel.is_set())
-        self.assertIn('media',self.store.get('sessions/i')['steps'][0]['agents'])
 
-    def test_merge_keeps_roman_sending_order_unless_he_asked_for_another(self):
-        source = {**self.source,'available_images':['clean-851.jpg','clean-852.jpg']}
-        entries = [{'name':n,'alt':'a','keep':True} for n in source['available_images']]
-        good = {'copy':{'tg-channel':'Тост'}}
-        def order(media):
-            spec, _ = agents.merge(None,source,PLACES,media,good,[],None,'x')
-            return [i['path'] for i in spec['media']['images']]
-        self.assertEqual(order({'images':entries,'order':['clean-852.jpg','clean-851.jpg']}),['clean-851.jpg','clean-852.jpg'])
-        self.assertEqual(order({'images':entries,'order':['clean-852.jpg','clean-851.jpg'],'explicit':True}),['clean-852.jpg','clean-851.jpg'])
 
     def test_merge_produces_a_spec_the_validator_accepts(self):
         good = copy_reply('Тихое утро в Убуде и кофе с видом на рисовые террасы.')

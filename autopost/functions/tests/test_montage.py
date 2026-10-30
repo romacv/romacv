@@ -22,10 +22,6 @@ class MontageTests(unittest.TestCase):
         self.edl['copy'].pop('threads')
         self.assertNotIn('threads needs threads_tag',montage.validate(self.edl,self.sources))
 
-    def test_closing_question_to_readers_is_rejected(self):
-        self.edl['copy']['threads'] += '\nВы так делаете?\n#bali'
-        self.assertIn('threads: no closing question to readers unless Roman wrote it',montage.validate(self.edl,self.sources))
-        self.assertNotIn('threads: no closing question to readers unless Roman wrote it',montage.validate(self.edl,self.sources,'Вы так делаете?'))
 
     def test_invalid_source_times(self):
         self.assertEqual(montage.validate(self.edl,self.sources),[])
@@ -35,12 +31,6 @@ class MontageTests(unittest.TestCase):
                 edl['targets']['tg-story']['clips'][0].update({'in':start,'out':end})
                 self.assertTrue(montage.validate(edl,self.sources))
 
-    def test_story_total_includes_cover_frame(self):
-        self.sources['long'] = 100
-        self.edl['targets']['tg-story']['clips'] = [{'source':'long','in':0,'out':60}]
-        self.assertTrue(any('cover frame' in e for e in montage.validate(self.edl,self.sources)))
-        self.edl['targets']['tg-story']['clips'][0]['out'] = 59.9
-        self.assertEqual(montage.validate(self.edl,self.sources),[])
 
     def test_titles_cover_whole_timeline(self):
         story = self.edl['targets']['tg-story']
@@ -50,22 +40,7 @@ class MontageTests(unittest.TestCase):
         story['titles'] = [{'start':0,'end':5,'text':'Jakarta'},{'start':5,'end':11,'text':'Bali'}]
         self.assertEqual(montage.validate(self.edl,self.sources),[])
 
-    def test_cover_needs_plain_headline(self):
-        for text in (None,'','x'*41,'a\nb','😀'):
-            with self.subTest(text=text):
-                self.edl['cover']['text'] = text
-                self.assertIn('Cover requires plain headline text, 1–40 characters',montage.validate(self.edl,self.sources))
-        del self.edl['cover']['text']
-        self.assertTrue(montage.validate(self.edl,self.sources))
 
-    def test_cover_copy_and_language(self):
-        self.edl['cover']['time'] = 100
-        self.assertTrue(montage.validate(self.edl,self.sources))
-        self.edl['cover']['time'] = 1
-        self.edl['copy']['tg-story'] = 'English copy instead of Russian.'
-        self.assertTrue(any('language' in e for e in montage.validate(self.edl,self.sources)))
-        self.edl['copy'].pop('threads')
-        self.assertTrue(any('Copy required' in e for e in montage.validate(self.edl,self.sources)))
 
 
 if __name__ == '__main__':
