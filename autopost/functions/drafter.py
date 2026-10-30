@@ -1,4 +1,5 @@
 import base64
+from urllib.parse import urlsplit
 import json
 import logging
 import re
@@ -23,6 +24,15 @@ NOTE_TERMS = re.compile(r'schema|render|json|overlay|field|slug|api\b|\b(?:ig|tg
 
 def foreign_emoji(text, owner):
     return [e for e in EMOJI.findall(text) if e not in owner]
+
+
+def map_link(url):
+    if not isinstance(url, str) or len(url) > 500 or re.search(r'[\x00-\x20\x7f]', url):
+        return False
+    if re.fullmatch(r'https://maps\.google\.com/\?cid=[0-9]+', url):
+        return True
+    parts = urlsplit(url)
+    return parts.scheme == 'https' and parts.hostname in ('maps.google.com', 'www.google.com') and parts.path.startswith('/maps') and parts.port is None and not parts.username
 
 
 def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=False):
@@ -53,7 +63,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             errors.append('location must be a string of 1–120 characters')
         if 'place' in spec:
             found = spec['place']
-            if not isinstance(found, dict) or not {'name', 'address', 'lat', 'lng', 'maps_url'} <= set(found) <= {'name', 'address', 'lat', 'lng', 'maps_url', 'boxes'} or not isinstance(found['name'], str) or not 1 <= len(found['name']) <= 120 or not isinstance(found['address'], str) or not isinstance(found['maps_url'], str) or not found['maps_url'].startswith('https://') or len(found['maps_url']) > 500 or not all(isinstance(found[k], (int, float)) and not isinstance(found[k], bool) for k in ('lat', 'lng')) or not -90 <= found['lat'] <= 90 or not -180 <= found['lng'] <= 180 or not isinstance(found.get('boxes', {}), dict):
+            if not isinstance(found, dict) or not {'name', 'address', 'lat', 'lng', 'maps_url'} <= set(found) <= {'name', 'address', 'lat', 'lng', 'maps_url', 'boxes'} or not isinstance(found['name'], str) or not 1 <= len(found['name']) <= 120 or not isinstance(found['address'], str) or not isinstance(found['maps_url'], str) or not map_link(found['maps_url']) or re.search(r'[\x00-\x1f\x7f]|https?:|www\.', found['name']) or not all(isinstance(found[k], (int, float)) and not isinstance(found[k], bool) for k in ('lat', 'lng')) or not -90 <= found['lat'] <= 90 or not -180 <= found['lng'] <= 180 or not isinstance(found.get('boxes', {}), dict):
                 errors.append('place must hold name, address, lat, lng and an https maps_url')
         tag = spec.get('threads_tag')
         if 'threads' in targets and tag is None and not copy_only:

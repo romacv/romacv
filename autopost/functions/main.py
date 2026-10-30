@@ -1086,6 +1086,8 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
     else:
         stages('agents','Правлю черновик',0.45,force=True)
         spec = drafter.ask(config,source,images + shots,validate,thread=(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow=follow,rec=lambda usage:store.record_usage(payload['item'],'edit',usage))
+        if not drafter.answered(spec):
+            agents.own_place(spec,store.get('specs/' + item['slug']))
     if superseded(store,payload):
         return
     stages.finish(None)

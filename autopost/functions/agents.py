@@ -1,4 +1,5 @@
 import contextvars
+import copy
 import json
 import logging
 import re
@@ -351,6 +352,19 @@ class Run:
 
 def owner_of(error):
     return 'media' if not TARGET_ERRORS.search(error) and MEDIA_ERRORS.search(error) else 'copy'
+
+
+def own_place(spec, stored):
+    spec.pop('place', None)
+    stored = stored or {}
+    location = spec.get('location')
+    if not location:
+        return spec
+    old = stored.get('place') if stored.get('location') == location else None
+    found = {k: v for k, v in copy.deepcopy(old).items() if k != 'boxes'} if isinstance(old, dict) else geo.place(location)
+    if found:
+        spec['place'] = copy.deepcopy(found)
+    return spec
 
 
 def merge(item, source, places, media, copy, clips, chosen, owner):
