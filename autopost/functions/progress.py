@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, trimmed, stale
+from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, trimmed, clock, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -111,11 +111,12 @@ def session_title(item, spec, session, zone):
     title = title_of(item, spec)
     if title:
         return title
-    line = next((trimmed(row.get('text')) for row in session.get('dialog') or [] if row.get('who') == 'owner' and (row.get('text') or '').strip() and not row['text'].strip().startswith('/')), '')
+    line = next((trimmed(scrub(row.get('text'))) for row in session.get('dialog') or [] if row.get('who') == 'owner' and (row.get('text') or '').strip() and not row['text'].strip().startswith('/')), '')
     if line:
         return line
     opened = session.get('opened')
-    return 'Пост от ' + datetime.fromtimestamp(opened, ZoneInfo(zone)).strftime('%H:%M') if opened else ''
+    at = clock(opened, zone) if opened else None
+    return 'Пост от ' + at if at else ''
 
 
 def public(url):

@@ -278,11 +278,12 @@ class StateError(Exception):
 def open_hint(item, key):
     if not item or item.get('status') not in ('queued', 'drafting', 'failed') or item.get('revision') is None:
         return POST_HINT
-    values = [{'text':label, 'callback_data':verb + ':' + key + ':' + str(item['revision'])} for verb, label in (('cdraft', 'Отменить'), ('again', 'Повторить'))]
-    if any(len(x['callback_data'].encode()) > 64 for x in values):
+    failed = item['status'] == 'failed'
+    markup = keys([('Повторить', 'again:' + key + ':' + str(item['revision']))] if failed else [('Отменить черновик', 'cdraft:' + key + ':' + str(item['revision']))])
+    if not markup:
         return POST_HINT
-    line = 'Пост' + titled(item) + ' уже открыт: ' + ('остановлен' if item['status'] == 'failed' else pin_stage(item, None)) + '. Новый пост: /post.'
-    return {'item':key, 'revision':item['revision'], 'text':line, 'reply_markup':{'inline_keyboard':[values]}}
+    line = 'Пост' + titled(item) + ' уже открыт: ' + ('остановлен' if failed else pin_stage(item, None)) + '. Новый пост: /post.'
+    return {'item':key, 'revision':item['revision'], 'text':line, 'reply_markup':markup}
 
 
 def trimmed(text):
@@ -290,7 +291,8 @@ def trimmed(text):
     if len(text) <= 60:
         return text
     cut = text[:60]
-    return (cut.rsplit(' ', 1)[0] if ' ' in cut else cut) + '…'
+    head = cut.rsplit(' ', 1)[0] if ' ' in cut else ''
+    return (head if len(head) >= 40 else cut) + '…'
 
 
 def snippet(text):

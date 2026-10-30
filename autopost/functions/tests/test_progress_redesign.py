@@ -92,10 +92,11 @@ class StuckAndTitleTests(unittest.TestCase):
         return progress.session_view('item-1', value, item, spec, now, 'Asia/Makassar')
 
     def test_open_session_without_running_step_stalls_from_last_ended_step(self):
-        value = session([step('collect', 'done', 0, 10), step('draft', 'done', 10, 100), step('publish', 'planned', 100)])
-        fresh = self.view(value, 100 + 600, {'status':'previewed', 'messages':[]})
+        value = session([step('collect', 'done', 0, 100), step('draft', 'planned', 100)])
+        item = {'status':'queued', 'messages':[]}
+        fresh = self.view(value, 100 + 600, item)
         self.assertEqual((fresh['stalled'], fresh['idle']), (False, 600))
-        stuck = self.view(value, 100 + 2000, {'status':'previewed', 'messages':[]})
+        stuck = self.view(value, 100 + 2000, item)
         self.assertEqual((stuck['stalled'], stuck['idle'], stuck['state']), (True, 2000, 'open'))
 
     def test_waiting_upload_does_not_stall_without_running_step(self):
@@ -116,11 +117,18 @@ class StuckAndTitleTests(unittest.TestCase):
         self.assertTrue(cut.endswith('слово…') and len(cut) <= 61)
         self.assertEqual(trimmed('х' * 80), 'х' * 60 + '…')
 
-    def test_message_to_an_open_post_gets_status_and_buttons(self):
-        reply = open_hint({'status':'failed', 'revision':4, 'messages':[{'text':'Кофейня'}]}, 'item-1')
-        self.assertEqual([b['callback_data'] for b in reply['reply_markup']['inline_keyboard'][0]], ['cdraft:item-1:4', 'again:item-1:4'])
-        self.assertIn('уже открыт', reply['text'])
+    def test_message_to_an_open_post_gets_status_and_one_live_button(self):
+        failed = open_hint({'status':'failed', 'revision':4, 'messages':[{'text':'Кофейня'}]}, 'item-1')
+        self.assertEqual([[b['callback_data'] for b in row] for row in failed['reply_markup']['inline_keyboard']], [['again:item-1:4']])
+        self.assertIn('уже открыт', failed['text'])
+        drafting = open_hint({'status':'drafting', 'revision':4, 'messages':[]}, 'item-1')
+        self.assertEqual([[b['callback_data'] for b in row] for row in drafting['reply_markup']['inline_keyboard']], [['cdraft:item-1:4']])
+        self.assertEqual(open_hint({'status':'failed', 'revision':4, 'messages':[]}, 'x' * 70), POST_HINT)
         self.assertEqual(open_hint(None, None), POST_HINT)
+
+    def test_trimmed_cuts_hard_when_the_last_space_is_early(self):
+        text = 'слово ' + 'х' * 70
+        self.assertEqual(trimmed(text), text[:60] + '…')
 
 
 class TickStopTests(unittest.TestCase):
