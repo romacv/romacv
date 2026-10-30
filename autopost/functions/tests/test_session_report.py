@@ -45,10 +45,10 @@ class SessionReportTests(unittest.TestCase):
         self.assertEqual(first, again)
         self.assertIn('reply_json' if isinstance(first, dict) else 'reply', self.store.get('updates/9') or {'reply_json':1, 'reply':1})
 
-    def test_command_word_retry_requeues_a_partial_post(self):
-        self.partial()
-        self.store.put('sessions/inbox', {'current':'item-1'})
-        reply = self.store.intake({'update_id':5,'message':{'message_id':5,'text':' повторить '}}, self.config)
+    def test_retry_button_requeues_a_partial_post(self):
+        saved = self.partial()
+        self.store.put('specs/s1', {**saved, 'hash':'abcdefgh'})
+        reply = self.store.intake({'update_id':5,'callback_query':{'id':'5','data':'retry:s1:abcdefgh'}}, self.config)
         self.assertIsNotNone(reply)
         self.assertEqual(self.store.get('specs/s1')['state'], 'approved')
 
@@ -107,23 +107,11 @@ class SessionReportTests(unittest.TestCase):
         month = [v for k, v in self.store.db.values.items() if k.startswith('usage/anthropic-')][0]
         self.assertAlmostEqual(month['usd'], 0.6)
 
-    def test_typed_cancel_of_a_collecting_post_queues_no_second_message(self):
-        self.store.intake({'update_id':1,'message':{'message_id':1,'entities':[{'type':'bot_command','offset':0,'length':5}],'text':'/post'}}, self.config)
-        self.store.intake({'update_id':2,'message':{'message_id':2,'text':'Отмени'}}, self.config)
-        self.assertFalse([k for k in self.store.db.values if k.startswith('outbox/say-')])
-
-
-    def test_typed_cancel_of_a_queued_post_rejects_the_draft(self):
-        self.store.put('items/item-9', {'status':'queued','messages':[],'slug':'item-9'})
-        self.store.put('sessions/inbox', {'current':'item-9'})
-        reply = self.store.intake({'update_id':5,'message':{'message_id':5,'text':'Отмени'}}, self.config)
-        self.assertEqual(reply, 'Черновик отклонён.')
-
     def test_question_and_fix_while_collecting_never_become_material(self):
         self.store.intake({'update_id':1,'message':{'message_id':1,'entities':[{'type':'bot_command','offset':0,'length':5}],'text':'/post'}}, self.config)
         self.store.classifier = lambda text, context: {'kind':'question', 'value':None}
         reply = self.store.intake({'update_id':2,'message':{'message_id':2,'text':'Что там?'}}, self.config)
-        self.assertIn('собирается', reply)
+        self.assertIn('собирается', reply['text'])
         self.store.classifier = lambda text, context: {'kind':'fix', 'value':'короче'}
         self.store.intake({'update_id':3,'message':{'message_id':3,'text':'сделай короче'}}, self.config)
         item = self.store.get('items/' + self.store.get('sessions/inbox')['collecting'])
@@ -149,12 +137,12 @@ class SessionReportTests(unittest.TestCase):
             self.store.put('specs/s1/checkpoints/' + __import__('hashlib').sha256(b'ig:container').hexdigest(), {'state':'done', 'name':'ig:container', 'value':'c'})
         self.assertEqual(len(made), 2)
 
-    def test_typed_retry_refuses_an_old_partial_post_and_percent_follows_the_state(self):
+    def test_retry_button_refuses_an_old_partial_post_and_percent_follows_the_state(self):
         saved = self.partial()
+        saved['hash'] = 'abcdefgh'
         saved['updated'] = self.now - 49 * 3600
         self.store.db.document('specs/s1').set(saved)
-        self.store.put('sessions/inbox', {'current':'item-1'})
-        reply = self.store.intake({'update_id':7,'message':{'message_id':7,'text':'Повторить'}}, self.config)
+        reply = self.store.intake({'update_id':7,'callback_query':{'id':'7','data':'retry:s1:abcdefgh'}}, self.config)
         self.assertIn('поздно', reply)
         self.assertEqual(progress.percent_of({'steps':[{'state':'done'}]}, 'cancelled'), 0)
         self.assertEqual(progress.percent_of({}, 'published'), 100)

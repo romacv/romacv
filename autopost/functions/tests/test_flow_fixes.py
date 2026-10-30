@@ -23,26 +23,19 @@ class FlowFixTests(unittest.TestCase):
         self.store.put('items/' + item,{'status':'done','revision':1,'messages':[],'slug':slug,'title':fields.pop('title','Пост')})
         self.store.put('specs/' + slug,{'state':'done','item':item,'published_at':fields.pop('at',5),'spec':{'targets':['tg-channel','threads']},'results':{'tg-channel':{'url':'https://t.me/x/1','at':1}},'errors':{},**fields})
 
-    def test_typed_retry_after_token_renewal_resets_the_token_target(self):
-        self.published('album','item-1',state='partial',errors={'threads':'Нужен новый токен Threads.'},attempts={'tg-channel':1,'threads':3},hash='abcdefgh')
-        self.store.put('sessions/inbox',{'current':'album'})
-        self.assertIn('Повторяю',self.say(1,'Повторить'))
-        saved = self.store.get('specs/album')
-        self.assertEqual((saved['state'],saved['attempts']),('approved',{'tg-channel':1}))
-
     def test_retry_button_after_token_renewal_resets_the_token_target(self):
         self.published('album','item-1',state='partial',errors={'threads':'Нужен новый токен Threads.'},attempts={'threads':3},hash='abcdefgh')
         self.store.intake({'update_id':2,'callback_query':{'id':'2','data':'retry:album:abcdefgh'}},self.config)
         saved = self.store.get('specs/album')
         self.assertEqual((saved['state'],saved['attempts']),('approved',{}))
 
-    def test_typed_accept_never_accepts_an_older_post_while_the_current_one_publishes(self):
+    def test_typed_accept_question_never_accepts_an_older_post_while_the_current_one_publishes(self):
         self.published('old','item-old',state='done')
         self.store.put('items/item-1',{'status':'approved','revision':1,'messages':[],'slug':'album','title':'Новый'})
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
         self.store.put('sessions/inbox',{'current':'item-1'})
-        reply = self.say(3,'принять')
-        self.assertIn('Публикую',reply)
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        self.say(3,'принять')
         self.assertNotIn('accepted',self.store.get('specs/old'))
 
     def test_accepted_word_typed_while_collecting_is_material(self):
@@ -105,9 +98,9 @@ class FlowFixTests(unittest.TestCase):
         self.store.put('sessions/inbox',{'current':'item-b'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(8,'Почему завис')
-        self.assertIn('Life in Bali',reply)
-        self.assertIn('Черновик',reply)
-        self.assertIn('https://t.me/x/1',reply)
+        self.assertIn('Life in Bali',reply["text"])
+        self.assertIn('Черновик',reply["text"])
+        self.assertIn('https://t.me/x/1',reply["text"])
 
     def test_old_failed_draft_does_not_hide_the_links_of_the_latest_post(self):
         self.published('uniqlo','item-u',title='Uniqlo',at=100)
@@ -122,7 +115,7 @@ class FlowFixTests(unittest.TestCase):
         self.store.put('items/item-b',{'status':'failed','revision':3,'messages':[],'slug':'item-b','title':'Life in Bali','updated':100})
         self.store.put('sessions/inbox',{'current':'item-b'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
-        self.assertIn('https://t.me/x/1',self.say(15,'покажи ссылки'))
+        self.assertIn('https://t.me/x/1',self.say(15,'покажи ссылки')["text"])
 
     def test_reply_to_an_unregistered_bot_message_with_a_fixable_post_current_still_fixes(self):
         self.published('album','item-1',state='done',spec={'targets':['tg-channel'],'copy':{'tg-channel':'x'}})
@@ -136,21 +129,13 @@ class FlowFixTests(unittest.TestCase):
         self.say(11,'привет',reply_to_message={'message_id':77,'text':'Люди','from':{'is_bot':False}})
         self.assertIsNone(self.store.get('outbox/reply-11'))
 
-    def test_typed_accept_on_a_scheduled_post_still_accepts_the_previous_one(self):
-        self.published('old','item-old',state='done')
-        self.store.put('items/item-1',{'status':'previewed','revision':1,'messages':[],'slug':'album','title':'Новый'})
-        self.store.put('specs/album',{'state':'approved','item':'item-1','spec':{'targets':['tg-channel'],'at':'2999-01-01T00:00:00+00:00'},'results':{},'errors':{}})
-        self.store.put('sessions/inbox',{'current':'item-1'})
-        self.say(13,'принять')
-        self.assertTrue(self.store.get('specs/old').get('accepted'))
-
     def test_draft_failing_after_another_post_published_is_explained_not_the_post(self):
         self.published('uniqlo','item-u',title='Uniqlo',at=100)
         self.store.put('items/item-b',{'status':'failed','revision':3,'messages':[],'slug':'item-b','title':'Life in Bali','updated':1,'failed_at':200})
         self.store.put('sessions/item-b',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'failed','error':'Провайдер не ответил'}]})
         self.store.put('sessions/inbox',{'current':'item-b'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
-        self.assertIn('Life in Bali',self.say(16,'почему завис'))
+        self.assertIn('Life in Bali',self.say(16,'почему завис')["text"])
 
     def test_reply_failure_asks_to_repeat_the_question(self):
         class Request:
@@ -174,15 +159,15 @@ class FlowFixTests(unittest.TestCase):
         self.store.put('sessions/inbox',{'current':'item-b'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(14,'почему остановился?')
-        self.assertNotIn('Provider',reply)
-        self.assertIn('Life in Bali',reply)
+        self.assertNotIn('Provider',reply["text"])
+        self.assertIn('Life in Bali',reply["text"])
 
     def test_failed_step_error_is_part_of_the_explanation(self):
         self.store.put('items/item-b',{'status':'failed','revision':3,'messages':[],'slug':'item-b','title':'Life in Bali'})
         self.store.put('sessions/item-b',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'failed','error':'Провайдер не ответил'}]})
         self.store.put('sessions/inbox',{'current':'item-b'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
-        self.assertIn('Провайдер не ответил',self.say(9,'почему остановился?'))
+        self.assertIn('Провайдер не ответил',self.say(9,'почему остановился?')["text"])
 
     def test_token_failure_on_an_unknown_target_does_not_print_the_raw_id(self):
         text = app.failure_text(app.Error('API failure: 190'),'blog','x')

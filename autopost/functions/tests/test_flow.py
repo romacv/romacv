@@ -115,7 +115,7 @@ class EditFlowTests(unittest.TestCase):
         self.store.put('sessions/inbox',{'current':'item-9'})
         self.store.put('sessions/item-9',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'running','since':time.time() - 200,'agents':{'places':{'status':'running','action':'ищу'},'media':{'status':'done'},'copy':{'status':'waiting'}}}]})
         reply = self.store.intake({'update_id':90,'message':{'message_id':90,'text':'ну'}},self.config)
-        self.assertEqual(reply,'Черновик пишется 3 мин: места — ищу, медиа — готово, текст — ждёт.')
+        self.assertEqual(reply['text'],'Черновик пишется 3 мин: места — ищу, медиа — готово, текст — ждёт.')
         item = self.store.get('items/item-9')
         self.assertEqual(item['revision'],8)
         self.assertNotIn('followup',item)
@@ -137,12 +137,12 @@ class EditFlowTests(unittest.TestCase):
         item = self.store.get('items/item-9')
         self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
         self.setUp()
-        self.assertEqual(self.drafting_with(None,92),'Не понял: это в пост или вопрос?')
+        self.assertEqual(self.drafting_with(None,92)['text'],'Не понял: это в пост или вопрос?')
         self.assertEqual(self.store.get('items/item-9')['revision'],8)
         self.assertEqual(self.store.get('items/item-9')['pending_text'],['сделай текст короче'])
         self.setUp()
         reply = self.drafting_with('question',93)
-        self.assertIn('текст — пишу',reply)
+        self.assertIn('текст — пишу',reply['text'])
         self.assertEqual(self.store.get('items/item-9')['revision'],8)
 
 
@@ -155,11 +155,6 @@ class PublishedMessageTests(unittest.TestCase):
 
     def say(self, identifier, text):
         return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
-
-    def test_typed_accept_accepts_the_latest_published_post(self):
-        self.store.put('specs/album',{'state':'partial','item':'item-1','published_at':5,'spec':{'targets':['tg-channel','threads']},'results':{'tg-channel':{'url':'u','at':1}},'errors':{'threads':'x'}})
-        self.assertEqual(self.say(14,'Принять'),'')
-        self.assertTrue(self.store.get('specs/album')['accepted'])
 
     def test_question_on_a_previewed_draft_is_kept_without_a_read_after_write(self):
         self.store.put('items/item-2',{'status':'previewed','revision':2,'messages':[{'message_id':1,'text':'x'}],'slug':'item-2'})
@@ -623,7 +618,7 @@ class CollectingTests(unittest.TestCase):
         store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
         self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
         reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Что там?'}},self.config)
-        self.assertIn('готовлю превью',reply)
+        self.assertIn('готовлю превью',reply['text'])
         self.assertNotIn('Монтаж',reply)
         self.assertEqual(store.get('items/item-10').get('edits',[]),[])
 

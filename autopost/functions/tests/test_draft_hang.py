@@ -12,7 +12,7 @@ import main as app
 import platforms
 import store as store_module
 import voice
-from store import Store, SHOWING, UNCLEAR, word
+from store import EXPIRED_TEXT, Store, UNCLEAR
 
 
 class Base(unittest.TestCase):
@@ -25,7 +25,10 @@ class Base(unittest.TestCase):
 
     def published(self):
         self.store.put('items/old',{'status':'done','revision':1,'messages':[],'slug':'old','title':'Старый'})
-        self.store.put('specs/old',{'state':'done','item':'old','published_at':5,'spec':{'targets':['tg-channel']},'results':{'tg-channel':{'url':'https://t.me/x/1','at':1}},'errors':{}})
+        self.store.put('specs/old',{'state':'done','item':'old','published_at':5,'hash':'abcdef0123456789','spec':{'targets':['tg-channel']},'results':{'tg-channel':{'url':'https://t.me/x/1','at':1}},'errors':{}})
+
+    def tap(self, identifier, data):
+        return self.store.intake({'update_id':identifier,'callback_query':{'id':str(identifier),'data':data,'message':{'message_id':9,'text':'x'}}},self.config,[])
 
     def drafting(self):
         self.store.put('items/item-9',{'status':'drafting','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
@@ -75,54 +78,45 @@ class StalledDraftTests(Base):
         self.assertEqual(start.call_count,1)
 
 
-class CollectKeyboardTests(Base):
-    def test_typed_done_removes_the_collect_keyboard(self):
-        self.store.put('items/item-5',{'status':'collecting','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'item-5','batch_token':'tok','keyboard_message':77})
-        self.store.put('sessions/inbox',{'collecting':'item-5'})
-        self.say(4,'Готово')
-        jobs = [v['payload'] for k,v in self.store.db.values.items() if k.startswith('outbox/unkey-collect')]
-        self.assertEqual([(j['step'],j['message']) for j in jobs],[('remove-keyboard',77)])
-
-
 class TypedWordsTests(Base):
-    def test_leading_particles_do_not_hide_the_accept_word(self):
-        for text in ('Тогда принять','ну принять','ок, публикуй','Окей, принять.'):
-            self.assertEqual(word(text),'accept',text)
-        self.assertIsNone(word('ну давай короче'))
-
-    def test_particle_accept_accepts_the_published_post(self):
+    def test_typed_accept_word_is_not_a_command(self):
         self.published()
-        self.assertEqual(self.say(3,'Тогда принять'),'')
-        self.assertTrue(self.store.get('specs/old')['accepted'])
+        self.store.classifier = lambda text,context:{'kind':'caption','value':None}
+        self.say(3,'Тогда принять')
+        self.assertFalse(self.store.get('specs/old').get('accepted'))
 
 
 class RoutingTests(Base):
-    def test_show_while_drafting_says_it_is_still_being_prepared(self):
-        self.drafting()
-        self.store.classifier = lambda text,context:{'kind':'caption','value':None}
-        self.assertEqual(self.say(1,'покажи'),SHOWING)
-        self.assertEqual(self.store.get('items/item-9')['revision'],8)
-
     def test_when_questions_are_not_table_requests(self):
         self.published()
         self.drafting()
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(2,'когда будет готово?')
-        self.assertNotIn('t.me/x/1',reply)
+        self.assertNotIn('t.me/x/1',reply['text'])
 
     def test_link_questions_get_the_table_even_while_a_new_post_drafts(self):
         self.published()
         self.drafting()
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(2,'где ссылки на прошлый пост?')
-        self.assertIn('t.me/x/1',reply)
+        self.assertNotIn('t.me/x/1',reply['text'])
+        self.assertIn(['Отменить черновик'],[[b['text'] for b in row] for row in reply['reply_markup']['inline_keyboard']])
+        data = reply['reply_markup']['inline_keyboard'][1][0]
+        self.assertEqual(data['text'],'Ссылки и таблица')
+        self.assertTrue(self.tap(3,data['callback_data']))
+        said = [v['payload']['say'] for k,v in self.store.db.values.items() if k.startswith('outbox/table-')]
+        self.assertIn('t.me/x/1',said[0])
+
+    def test_table_button_is_retired_when_the_spec_changed(self):
+        self.published()
+        self.assertIsNone(self.tap(3,'tbl:old:00000000'))
 
     def test_failed_classifier_asks_instead_of_guessing(self):
         self.drafting()
         def broken(text,context):
             raise RuntimeError
         self.store.classifier = broken
-        self.assertEqual(self.say(3,'сделай короче'),UNCLEAR)
+        self.assertEqual(self.say(3,'сделай короче')['text'],UNCLEAR)
         self.assertNotIn('edits',self.store.get('items/item-9'))
 
     def test_a_captioned_photo_with_a_question_is_answered_not_collected(self):
@@ -168,19 +162,13 @@ class ReviewFixTests(Base):
         self.assertEqual(len(messages),2)
         self.assertTrue(messages[1]['photo'])
 
-    def test_publish_word_with_a_previewed_draft_does_not_accept_an_old_post(self):
+    def test_typed_publish_with_a_previewed_draft_does_not_accept_an_old_post(self):
         self.published()
         self.store.put('items/item-9',{'status':'previewed','revision':2,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
         self.store.put('specs/item-9',{'state':'previewed','item':'item-9','spec':{'targets':['tg-channel']}})
         self.store.put('sessions/inbox',{'current':'item-9'})
-        self.assertIn('Опубликовать',self.say(3,'ок, публикуй'))
-        self.assertFalse(self.store.get('specs/old').get('accepted'))
-
-    def test_publish_word_with_a_drafting_draft_does_not_accept_an_old_post(self):
-        self.published()
-        self.drafting()
-        reply = self.say(3,'публикуй')
-        self.assertIn('готовится',reply)
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        self.say(3,'ок, публикуй')
         self.assertFalse(self.store.get('specs/old').get('accepted'))
 
     def test_show_with_content_is_an_edit(self):
@@ -198,22 +186,83 @@ class ReviewFixTests(Base):
         self.say(8,'сделай короче')
         self.assertEqual(len(self.store.get('items/item-5')['messages']),2)
 
-    def test_unclear_is_asked_once_and_pending_text_applies_on_in_post(self):
+    def unclear(self):
         self.drafting()
         def broken(text,context):
             raise RuntimeError
         self.store.classifier = broken
-        self.assertEqual(self.say(1,'сделай короче'),UNCLEAR)
+        first = self.say(1,'сделай короче')
+        self.assertEqual(first['text'],UNCLEAR)
+        self.assertEqual([[b['text'] for b in row] for row in first['reply_markup']['inline_keyboard']],[['В пост','Это вопрос']])
         self.assertFalse(self.say(2,'и без хэштегов'))
         self.assertEqual(self.store.get('items/item-9')['pending_text'],['сделай короче','и без хэштегов'])
-        self.assertFalse(self.say(3,'в пост'))
+        return first['reply_markup']['inline_keyboard'][0]
+
+    def test_unclear_in_post_button_applies_the_pending_text_as_an_edit(self):
+        buttons = self.unclear()
+        self.assertEqual(buttons[0]['callback_data'],'utxt:item-9:8')
+        self.assertTrue(self.tap(3,buttons[0]['callback_data']))
         item = self.store.get('items/item-9')
         self.assertEqual(item['edits'],['сделай короче\nи без хэштегов'])
         self.assertNotIn('pending_text',item)
 
-    def test_particles_do_not_turn_post_text_into_commands(self):
-        self.assertIsNone(word('Ну и готово'))
-        self.assertEqual(word('Готово'),'done')
+    def test_unclear_question_button_answers_and_drops_the_pending_text(self):
+        buttons = self.unclear()
+        self.assertTrue(self.tap(3,buttons[1]['callback_data']))
+        item = self.store.get('items/item-9')
+        self.assertNotIn('edits',item)
+        self.assertNotIn('pending_text',item)
+        self.assertTrue([k for k in self.store.db.values if k.startswith('outbox/unclear-')])
+
+    def test_stale_unclear_taps_are_retired(self):
+        buttons = self.unclear()
+        self.assertTrue(self.tap(3,buttons[0]['callback_data']))
+        self.assertIsNone(self.tap(4,buttons[1]['callback_data']))
+        self.assertIsNone(self.tap(5,'utxt:item-9:1'))
+
+    def test_unclear_question_button_on_a_previewed_draft_answers_through_the_question_job(self):
+        self.store.put('items/item-9',{'status':'previewed','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}],'pending_text':['сделай короче']})
+        self.store.put('specs/item-9',{'state':'previewed','item':'item-9','hash':'abcdef0123456789','spec':{'targets':['tg-channel']}})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.assertTrue(self.tap(3,'uqst:item-9:8'))
+        self.assertNotIn('pending_text',self.store.get('items/item-9'))
+        self.assertTrue([k for k in self.store.db.values if k.startswith('outbox/answer-')])
+
+    def test_drafting_status_cancel_button_rejects_the_draft(self):
+        self.drafting()
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        reply = self.say(2,'когда будет готово?')
+        data = reply['reply_markup']['inline_keyboard'][0][0]
+        self.assertEqual(data['text'],'Отменить черновик')
+        self.assertEqual(self.tap(3,data['callback_data']),'Черновик отклонён.')
+        self.assertNotEqual(self.store.get('items/item-9')['status'],'drafting')
+
+    def test_stopped_status_again_button_requeues_the_draft(self):
+        self.store.put('items/item-9',{'status':'failed','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        reply = self.say(2,'что с постом?')
+        data = reply['reply_markup']['inline_keyboard'][0][0]
+        self.assertEqual((data['text'],data['callback_data']),('Повторить','again:item-9:8'))
+        self.assertTrue(self.tap(3,data['callback_data']))
+        self.assertEqual(self.store.get('items/item-9')['status'],'queued')
+        self.assertIsNone(self.tap(4,data['callback_data']))
+
+    def test_retry_button_refuses_expired_material(self):
+        self.store.put('specs/old',{'state':'partial','item':'old','updated':time.time(),'hash':'abcdef0123456789','spec':{'targets':['tg-channel']},'results':{},'errors':{'tg-channel':EXPIRED_TEXT}})
+        self.assertEqual(self.tap(3,'retry:old:abcdef01'),EXPIRED_TEXT)
+        self.assertEqual(self.store.get('specs/old')['state'],'partial')
+
+    def test_collecting_question_reply_carries_the_collect_keyboard_and_the_links_button(self):
+        self.published()
+        self.store.put('items/item-5',{'status':'collecting','revision':1,'messages':[{'message_id':1,'text':'Тема'}],'slug':'item-5','batch_token':'tok'})
+        self.store.put('sessions/inbox',{'collecting':'item-5','current':'item-5'})
+        self.store.put('sessions/item-5',{})
+        self.store.classifier = lambda text,context:{'kind':'question','value':None}
+        reply = self.say(2,'что сейчас?')
+        data = [b['callback_data'] for row in reply['reply_markup']['inline_keyboard'] for b in row]
+        self.assertIn('done:item-5:tok',data)
+        self.assertIn('cncl:item-5:tok',data)
 
 
 class ClassifierRetryTests(unittest.TestCase):

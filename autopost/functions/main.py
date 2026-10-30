@@ -1250,6 +1250,8 @@ def question(config,store,payload):
     newp = newp_markup(store,payload['item'])
     if newp:
         keyboard['inline_keyboard'].append(newp)
+    if payload.get('links') and len(payload['links'].encode()) <= 64:
+        keyboard['inline_keyboard'].append([{'text':'Ссылки и таблица','callback_data':payload['links']}])
     keyboard['inline_keyboard'].append(cancel_button(payload['item'],item['revision']))
     message = tell(config,'Черновик' + item_name(item,store,payload['item']) + ': ' + value['answer'],reply_markup=keyboard)
     store.put('published-messages/' + str(message['message_id']),{'slug':payload['slug']})
