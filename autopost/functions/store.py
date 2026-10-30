@@ -109,14 +109,23 @@ def hinted(text, offers, chosen=()):
     return text + '\n' + CHOICE_HINT if text and offers and not chosen else text
 
 
-WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'принять':'accept', 'принимаю':'accept', 'принято':'accept', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
+WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'принять':'accept', 'принимаю':'accept', 'принято':'accept', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table', 'публикуй':'accept', 'принимай':'accept', 'в пост':'topost'}
+PARTICLES = ('тогда', 'ну', 'ок', 'окей', 'ok', 'okay', 'да', 'ладно', 'давай', 'так', 'и', 'вот', 'уже', 'пожалуйста')
+UNCLEAR = 'Не понял: это в пост или вопрос?'
+TABLE_WORDS = ('ссылк', 'таблиц')
 KINDS = ('caption', 'title', 'instruction', 'question', 'rule', 'fix')
 CONTAINER_AGE = 23 * 3600
 DIALOG_LIMIT = 200
 
 
 def word(text):
-    return WORDS.get(' '.join((text or '').lower().split()).strip('.!«»'))
+    tokens = (text or '').lower().replace(',', ' ').split()
+    plain = WORDS.get(' '.join(tokens).strip('.!«»'))
+    if plain:
+        return plain
+    while len(tokens) > 1 and tokens[0].strip('.!«»') in PARTICLES:
+        tokens.pop(0)
+    return 'accept' if WORDS.get(' '.join(tokens).strip('.!«»')) == 'accept' else None
 
 
 def clock(at, zone):
@@ -337,6 +346,17 @@ AGENT_STATES = {'done':'готово', 'waiting':'ждёт', 'failed':'ошиб�
 NUDGES = ('ну', 'и', 'что там', 'долго', 'ну что', 'как там', 'скоро', 'ау', 'эй')
 
 
+SHOWING = 'Ещё готовлю, покажу как будет.'
+
+
+SHOW_REQUESTS = ('покажи', 'покажи черновик', 'покажи пост', 'ты поправил покажи')
+
+
+def shows(text):
+    plain = ' '.join((text or '').lower().replace('?', ' ').replace('!', ' ').replace('.', ' ').replace(',', ' ').split())
+    return plain in SHOW_REQUESTS
+
+
 def nudge(text):
     plain = ' '.join((text or '').lower().replace('?', ' ').replace('!', ' ').replace('.', ' ').replace('…', ' ').split())
     return sum(c.isalpha() for c in plain) < 4 or plain in NUDGES
@@ -529,7 +549,10 @@ class Store:
 
     def verdict(self, message, name, query):
         text = message.get('text')
-        if query or name or not isinstance(text, str) or not text.strip() or any(message.get(k) for k in MEDIA_KEYS) or message.get('reply_to_message') or message.get('media_group_id'):
+        captioned = not isinstance(text, str) and any(message.get(k) for k in ('photo', 'video')) and not any(message.get(k) for k in MEDIA_KEYS if k not in ('photo', 'video'))
+        if captioned:
+            text = message.get('caption')
+        if query or name or not isinstance(text, str) or not text.strip() or message.get('reply_to_message') or message.get('media_group_id') or not captioned and any(message.get(k) for k in MEDIA_KEYS):
             return None
         inbox = self.get('sessions/inbox') or {}
         if inbox.get('awaiting'):
@@ -538,20 +561,29 @@ class Store:
         found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current), 'retry':self.latest(('partial',), current)}
         command_word = word(text)
         opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
+        opened = opened if opened and opened.get('status') == 'collecting' else None
+        held = self.get('items/' + current) if current and not opened else None
+        working_draft = bool(held and held.get('status') in ('queued', 'drafting', 'previewed'))
+        if captioned:
+            if opened or working_draft:
+                return None
+            command_word = None
+        if command_word == 'topost' and not (held and held.get('pending_text')):
+            command_word = None
         if command_word == 'accept' and opened and opened.get('status') == 'collecting':
             return None
         if command_word:
             return {**found, 'kind':'command', 'value':command_word}
         if not self.classifier:
             return None
-        item = opened if opened and opened.get('status') == 'collecting' else self.get('items/' + current) if current else None
+        item = opened or held or (self.get('items/' + current) if current else None)
         context = {'collecting':bool(opened and opened.get('status') == 'collecting') or (item or {}).get('status') in ('queued', 'drafting', 'previewed'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
         try:
             answer = self.classifier(text.strip(), context)
         except Exception:
             logging.error(json.dumps({'code':'classifier_failed'}))
-            return None
-        if not isinstance(answer, dict) or answer.get('kind') not in KINDS:
+            return {**found, 'kind':'unclear', 'value':None} if working_draft and not captioned else None
+        if not isinstance(answer, dict) or answer.get('kind') not in KINDS or captioned and answer['kind'] not in ('question', 'rule'):
             return None
         value = answer.get('value')
         return {**found, 'kind':answer['kind'], 'value':value.strip() if isinstance(value, str) and value.strip() else None}
@@ -596,13 +628,43 @@ class Store:
                 return answer('Опубликованных постов пока нет.')
             return answer(table_text(shown, shown_item, zone), shown['item'])
         stopped = bool(current and current.get('status') == 'failed' and (not finished or (current.get('failed_at') or current.get('updated') or current.get('created') or 0) > (finished.get('published_at') or 0)))
-        if kind == 'command' and value == 'table' or kind == 'question' and not opened and not stopped and (live or finished and not (current and current.get('status') in ('queued', 'drafting', 'previewed'))):
+        if kind == 'unclear' and not current:
+            return None
+        if kind == 'command' and value == 'topost' and not (current and current.get('pending_text')):
+            return None
+        if kind == 'unclear':
+            told = current.get('unclear_told')
+            current['pending_text'] = (current.get('pending_text') or [])[-9:] + [found['text'][:500]]
+            current['unclear_told'] = True
+            self.put('items/' + session['current'], current, tx)
+            return answer('' if told else UNCLEAR, session['current'])
+        if kind == 'command' and value == 'topost':
+            note = '\n'.join(current.pop('pending_text'))
+            current.pop('unclear_told', None)
+            target = self.get('specs/' + current['slug'], tx)
+            self.put(update_path, {'received':time.time()}, tx)
+            self.subject = session['current']
+            if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'):
+                previewed = target['state'] == 'previewed'
+                self.queue_edit(tx, current['slug'], target, note, None, identifier, session, None, current)
+                if previewed and target.get('preview_message'):
+                    self.job(tx, {'slug':current['slug'], 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
+                self.put('sessions/inbox', session, tx)
+            else:
+                self.add_edit(tx, current, session['current'], note, None, identifier)
+            return ''
+        asks_table = kind == 'question' and bool(live or finished) and any(w in found['text'].lower() for w in TABLE_WORDS)
+        if kind == 'command' and value == 'table' or asks_table or kind == 'question' and not opened and not stopped and (live or finished and not (current and current.get('status') in ('queued', 'drafting', 'previewed'))):
             return table()
         if kind == 'command' and value == 'accept':
             target = finished
             if live and not scheduled(live):
                 return answer(publishing(live, current), session['current'])
+            if current and current.get('status') in ('queued', 'drafting', 'previewed') and not live:
+                return answer('Черновик ждёт: нажми «Опубликовать» под превью.' if current['status'] == 'previewed' else 'Новый черновик ещё готовится, старый пост не принимаю. Напиши «принять», когда он будет опубликован или отменён.', session['current'])
             if not target or target.get('operation') or not target.get('results') or target.get('state') not in ('done', 'partial'):
+                if current and current.get('status') == 'previewed':
+                    return answer('Черновик ждёт: нажми «Опубликовать» под превью.', session['current'])
                 return answer('Принимать нечего: нет опубликованного поста.')
             if target.get('accepted'):
                 return answer('Пост' + named(target, finished_item) + ' уже принят.', finished['item'])
@@ -675,6 +737,8 @@ class Store:
                 return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
             if stopped:
                 return answer(stopped_status(current, journal) + ('\n' + table_text(finished, finished_item, zone) if finished else ''), session['current'])
+            if working(current) and shows(found['text']):
+                return answer(SHOWING, session['current'])
             if working(current):
                 return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'])
             if current and current.get('status') == 'previewed':
@@ -971,6 +1035,10 @@ class Store:
             held = pending if working(pending) else self.get('items/' + target['item'], tx) if target and not target.get('operation') and target.get('state') == 'drafting' else None
             if held and not name and not group and not reply_id and isinstance(text, str) and note and not any(message.get(k) for k in MEDIA_KEYS):
                 placed = said and said['kind'] in ('fix', 'instruction')
+                if shows(note):
+                    self.put(update_path, {'received':time.time()}, tx)
+                    self.subject = target['item'] if target else slug
+                    return SHOWING
                 if nudge(note) or said and not placed:
                     status = drafting_status(held, self.get('sessions/' + (target['item'] if target else slug), tx), self.get('renders/' + held['render'], tx) if held.get('render') else None, time.time())
                     self.put(update_path, {'received':time.time()}, tx)
@@ -1016,14 +1084,14 @@ class Store:
                 self.put(update_path, {'received':time.time()}, tx)
                 return None if once() else 'К черновику принимаю текст, фото, видео и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
             edit, shot = self.edit_note(message)
-            if edit.rstrip().endswith('?') and not shot:
+            if (edit.rstrip().endswith('?') or shows(edit)) and not shot:
                 held = self.get('items/' + target['item'], tx) or {}
                 running = self.get('renders/' + held['render'], tx) if held.get('render') and target['state'] == 'drafting' else None
                 self.put(update_path, {'received':time.time()}, tx)
                 if target['state'] != 'drafting':
                     self.keep_question(tx, held, identifier, slug, target['item'], edit, message)
                     return None
-                return progress(held, running, time.time())
+                return SHOWING if shows(edit) else progress(held, running, time.time())
             key = 'g' + group if group else identifier
             followup = self.get('followups/' + key, tx) if group else None
             if not followup or followup.get('moved') or followup.get('slug') != slug:
@@ -1348,7 +1416,7 @@ class Store:
             self.retire(taps, query, 'Повтор больше не нужен.')
             return None
         self.retire(taps, query, 'Повторяю…')
-        item.update(status='queued', updated=time.time())
+        item.update(status='queued', updated=time.time(), revision=item['revision'] + 1)
         item.pop('status_message', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'again-' + update_path.split('/', 1)[1])
@@ -1456,6 +1524,8 @@ class Store:
             session.pop('collecting')
         item['revision'] += 1
         item['updated'] = time.time()
+        if item.get('keyboard_message') and not query.get('message'):
+            self.job(tx, {'step':'remove-keyboard', 'slug':item_id, 'message':item['keyboard_message']}, 'unkey-collect-' + identifier)
         if verb == 'cncl':
             item['status'] = 'rejected'
             item['waiting_upload'] = False

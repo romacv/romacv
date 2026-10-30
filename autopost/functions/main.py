@@ -27,7 +27,7 @@ from firebase_functions.params import SecretParam
 
 import platforms
 from platforms import Error
-from store import EXPIRED_TEXT, TOKEN_PREFIX, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, bursted, BURST_SECONDS, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
+from store import UNCLEAR, EXPIRED_TEXT, TOKEN_PREFIX, retryable, table_text, table_rows, tally, SESSION_AGE, contents, FINAL_DEADLINE, stale_limit, overdue, stale, PIN_SPEC_STAGES, newest_states, newest_specs, post_phrase, progress as working, dead_render, pin_stage, TOGGLES, hint_for, Store, StateError, collect_keyboard, collected, bursted, BURST_SECONDS, command, clips, named, feedback, titled, imaged, offered, chosen_targets, unsupported, skipped_lines, UNSUPPORTED, SKIP_NAMES, hinted, NAMES, COMMANDS
 import agents
 import drafter
 import voice
@@ -53,6 +53,7 @@ def runtime():
         firebase_admin.initialize_app()
     config = json.loads(AUTOPOST.value)
     store = Store(firestore.client())
+    voice.notify = token_notice(config)
     bucket = storage.bucket(config.get('bucket','resromcom-493b4-autopost'))
     return config, store, bucket
 
@@ -117,8 +118,8 @@ def edit_message(config, identifier, text, markup=None, entities=None):
         fields['reply_markup'] = markup
     try:
         platforms.telegram('editMessageText',fields)
-    except Exception:
-        pass
+    except Exception as failure:
+        logging.error(json.dumps({'code':'edit_message_failed','message_id':identifier,'error':str(failure)[:200]},ensure_ascii=False))
 
 
 def finish_status(config, record, line):
@@ -338,6 +339,10 @@ def sync_pin(config, store):
 
 def tell(config, text, **extra):
     return platforms.telegram('sendMessage',{'chat_id':config['roman_chat_id'],'text':text,**extra})
+
+
+def token_notice(config):
+    return lambda network:tell(config,failure_text(Error('API failure: 190'),'threads' if network == 'threads' else 'ig-post',''))
 
 
 def failure_text(failure, target, fallback):
@@ -609,7 +614,7 @@ def preview(config, store, bucket, item_id, spec, assets, directory, basis=None,
         current = store.get('items/' + item_id,tx) or {}
         if current.get('status') == 'rejected' or previous.get('state') == 'rejected' and not previous.get('operation') or revision is not None and current.get('revision') != revision:
             return False
-        if previous.get('state') not in (None,'drafting','needs-edit'):
+        if previous.get('state') not in (None,'drafting','needs-edit') and not (previous.get('state') == 'failed' and not previous.get('results') and not previous.get('operation')):
             raise StateError('Existing preview or publication cannot be overwritten')
         started[:] = [current]
         store.supersede(tx,item_id,{spec['slug']})
@@ -635,8 +640,9 @@ def cancel_draft(config, store, item_id, slug, digest, last, revision=None):
     store.change('specs/' + slug,reject)
     if last:
         identifier, method = last[0]
+        line = 'Черновик отменён.' if item.get('status') == 'rejected' else 'Черновик заменён новой версией.'
         try:
-            platforms.telegram('editMessageText' if method == 'sendMessage' else 'editMessageCaption',{'chat_id':config['roman_chat_id'],'message_id':identifier,**({'text':'Черновик отменён.'} if method == 'sendMessage' else {'caption':'Черновик отменён.'}),'reply_markup':{'inline_keyboard':[]}})
+            platforms.telegram('editMessageText' if method == 'sendMessage' else 'editMessageCaption',{'chat_id':config['roman_chat_id'],'message_id':identifier,**({'text':line} if method == 'sendMessage' else {'caption':line}),'reply_markup':{'inline_keyboard':[]}})
         except Error:
             pass
     return True
@@ -829,19 +835,26 @@ def hints_of(item):
 
 
 def side_voice(config,store,payload,item,name,spoken):
-    if name in item.get('voice_routed',{}) or len(spoken.split()) > 15:
-        return
-    item.setdefault('voice_routed',{})[name] = True
-    store.change('items/' + payload['item'],lambda value:value.setdefault('voice_routed',{}).update({name:True}))
+    routed = item.setdefault('voice_routed',{})
+    if name in routed:
+        return routed[name] in ('rule','question')
+    if len(spoken.split()) > 15:
+        return False
+    routed[name] = 'checked'
+    store.change('items/' + payload['item'],lambda value:value.setdefault('voice_routed',{}).update({name:'checked'}))
     try:
         kind = (drafter.classify(config,spoken,{'collecting':True,'title':None,'status':item.get('status')},lambda usage:store.record_usage(payload['item'],'classify',usage)) or {}).get('kind')
     except Exception:
-        return
+        logging.error(json.dumps({'code':'voice_classifier_failed'}))
+        return False
+    routed[name] = kind
+    store.change('items/' + payload['item'],lambda value:value.setdefault('voice_routed',{}).update({name:kind}))
     if kind == 'rule':
         enqueue({'step':'skills','text':spoken},'skills-voice-' + hashlib.sha256((payload['item'] + name).encode()).hexdigest())
     elif kind == 'question':
         saved = store.latest(('done','partial'))
         tell(config,table_of(config,store,store.get('specs/' + saved)) if saved else 'Опубликованных постов пока нет.')
+    return kind in ('rule','question')
 
 
 def transcript(config,store,bucket,payload,item,attachment,key):
@@ -1016,8 +1029,8 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             files[destination.name] = destination
         elif attachment['kind'] == 'voice':
             heard = transcript(config,store,bucket,payload,item,attachment,attachment['name'])
-            side_voice(config,store,payload,item,attachment['name'],heard['text'].strip())
-            transcripts.append(heard)
+            if not side_voice(config,store,payload,item,attachment['name'],heard['text'].strip()):
+                transcripts.append(heard)
         else:
             clips.append(attachment['path'].stem)
     stages('edits','Читаю правки',0.4)
@@ -1034,7 +1047,7 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
     owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
     def validate(value):
         if drafter.answered(value):
-            return drafter.answer_errors(value,True) if follow is not None else ['Return a draft, not an answer']
+            return first_draft_skill(payload,item,'a draft') if follow is None and value == {'action':'skills'} else drafter.answer_errors(value,True) if follow is not None else ['Return a draft, not an answer']
         errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips))
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
@@ -1172,6 +1185,16 @@ def cancel_button(item_id,revision):
     return [{'text':'Отменить черновик','callback_data':'cdraft:' + item_id + ':' + str(revision)}]
 
 
+def record_skill(payload,item):
+    text = payload.get('text') or (item.get('edits') or [''])[-1] or '\n'.join(x.get('text') or x.get('caption') or '' for x in item.get('messages',[])).strip()
+    enqueue({'step':'skills','text':text},'skills-act-' + payload['item'] + '-' + hashlib.sha256((payload.get('update') or text).encode()).hexdigest()[:16])
+
+
+def first_draft_skill(payload,item,noun):
+    record_skill(payload,item)
+    return ['The skill is recorded; now return ' + noun + ', not an answer']
+
+
 def take_answer(config,store,payload,item,value):
     identifier = 'act-' + payload['item'] + '-' + str(payload['revision'])
     if 'answer' in value:
@@ -1181,8 +1204,7 @@ def take_answer(config,store,payload,item,value):
         if store.atomic(lambda tx:store.cancel_post(tx,payload['item'],identifier)):
             tell(config,'Черновик' + name + ' отклонён.')
     elif value['action'] == 'skills':
-        text = payload.get('text') or (item.get('edits') or [''])[-1]
-        enqueue({'step':'skills','text':text},'skills-act-' + payload['item'] + '-' + hashlib.sha256((payload.get('update') or text).encode()).hexdigest()[:16])
+        record_skill(payload,item)
         if (store.get('specs/' + payload['slug']) or {}).get('state') == 'drafting':
             answer_edit(config,store,payload,item,'Записываю в навыки, черновик не менял.')
         else:
@@ -1250,9 +1272,13 @@ def reply_note(config,store,payload):
 
 
 def answer_edit(config,store,payload,item,answer):
+    if superseded(store,payload):
+        return
     slug = item['slug']
     saved = store.get('specs/' + slug) or {}
     if saved.get('state') != 'drafting':
+        name = item_name(item,store,payload['item'])
+        tell(config,('Черновик' + name + ': ' if name else '') + answer)
         return
     digest = asset_hash(saved['spec'],saved['basis'] if 'basis' in saved else saved['assets'])
     keyboard = buttons(slug,digest)
@@ -1416,7 +1442,7 @@ def plan_montage(config,store,bucket,payload,directory):
         return {'agents':{'montage':{'action':None,'finished':time.time(),'usd':round(spent[0],6),**line}},'usd':round(spent[0],6)}
     track(store.step,payload['item'],'montage',{'agents':{'montage':{'status':'running','action':'планирую монтаж','started':time.time()}}},payload['revision'])
     try:
-        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
+        edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(first_draft_skill(payload,item,'an EDL') if follow is None and value == {'action':'skills'} else drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
     except Exception as failure:
         track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed','error':(str(failure) if isinstance(failure,(Error,StateError)) else 'Монтаж не удался.')[:300]},payload['revision'])
         raise
@@ -1445,10 +1471,17 @@ def plan_montage(config,store,bucket,payload,directory):
 
 
 def start_preparation(config,store,bucket,payload,item,inputs,target=None):
-    identifier = secrets.token_hex(16)
+    identifier = hashlib.sha256(('prepare:' + payload['item'] + ':' + str(payload['revision']) + ':' + (target or '')).encode()).hexdigest()[:32]
     project = firebase_admin.get_app().project_id
     job = {'id':identifier,'mode':'prepare','item':payload['item'],'revision':payload['revision'],'sources':{a['name']:a['manifest'] for a in inputs if a['kind'] != 'photo'},'bucket':bucket.name,'prefix':'inbox/' + payload['item'] + '/prepared/' + identifier,**({'target':target} if target else {}),**({'montage':True} if item.get('montage') else {}),'project':project,'worker_url':config['worker_url'],'service_account':config['runtime_service_account'],'state':'queued','created':time.time(),'loader':loader_for(config,item.get('status_message'))}
-    store.put('renders/' + identifier,job)
+    def create(tx):
+        existing = store.get('renders/' + identifier,tx)
+        if existing and existing.get('state') != 'failed':
+            return False
+        store.put('renders/' + identifier,job,tx)
+        return True
+    if not store.atomic(create):
+        return
     store.change('items/' + payload['item'],lambda value:value.update(render=identifier))
     track(store.step,payload['item'],'prepare',{},payload['revision'])
     start_job(project,identifier)
@@ -1839,8 +1872,9 @@ def run(config,store,bucket,slug,directory,resume=False):
     message = tell(config,'\n'.join(lines),reply_markup=buttons(slug,saved['hash'],state == 'partial' and can_retry,True,bool(saved['results'])))
     store.put('published-messages/' + str(message['message_id']),{'slug':slug})
     store.talk(saved['item'],None,'\n'.join(lines))
-    finish_status(config,saved.get('status_message'),'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
-    finish_status(config,record,'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.')
+    closing = 'Опубликовано.' if state == 'done' else 'Опубликовано не везде.' if any_published else 'Ничего не опубликовано.'
+    for target in {(r or {}).get('id'):r for r in (saved.get('status_message'),record) if r}.values():
+        finish_status(config,target,closing)
     store.change('specs/' + slug,lambda value:(value.pop('status_message',None),value.pop('publish_message',None)))
 
 
@@ -2491,7 +2525,12 @@ def stop_stale(config,store):
     for snapshot in store.db.collection('items').where('stalled','==',True).stream():
         item = snapshot.to_dict()
         try:
-            tell(config,('Пост' + (item_name(item) or ' без названия') + ': файл так и не загрузился, остановлен. Начни /post.') if item.get('upload_timeout') else 'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Начни /post.')
+            if item.get('upload_timeout') or not item.get('messages'):
+                tell(config,('Пост' + (item_name(item) or ' без названия') + ': файл так и не загрузился, остановлен. Начни /post.') if item.get('upload_timeout') else 'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Начни /post.')
+            elif item.get('status') != 'failed':
+                tell(config,'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Материал сохранён, пришли правку или начни /post.')
+            else:
+                tell(config,'Черновик' + (item_name(item) or ' без названия') + ' завис и остановлен. Материал сохранён, «Повторить» соберёт черновик заново.',reply_markup={'inline_keyboard':[[{'text':'Повторить','callback_data':'again:' + snapshot.id + ':' + str(item['revision'])}]]})
             store.change('items/' + snapshot.id,lambda value:(value.pop('stalled',None),value.pop('upload_timeout',None)))
         except Exception:
             logging.error(json.dumps({'code':'stalled_notice_failed'}))

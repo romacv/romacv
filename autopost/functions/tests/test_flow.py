@@ -81,7 +81,7 @@ class EditFlowTests(unittest.TestCase):
         self.assertTrue(tell.call_args.args[1].startswith('Черновик не получился') or ' не получился' in tell.call_args.args[1])
         self.store.intake({'update_id':60,'callback_query':{'id':'60','data':data}},self.config)
         self.assertEqual(self.store.get('items/item-1')['status'],'queued')
-        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':1})
+        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':2})
 
     def test_scheduled_post_is_not_running_media_starts_a_new_post_and_text_names_the_time(self):
         self.store.put('specs/example',{**self.store.get('specs/example'),'state':'approved','spec':{**self.spec,'at':'2099-01-01T10:00:00+00:00'}})
@@ -133,10 +133,13 @@ class EditFlowTests(unittest.TestCase):
         return self.store.intake({'update_id':number,'message':{'message_id':number,'text':'сделай текст короче'}},self.config)
 
     def test_classifier_fix_and_failure_during_drafting_edit_but_question_gets_status(self):
-        for number,kind in ((91,'fix'),(92,None)):
-            self.assertIsNone(self.drafting_with(kind,number))
-            item = self.store.get('items/item-9')
-            self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.assertIsNone(self.drafting_with('fix',91))
+        item = self.store.get('items/item-9')
+        self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.setUp()
+        self.assertEqual(self.drafting_with(None,92),'Не понял: это в пост или вопрос?')
+        self.assertEqual(self.store.get('items/item-9')['revision'],8)
+        self.assertEqual(self.store.get('items/item-9')['pending_text'],['сделай текст короче'])
         self.setUp()
         reply = self.drafting_with('question',93)
         self.assertIn('текст — пишу',reply)
@@ -508,7 +511,7 @@ class PreviewRaceTests(unittest.TestCase):
         self.assertEqual((item['status'],item['revision']),('queued',2))
         self.assertIsNotNone(self.store.get('outbox/edit-e1'))
         self.assertEqual(sent[-1][0],'editMessageText')
-        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик отменён.',{'inline_keyboard':[]}))
+        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик заменён новой версией.',{'inline_keyboard':[]}))
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
     def test_a_video_file_sent_to_a_previewed_draft_joins_it_and_requeues_the_montage(self):
