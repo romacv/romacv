@@ -119,7 +119,8 @@ def edit_message(config, identifier, text, markup=None, entities=None):
     try:
         platforms.telegram('editMessageText',fields)
     except Exception as failure:
-        logging.error(json.dumps({'code':'edit_message_failed','message_id':identifier,'error':str(failure)[:200]},ensure_ascii=False))
+        if not getattr(failure,'not_modified',False):
+            logging.error(json.dumps({'code':'edit_message_failed','message_id':identifier,'error':str(failure)[:200]},ensure_ascii=False))
 
 
 def finish_status(config, record, line):
