@@ -342,7 +342,7 @@ def tell(config, text, **extra):
 
 def failure_text(failure, target, fallback):
     if str(failure) == 'API failure: 190':
-        return 'Нужен новый токен ' + ('Threads' if target == 'threads' else 'Instagram' if target.startswith('ig-') else target) + '.'
+        return ('Нужен новый токен ' + ('Threads' if target == 'threads' else 'Instagram' if target.startswith('ig-') else '')).strip() + '.'
     if isinstance(failure,Error) and getattr(failure,'description',''):
         return ('Telegram не принял публикацию: ' if target.startswith('tg-') else 'Платформа не приняла запрос: ') + failure.description
     return str(failure) if isinstance(failure,(Error,StateError)) else fallback
@@ -834,7 +834,7 @@ def side_voice(config,store,payload,item,name,spoken):
     item.setdefault('voice_routed',{})[name] = True
     store.change('items/' + payload['item'],lambda value:value.setdefault('voice_routed',{}).update({name:True}))
     try:
-        kind = (drafter.classify(config,spoken,{'collecting':False,'title':None,'status':item.get('status')},lambda usage:store.record_usage(payload['item'],'classify',usage)) or {}).get('kind')
+        kind = (drafter.classify(config,spoken,{'collecting':True,'title':None,'status':item.get('status')},lambda usage:store.record_usage(payload['item'],'classify',usage)) or {}).get('kind')
     except Exception:
         return
     if kind == 'rule':
@@ -1181,8 +1181,12 @@ def take_answer(config,store,payload,item,value):
         if store.atomic(lambda tx:store.cancel_post(tx,payload['item'],identifier)):
             tell(config,'Черновик' + name + ' отклонён.')
     elif value['action'] == 'skills':
-        enqueue({'step':'skills','text':payload.get('text') or (item.get('edits') or [''])[-1]},'skills-' + identifier)
-        answer_edit(config,store,payload,item,'Записываю в навыки, черновик не менял.')
+        text = payload.get('text') or (item.get('edits') or [''])[-1]
+        enqueue({'step':'skills','text':text},'skills-act-' + payload['item'] + '-' + hashlib.sha256((payload.get('update') or text).encode()).hexdigest()[:16])
+        if (store.get('specs/' + payload['slug']) or {}).get('state') == 'drafting':
+            answer_edit(config,store,payload,item,'Записываю в навыки, черновик не менял.')
+        else:
+            tell(config,'Записываю в навыки, черновик не менял.')
     elif value['action'] == 'edit':
         if not store.atomic(lambda tx:store.edit_from_question(tx,payload['slug'],payload['text'],identifier)):
             tell(config,'Черновик уже менялся: напиши правку ещё раз.')
@@ -1218,7 +1222,7 @@ def question(config,store,payload):
         text = parsed.get('answer') if isinstance(parsed, dict) else None
         value = {'answer':' '.join((text if isinstance(text, str) else raw).split())[:200] or 'Не смог ответить.'}
     if 'action' in value:
-        take_answer(config,store,{'item':payload['item'],'revision':item['revision'],'slug':payload['slug'],'text':payload['text']},item,value)
+        take_answer(config,store,{'item':payload['item'],'revision':item['revision'],'slug':payload['slug'],'text':payload['text'],'update':payload.get('update')},item,value)
         return
     keyboard = buttons(payload['slug'],saved['hash']) if saved['state'] == 'previewed' and saved.get('hash') else {'inline_keyboard':[]}
     newp = newp_markup(store,payload['item'])
@@ -1227,6 +1231,22 @@ def question(config,store,payload):
     keyboard['inline_keyboard'].append(cancel_button(payload['item'],item['revision']))
     message = tell(config,'Черновик' + item_name(item,store,payload['item']) + ': ' + value['answer'],reply_markup=keyboard)
     store.put('published-messages/' + str(message['message_id']),{'slug':payload['slug']})
+
+
+REPLY = 'Roman replied to one of your messages in the posting bot chat. Answer in Russian, at most 250 characters, only from the given context. If it is a complaint or a defect report, name the exact problem. Never claim it is recorded or saved anywhere. Never suggest /post and never invent facts. Plain text.'
+
+
+def reply_note(config,store,payload):
+    saved = store.get('specs/' + payload['slug']) or {}
+    key = saved.get('item') or payload['slug']
+    item = store.get('items/' + key) or {}
+    asked = {'reply':payload['text'],'bot_message':payload.get('quoted'),'post':item_name(item),'dialog':((store.get('sessions/' + key) or {}).get('dialog') or [])[-8:]}
+    if saved.get('spec'):
+        asked['table'] = table_of(config,store,saved)
+    raw = drafter.converse(config,REPLY,json.dumps(asked,ensure_ascii=False),600,lambda usage:store.record_usage(key,'reply',usage))
+    text = ' '.join(raw.split())[:300] or 'Не понял, уточни вопрос.'
+    tell(config,text)
+    store.talk(key,None,text)
 
 
 def answer_edit(config,store,payload,item,answer):
@@ -1397,8 +1417,8 @@ def plan_montage(config,store,bucket,payload,directory):
     track(store.step,payload['item'],'montage',{'agents':{'montage':{'status':'running','action':'планирую монтаж','started':time.time()}}},payload['revision'])
     try:
         edl = drafter.ask(config,{'mode':'montage',**({'chosen_targets':allowed} if allowed else {}),'sources':sources,'transcripts':transcripts,'messages':item['messages'],**({'instructions':item['instructions']} if item.get('instructions') else {}),**({'notes':notes} if notes else {}),'edits':edits,'previous_edl':item.get('edl'),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})},images,lambda value:(drafter.answer_errors(value,True) if follow is not None else ['Return an EDL, not an answer']) if drafter.answered(value) else montage.validate(value,sources) + (['targets must stay within chosen_targets'] if allowed and isinstance(value,dict) and isinstance(value.get('targets'),dict) and set(value['targets']) - set(allowed) else []),True,(store,key,payload['revision'],len(edits),('items/' + payload['item'],'revision',payload['revision'])),follow,montage_rec)
-    except Exception:
-        track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed'},payload['revision'])
+    except Exception as failure:
+        track(store.step,payload['item'],'montage',{**montage_agent(status='failed',result='ошибка'),'state':'failed','error':(str(failure) if isinstance(failure,(Error,StateError)) else 'Монтаж не удался.')[:300]},payload['revision'])
         raise
     track(store.step,payload['item'],'montage',{**montage_agent(status='done',result=str(len(sources)) + ' клипов'),'state':'done'},payload['revision'])
     if superseded(store,payload):
@@ -1491,7 +1511,7 @@ def finish_final(config,store,payload,item,job):
         return
     if job.get('state') != 'done':
         fail_final(config,store,slug,payload['render'])
-        track(store.step,payload['item'],'final',{'state':'failed'})
+        track(store.step,payload['item'],'final',{'state':'failed','error':'Финальный рендер не удался.'})
         store.change('renders/' + payload['render'],lambda value:value.update(delivered=True))
         return
     assets = {target:{'video.mp4':manifest,'cover.jpg':job['outputs']['cover']} for target,manifest in job['outputs']['videos'].items()}
@@ -2156,6 +2176,8 @@ def handle_worker(request):
                 rendered(config,store,bucket,payload,directory)
             elif step == 'answer':
                 question(config,store,payload)
+            elif step == 'reply':
+                reply_note(config,store,payload)
             elif step == 'fix':
                 fix(config,store,payload['slug'])
             elif step == 'apply-fix':
@@ -2206,13 +2228,14 @@ def handle_worker(request):
                     value = store.get('items/' + payload['item'],tx)
                     if value and value.get('revision') == payload.get('revision') and value.get('status') in ('queued','drafting'):
                         value['status'] = 'failed'
+                        value['failed_at'] = time.time()
                         store.put('items/' + payload['item'],value,tx)
                         return True
                     return False
                 current = store.atomic(fail_item)
                 if current:
                     follow = payload['step'] == 'draft' and any(e['id'] == 'edit' and e['state'] == 'running' and e.get('revision') == payload.get('revision') for e in (store.get('sessions/' + payload['item']) or {}).get('steps',[]))
-                    track(store.step,payload['item'],'edit' if follow else {'prepared':'prepare','rendered':'render'}.get(payload['step'],payload['step']),{'state':'failed'},payload.get('revision'))
+                    track(store.step,payload['item'],'edit' if follow else {'prepared':'prepare','rendered':'render'}.get(payload['step'],payload['step']),{'state':'failed','error':(str(failure) if isinstance(failure,(Error,StateError)) else 'Операция остановлена. Материал и контрольные точки сохранены.')[:300]},payload.get('revision'))
                     try:
                         finish_status(config,(store.get('items/' + payload['item']) or {}).get('status_message'),'Остановлено.')
                     except Exception:
@@ -2254,7 +2277,9 @@ def handle_worker(request):
                     name = post_name(store,saved)
             except Exception:
                 name = ''
-            if name and text.startswith(('Черновик не готов','Черновик не получился')):
+            if payload.get('step') == 'reply':
+                text = 'Не смог ответить, повтори вопрос.'
+            elif name and text.startswith(('Черновик не готов','Черновик не получился')):
                 text = 'Черновик' + name + text[len('Черновик'):]
             elif name:
                 text =('Пост' if payload.get('step') in ('run','apply-fix','fix') else 'Черновик') + name + ': ' + text
@@ -2306,7 +2331,7 @@ def maintenance(config,store,bucket):
                 value['day'] = now // 86400
                 return True
             if store.change('token-notifications/' + provider,notify):
-                tell(config,provider + ': нужен новый токен: Generate, setup.sh meta, secret')
+                tell(config,provider.capitalize() + ': токен истёк, посты туда не уходят. Нужен новый токен.')
             continue
         try:
             if expiry - now < 30*86400 and now-token.get('refreshed_at',token.get('issued_at',0)) >= 86400:
@@ -2433,7 +2458,7 @@ def stop_stale(config,store):
         def stop(value):
             if value.get('status') not in ('queued','drafting') or bool(value.get('waiting_upload')) != bool(item.get('waiting_upload')) or not stale(value,now,key in busy):
                 return False
-            value.update(status='failed',stalled=True,**({'upload_timeout':True} if value.get('waiting_upload') else {}))
+            value.update(status='failed',stalled=True,failed_at=now,**({'upload_timeout':True} if value.get('waiting_upload') else {}))
             return True
         stopped = store.change('items/' + key,stop) if item.get('status') in ('queued','drafting') else False
         held = item.get('status') in ('queued','drafting') and not stopped
