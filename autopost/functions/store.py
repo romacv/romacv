@@ -111,7 +111,8 @@ def hinted(text, offers, chosen=()):
 WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'принять':'accept', 'принимаю':'accept', 'принято':'accept', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
 KINDS = ('caption', 'title', 'instruction', 'question', 'rule', 'fix')
 CONTAINER_AGE = 23 * 3600
-DIALOG_LIMIT = 200
+DIALOG_TEXT = 4096
+DIALOG_BYTES = 512 * 1024
 
 
 def word(text):
@@ -152,7 +153,9 @@ def retryable(saved):
 def table_rows(saved, item, zone='Asia/Makassar'):
     chosen = [t for key, label, targets in GROUPS if key in (item or {}).get('chosen', []) for t in targets]
     rows = []
-    for target in dict.fromkeys(list((saved.get('spec') or {}).get('targets', [])) + chosen):
+    finished = saved.get('state') in ('done', 'partial') and bool(saved.get('results') or saved.get('published'))
+    wanted = list(saved.get('results') or {}) + list(saved.get('published') or {}) + list(saved.get('errors') or {}) if finished else []
+    for target in dict.fromkeys(wanted + ([] if finished else list((saved.get('spec') or {}).get('targets', [])) + chosen)):
         if target in NAMES:
             made = (saved.get('results') or {}).get(target) or (saved.get('published') or {}).get(target) or {}
             rows.append({'target':target, 'name':NAMES[target], 'status':target_status(saved, target), 'at':made.get('at'), 'url':made.get('url') or None, 'ok':bool(made.get('url')) and target in (saved.get('results') or {})})
@@ -550,7 +553,11 @@ class Store:
             if value is None:
                 return
             now = time.time()
-            value['dialog'] = ((value.get('dialog') or []) + [{'at':now, 'who':who, 'text':text.strip()[:500]} for who, text in entries])[-DIALOG_LIMIT:]
+            dialog = (value.get('dialog') or []) + [{'at':now, 'who':who, 'text':text.strip()[:DIALOG_TEXT]} for who, text in entries]
+            size = sum(len(row['text'].encode()) for row in dialog)
+            while len(dialog) > 1 and size > DIALOG_BYTES:
+                size -= len(dialog.pop(0)['text'].encode())
+            value['dialog'] = dialog
             self.put('sessions/' + item_id, value, tx)
         try:
             self.atomic(add)
@@ -1109,6 +1116,7 @@ class Store:
     def add_late(self, tx, item, item_id, clip, identifier):
         self.attach(item, clip)
         item['status'] = 'queued'
+        item.pop('stop_why', None)
         item['revision'] += 1
         item['updated'] = time.time()
         self.put('items/' + item_id, item, tx)
@@ -1123,6 +1131,7 @@ class Store:
         if shot:
             item.setdefault('edit_voices' if shot.get('voice') else 'edit_photos', []).append(shot)
         item['status'] = 'queued'
+        item.pop('stop_why', None)
         item['revision'] += 1
         item['updated'] = time.time()
         item.pop('followup', None)
@@ -1321,6 +1330,7 @@ class Store:
             return None
         self.retire(taps, query, 'Повторяю…')
         item.update(status='queued', updated=time.time())
+        item.pop('stop_why', None)
         item.pop('status_message', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'again-' + update_path.split('/', 1)[1])
@@ -1376,6 +1386,7 @@ class Store:
                 self.put(thread_path, thread, tx)
         else:
             item['status'] = 'queued'
+            item.pop('stop_why', None)
             item['revision'] += 1
             item['updated'] = time.time()
             self.job(tx, {'item':followup['item'], 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'unmove-' + identifier, 10)
@@ -1439,6 +1450,7 @@ class Store:
         else:
             session['current'] = item['slug']
             item['status'] = 'queued'
+            item.pop('stop_why', None)
             item['montage'] = montage
             self.job(tx, {'item':item_id, 'step':'montage' if montage else 'draft', 'revision':item['revision']}, 'draft-' + identifier, 5 if late else 0)
             result = None
@@ -1452,6 +1464,7 @@ class Store:
             if value.get('status') != 'queued' or value.get('revision') != revision or value.get('waiting_upload'):
                 return False
             value['status'] = 'drafting'
+            value.pop('stop_why', None)
             value['updated'] = time.time()
             return copy.deepcopy(value)
         return self.change('items/' + identifier, claim)
