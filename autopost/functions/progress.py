@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
+from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, trimmed, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -105,6 +105,17 @@ def user_of(init_data, token, now):
 
 def title_of(item, spec=None):
     return post_title(item, spec)
+
+
+def session_title(item, spec, session, zone):
+    title = title_of(item, spec)
+    if title:
+        return title
+    line = next((trimmed(row.get('text')) for row in session.get('dialog') or [] if row.get('who') == 'owner' and (row.get('text') or '').strip() and not row['text'].strip().startswith('/')), '')
+    if line:
+        return line
+    opened = session.get('opened')
+    return 'Пост от ' + datetime.fromtimestamp(opened, ZoneInfo(zone)).strftime('%H:%M') if opened else ''
 
 
 def public(url):
@@ -392,14 +403,17 @@ def session_view(key, session, item, spec, now, zone, render=None):
     ordered = [s for s in session.get('steps') or [] if s.get('state') == 'running']
     position = next((n for n, s in enumerate(session.get('steps') or [], 1) if s is ordered[-1]), None) if ordered else None
     changed = max([session.get('updated') or 0] + [max(e.get('since') or 0, e.get('ended') or 0) for e in session.get('steps') or [] if e.get('state')])
+    finished = [e.get('ended') or 0 for e in session.get('steps') or [] if e.get('state') in ('done', 'failed', 'cancelled') and e.get('ended')]
+    if not ordered and finished:
+        changed = max(finished)
     idle = max(0, round(now - changed)) if changed else None
     busy = any(not r.get('done') for r in render or [])
-    limit = UPLOAD_DEADLINE if (item or {}).get('waiting_upload') else DRAFT_DEADLINE + FINAL_DEADLINE if busy and ordered and ordered[-1]['id'] in ('draft', 'edit') else IDLE_LIMITS.get(ordered[-1]['id']) if ordered else None
-    stalled = state == 'open' and not stopped and bool(ordered) and idle is not None and limit is not None and idle > limit
+    limit = UPLOAD_DEADLINE if (item or {}).get('waiting_upload') else DRAFT_DEADLINE + FINAL_DEADLINE if busy and ordered and ordered[-1]['id'] in ('draft', 'edit') else IDLE_LIMITS.get(ordered[-1]['id']) if ordered else DRAFT_DEADLINE if finished else None
+    stalled = state == 'open' and not stopped and (bool(ordered) or bool(finished)) and idle is not None and limit is not None and idle > limit
     outcome = {'kind':'stopped','at':changed or now,'why':stop_reason(item, spec)} if stopped else steps['outcome']
     if stopped:
         state = 'stopped'
-    return {'idle':idle,'stalled':stalled,'outcome':outcome,'step':(steps['current'] or {}).get('label'),'step_index':position,'step_count':len([e for e in session.get('steps') or [] if e.get('state')]),'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{**{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()},'reason':reason_of(scrub(row['status'])[8:], row.get('target')) if row['status'].startswith('ошибка: ') else ''} for row in table_rows(spec, item, zone)] if spec else []}
+    return {'idle':idle,'stalled':stalled,'outcome':outcome,'step':(steps['current'] or {}).get('label'),'step_index':position,'step_count':len([e for e in session.get('steps') or [] if e.get('state')]),'item':key,'title':session_title(item, spec, session, zone),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{**{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()},'reason':reason_of(scrub(row['status'])[8:], row.get('target')) if row['status'].startswith('ошибка: ') else ''} for row in table_rows(spec, item, zone)] if spec else []}
 
 
 def session_sub(session):
@@ -504,7 +518,7 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
     for key, item in collecting:
         if key not in busy:
             count = len([m for m in item.get('messages', []) if m.get('photo') or m.get('video') or m.get('document')])
-            waiting.append({'id':key,'title':title_of(item, newest.get(key)),'status':'collecting','wait':'Собираю материал' + (': ' + str(count) + ' влож.' if count else '') + '; жду «Готово»','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
+            waiting.append({'id':key,'title':title_of(item, newest.get(key)),'status':'collecting','wait':'Собираю материал' + (', вложения: ' + str(count) if count else '') + '; жду «Готово»','targets':[label for name, label, _ in GROUPS if name in item.get('chosen', [])],'at':item.get('updated') or item.get('created') or 0})
     latest = latest_specs(store, sorted({spec.get('item') for slug, spec in previews} - {None}))
     for slug, spec in previews:
         item = items.get(spec.get('item'))

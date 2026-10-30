@@ -273,9 +273,22 @@ class StateError(Exception):
     pass
 
 
+def open_hint(item, key):
+    if not item or item.get('status') not in ('queued', 'drafting', 'failed') or item.get('revision') is None:
+        return POST_HINT
+    values = [{'text':label, 'callback_data':verb + ':' + key + ':' + str(item['revision'])} for verb, label in (('cdraft', 'Отменить'), ('again', 'Повторить'))]
+    if any(len(x['callback_data'].encode()) > 64 for x in values):
+        return POST_HINT
+    line = 'Пост' + titled(item) + ' уже открыт: ' + ('остановлен' if item['status'] == 'failed' else pin_stage(item, None)) + '. Новый пост: /post.'
+    return {'item':key, 'revision':item['revision'], 'text':line, 'reply_markup':{'inline_keyboard':[values]}}
+
+
 def trimmed(text):
     text = ' '.join((text or '').split())
-    return text[:40] + '…' if len(text) > 40 else text
+    if len(text) <= 60:
+        return text
+    cut = text[:60]
+    return (cut.rsplit(' ', 1)[0] if ' ' in cut else cut) + '…'
 
 
 def snippet(text):
@@ -1021,7 +1034,7 @@ class Store:
                 return None if once() else 'Пост' + titled(pending) + ': ' + pin_stage(pending, None) + '.'
             if not target or target.get('operation') or target.get('state') not in ('previewed', 'drafting', 'needs-edit') or not note and not photo and not message.get('voice') or any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 self.put(update_path, {'received':time.time()}, tx)
-                return None if once() else 'К черновику принимаю текст, фото, видео и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else POST_HINT
+                return None if once() else 'К черновику принимаю текст, фото, видео и голос. Новый пост начинается с /post.' if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit') else open_hint(pending, slug)
             edit, shot = self.edit_note(message)
             if edit.rstrip().endswith('?') and not shot:
                 held = self.get('items/' + target['item'], tx) or {}

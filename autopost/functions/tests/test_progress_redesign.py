@@ -7,7 +7,7 @@ from unittest.mock import patch
 FUNCTIONS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(FUNCTIONS))
 from fake_firestore import FakeFirestore
-from store import Store, table_rows
+from store import Store, table_rows, trimmed, open_hint, POST_HINT
 import main as app
 import progress
 
@@ -85,6 +85,42 @@ class SessionViewTests(unittest.TestCase):
     def test_closed_session_is_never_stalled(self):
         value = session([step('draft', 'done', 0, 10)], 'published')
         self.assertFalse(self.view(value, 99999, {'status':'approved','messages':[]})['stalled'])
+
+
+class StuckAndTitleTests(unittest.TestCase):
+    def view(self, value, now, item=None, spec=None):
+        return progress.session_view('item-1', value, item, spec, now, 'Asia/Makassar')
+
+    def test_open_session_without_running_step_stalls_from_last_ended_step(self):
+        value = session([step('collect', 'done', 0, 10), step('draft', 'done', 10, 100), step('publish', 'planned', 100)])
+        fresh = self.view(value, 100 + 600, {'status':'previewed', 'messages':[]})
+        self.assertEqual((fresh['stalled'], fresh['idle']), (False, 600))
+        stuck = self.view(value, 100 + 2000, {'status':'previewed', 'messages':[]})
+        self.assertEqual((stuck['stalled'], stuck['idle'], stuck['state']), (True, 2000, 'open'))
+
+    def test_waiting_upload_does_not_stall_without_running_step(self):
+        value = session([step('collect', 'done', 0, 10)])
+        self.assertFalse(self.view(value, 10 + 5000, {'status':'queued', 'waiting_upload':True, 'messages':[]})['stalled'])
+
+    def test_title_falls_back_to_first_owner_line_then_time(self):
+        value = session([step('collect', 'running', 0)], dialog=[{'who':'owner', 'text':'/post'}, {'who':'bot', 'text':'Присылай'}, {'who':'owner', 'text':'Кофейня на набережной'}])
+        self.assertEqual(self.view(value, 10)['title'], 'Кофейня на набережной')
+        empty = session([step('collect', 'running', 0)], opened=0)
+        empty['opened'] = 3600 * 3
+        self.assertEqual(self.view(empty, 10)['title'], 'Пост от 11:00')
+
+    def test_trimmed_cuts_at_the_last_space_before_sixty(self):
+        self.assertEqual(trimmed('слово ' * 5), 'слово слово слово слово слово')
+        long = ' '.join(['слово'] * 20)
+        cut = trimmed(long)
+        self.assertTrue(cut.endswith('слово…') and len(cut) <= 61)
+        self.assertEqual(trimmed('х' * 80), 'х' * 60 + '…')
+
+    def test_message_to_an_open_post_gets_status_and_buttons(self):
+        reply = open_hint({'status':'failed', 'revision':4, 'messages':[{'text':'Кофейня'}]}, 'item-1')
+        self.assertEqual([b['callback_data'] for b in reply['reply_markup']['inline_keyboard'][0]], ['cdraft:item-1:4', 'again:item-1:4'])
+        self.assertIn('уже открыт', reply['text'])
+        self.assertEqual(open_hint(None, None), POST_HINT)
 
 
 class TickStopTests(unittest.TestCase):
