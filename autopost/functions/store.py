@@ -572,8 +572,8 @@ class Store:
         context = {'collecting':bool(opened and opened.get('status') == 'collecting') or (item or {}).get('status') in ('queued', 'drafting', 'previewed'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
         try:
             answer = self.classifier(text.strip(), context)
-        except Exception:
-            logging.error(json.dumps({'code':'classifier_failed'}))
+        except Exception as failure:
+            logging.error(json.dumps({'code':'classifier_failed', 'type':type(failure).__name__, 'status':getattr(failure, 'status_code', None)}))
             return {**found, 'kind':'unclear', 'value':None} if working_draft and not captioned else None
         if not isinstance(answer, dict) or answer.get('kind') not in KINDS or captioned and answer['kind'] not in ('question', 'rule'):
             return None
