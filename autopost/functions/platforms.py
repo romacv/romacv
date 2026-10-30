@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import contextvars
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -366,10 +367,10 @@ def photo_story_video(path):
         raise BuildError('Для фото-истории Telegram нужен ffmpeg, а его нет.')
     directory = Path(tempfile.mkdtemp(prefix='story-'))
     target = directory / 'photo-story.mp4'
-    command = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-loop', '1', '-framerate', '30', '-i', str(path), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '5',
+    command = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-loop', '1', '-framerate', '30', '-i', str(path), '-t', '5',
                '-vf', 'scale=720:1280:out_range=tv,setsar=1,format=yuv420p', '-pix_fmt', 'yuv420p', '-r', '30',
-               '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-shortest', '-map_metadata', '-1',
-               '-c:v', 'libx265', '-preset', 'veryfast', '-tag:v', 'hvc1', '-x265-params', 'keyint=30:min-keyint=30:scenecut=0', '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k',
+               '-an', '-map_metadata', '-1',
+               '-c:v', 'libx265', '-preset', 'ultrafast', '-tag:v', 'hvc1', '-x265-params', 'keyint=30:min-keyint=30:scenecut=0', '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k',
                '-movflags', '+faststart', str(target)]
     try:
         if subprocess.run(command, capture_output=True, timeout=120).returncode == 0 and target.is_file() and 0 < target.stat().st_size <= 30 * 1024 * 1024:
@@ -392,6 +393,9 @@ def video_info(path):
     found = re.search(r'Video: (\w+).*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]', text)
     if found:
         info.update(codec=found.group(1), width=int(found.group(2)), height=int(found.group(3)))
+        turn = re.search(r'displaymatrix: rotation of (-?\d+(?:\.\d+)?) degrees|\brotate\s*:\s*(-?\d+)', text)
+        if turn and round(float(turn.group(1) or turn.group(2))) % 180 == 90:
+            info.update(width=info['height'], height=info['width'])
     found = re.search(r'Duration: (\d+):(\d+):(\d+(?:\.\d+)?)', text)
     if found:
         info['duration'] = round(int(found.group(1)) * 3600 + int(found.group(2)) * 60 + float(found.group(3)), 3)
@@ -404,8 +408,15 @@ def video_size(path):
     return {key: info[key] for key in ('width', 'height') if key in info}
 
 
+@lru_cache(maxsize=64)
+def cached_video_size(path, size, modified):
+    return video_size(Path(path))
+
+
 def video_fields(path):
-    return {**video_size(path), 'supports_streaming': True}
+    path = Path(path)
+    stat = path.stat()
+    return {**cached_video_size(str(path), stat.st_size, stat.st_mtime_ns), 'supports_streaming': True}
 
 
 def clip_story_content(content, path):
@@ -427,18 +438,30 @@ def story_rejection(failure, path):
         pass
 
 
+STORY_VIDEO = {'type': 'video', 'video': 'attach://asset', 'duration': 5.0, 'cover_frame_timestamp': 0.0, 'is_animation': True}
+
+
+def unique_photo(path):
+    data = Path(path).read_bytes()
+    if data[:2] != b'\xff\xd8':
+        raise BuildError('Фото истории Telegram должно быть JPEG.')
+    nonce = secrets.token_bytes(16)
+    directory = Path(tempfile.mkdtemp(prefix='story-'))
+    target = directory / Path(path).name
+    at = 2
+    while len(data) > at + 3 and data[at] == 0xff and 0xe0 <= data[at+1] <= 0xef:
+        at += 2 + struct.unpack('>H', data[at+2:at+4])[0]
+    target.write_bytes(data[:at] + b'\xff\xfe' + struct.pack('>H', len(nonce) + 2) + nonce + data[at:])
+    return target
+
+
 def prepare_story(fields, path):
     content = fields['content']
     directory = None
     if content['type'] == 'photo':
-        try:
-            path = photo_story_video(path)
-        except BuildError:
-            raise
-        except Exception:
-            raise BuildError('Не удалось собрать видео из фото для истории Telegram.') from None
+        path = unique_photo(path)
         directory = path.parent
-        content = {'type': 'video', 'video': 'attach://asset', 'duration': 5.0, 'cover_frame_timestamp': 0.0, 'is_animation': True}
+        content = {'type': 'photo', 'photo': 'attach://asset'}
     else:
         content = clip_story_content(content, path)
     return {**fields, 'content': content}, path, directory
@@ -457,8 +480,23 @@ def send_story(spec, state, target, step, fields, path):
     if state.get('steps', {}).get(target + ':' + step, {}).get('status') == 'done':
         return checkpoint(spec, state, target, step, lambda: None)
     fields, path, directory = prepare_story(fields, path)
+    def post():
+        try:
+            return post_story(fields, path)
+        except Error as failure:
+            if failure.status_code != 400 or fields['content']['type'] != 'photo':
+                raise
+            rejected = failure
+        try:
+            video = photo_story_video(path)
+        except Exception:
+            raise rejected from None
+        try:
+            return post_story({**fields, 'content': STORY_VIDEO}, video)
+        finally:
+            shutil.rmtree(video.parent, ignore_errors=True)
     try:
-        return checkpoint(spec, state, target, step, lambda: post_story(fields, path))
+        return checkpoint(spec, state, target, step, post)
     finally:
         if directory:
             shutil.rmtree(directory, ignore_errors=True)
@@ -573,8 +611,8 @@ def post_social(spec, state, target, urls, session):
         def send():
             try:
                 return numeric(request('POST', f'{base}/{user}/{edge}', fields, token=token))
-            except Error:
-                if not {'location_id', 'user_tags'} & set(fields):
+            except Error as failure:
+                if failure.status_code != 400 or not {'location_id', 'user_tags'} & set(fields):
                     raise
                 plain = {k: v for k, v in fields.items() if k not in ('location_id', 'user_tags')}
                 return numeric(request('POST', f'{base}/{user}/{edge}', plain, token=token))

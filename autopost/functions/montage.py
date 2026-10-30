@@ -84,6 +84,9 @@ def validate(edl, sources):
             edges = [0] + [x for cue in headers for x in (cue['start'], cue['end'])] + [total]
             if any(abs(edges[i] - edges[i + 1]) > 1/30 for i in range(0, len(edges), 2)):
                 errors.append(target + ': titles must cover the whole timeline from 0 to the total length without gaps')
+    stories = [targets[name] for name in ('ig-story', 'tg-story') if isinstance(targets.get(name), dict)]
+    if len(stories) == 2 and any(stories[0].get(key, []) != stories[1].get(key, []) for key in ('clips', 'subtitles', 'titles')):
+        errors.append('ig-story and tg-story must share one story timeline')
     cover = edl.get('cover')
     if not isinstance(cover, dict) or set(cover) != {'target', 'time', 'text'} or not isinstance(cover.get('target'),str) or cover.get('target') not in totals:
         errors.append('Invalid cover target')

@@ -78,10 +78,10 @@ class EmojiRunTests(unittest.TestCase):
         source = directory/'plate.jpg'
         Image.new('RGB',(1200,900),(250,250,250)).save(source,'JPEG')
         light = media.story_block(overlay(place=None),False)[0]
-        dark = media.story_block(overlay(place=None),True)[0]
+        dark, _, foot = media.story_block(overlay(place=None),True)
         self.assertNotEqual(light.info['margin'],dark.info['margin'])
         box = media.compose_story(source,directory/'story.jpg',overlay(place=None))
-        self.assertEqual((box[2]-box[0],box[3]-box[1]),(dark.width-2*dark.info['margin'],dark.height-2*dark.info['margin']))
+        self.assertEqual((box[2]-box[0],box[3]-box[1]),(foot[2]-foot[0],foot[3]-foot[1]))
 
 
 class HeicTests(unittest.TestCase):

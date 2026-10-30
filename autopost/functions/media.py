@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import unicodedata
 from datetime import timedelta
 import urllib.request
 from platforms import Error, ExpiredMaterial, telegram, digest_file
@@ -195,7 +196,11 @@ def clean_image(source, destination, story=False, crop=False):
         raise Error('Clean image exceeds 8 MB')
 
 FONTS = Path(__file__).with_name('fonts')
-STORY_SAFE = (60, 250, 1020, 1500)
+STORY_SAFE = (80, 250, 1000, 1500)
+STORY_FONT = 64
+STORY_WIDTH = 872
+STORY_PAD = 24
+STORY_PLATE = 8
 EMOJI_BASE = '[\U0001f000-\U0001faff☀-➿⌀-⏿]'
 EMOJI_MARK = '[️\U0001f3fb-\U0001f3ff]*'
 EMOJI_CLUSTER = re.compile('[0-9#*]\ufe0f?\u20e3|[\U0001f1e6-\U0001f1ff]{2}|' + EMOJI_BASE + EMOJI_MARK + '(?:‍' + EMOJI_BASE + EMOJI_MARK + ')*')
@@ -322,10 +327,10 @@ def place_pill(text):
     return soft_shadow(image,18,90)
 
 
-def wrap_balanced(text, font, limit=900):
+def wrap_balanced(text, font, limit=900, most=3):
     from itertools import combinations
     words = text.split()
-    for count in (1, 2, 3):
+    for count in range(1, most+1):
         best = None
         for cuts in combinations(range(1, len(words)), count-1):
             edges = (0, *cuts, len(words))
@@ -343,19 +348,15 @@ def is_light(region):
     return ImageStat.Stat(region.convert('L')).mean[0] > 140
 
 
-def story_line(text, align, dark=False):
+def story_line(text, align, dark=False, limit=STORY_WIDTH):
     from PIL import Image, ImageFont
     bold = str(FONTS/'InterDisplay-Bold.otf')
-    size = 64
-    while True:
-        font = ImageFont.truetype(bold,size)
-        lines = wrap_balanced(text,font)
-        if lines:
-            break
-        size -= 4
-        if size < 32:
-            raise Error('Story text cannot fit the safe width')
-    pad, step = 24, round(size*1.2)
+    size = STORY_FONT
+    font = ImageFont.truetype(bold,size)
+    lines = wrap_balanced(text,font,limit,3)
+    if not lines:
+        raise Error('Story text cannot fit the safe width')
+    pad, step = STORY_PAD, round(size*1.2)
     width = round(max(measure(line,font) for line in lines))
     layer = Image.new('RGBA',(width+2*pad,step*len(lines)+2*pad),(0,0,0,0))
     ascent = font.getmetrics()[0]
@@ -368,10 +369,10 @@ def story_line(text, align, dark=False):
     return soft_shadow(layer,18,90)
 
 
-def story_block(overlay, dark):
+def story_block(overlay, dark, text=None, place=True, limit=STORY_WIDTH):
     from PIL import Image
-    align = overlay['align']
-    parts = ([place_pill(overlay['place'])] if overlay.get('place') else []) + [story_line(overlay['text'],align,dark)]
+    align = 'center'
+    parts = ([place_pill(overlay['place'])] if place and overlay.get('place') else []) + [story_line(overlay['text'] if text is None else text,align,dark,limit)]
     gap = 8
     margin = max(part.info['margin'] for part in parts)
     width = max(part.width - 2*part.info['margin'] for part in parts) + 2*margin
@@ -389,32 +390,119 @@ def story_block(overlay, dark):
     text = parts[-1]
     box = (x + text.info['margin'], tops[-1] + text.info['margin'], x + text.width - text.info['margin'], tops[-1] + text.height - text.info['margin'])
     block.info['margin'] = margin
-    return block, box
+    glyph = (box[0]+STORY_PAD,box[1]+STORY_PAD,box[2]-STORY_PAD,box[3]-STORY_PAD)
+    plate = (glyph[0]-24,glyph[1]-STORY_PLATE,glyph[2]+24,glyph[3]+STORY_PLATE)
+    shapes = [plate]
+    if len(parts) > 1:
+        pill = parts[0]
+        pill_left = margin + (inner_max-(pill.width-2*pill.info['margin']))//2
+        shapes.append((pill_left,margin,pill_left+pill.width-2*pill.info['margin'],margin+pill.height-2*pill.info['margin']))
+    foot = (min(r[0] for r in shapes),min(r[1] for r in shapes),max(r[2] for r in shapes),max(r[3] for r in shapes))
+    return block, box, foot
+
+
+def integral(cells, columns, rows):
+    total = [[0]*(columns+1) for _ in range(rows+1)]
+    for row in range(rows):
+        for col in range(columns):
+            total[row+1][col+1] = cells[row*columns+col] + total[row][col+1] + total[row+1][col] - total[row][col]
+    return total
 
 
 def edge_map(canvas):
     from PIL import Image, ImageFilter
     small = canvas.convert('L').filter(ImageFilter.FIND_EDGES).resize((108,192),Image.BOX)
-    cells = list(small.tobytes())
-    total = [[0]*109 for _ in range(193)]
-    for row in range(192):
-        for col in range(108):
-            total[row+1][col+1] = cells[row*108+col] + total[row][col+1] + total[row+1][col] - total[row][col]
-    return total
+    return integral(list(small.tobytes()),108,192)
 
 
-def emptiest_top(total, left, width, height, low, high):
-    c0, c1 = max(0,left//10), min(108,-(-(left+width)//10))
-    rows = max(1,round(height/10))
-    best = None
-    for top in range(low,high-height+1,10):
-        r0 = top//10
-        r1 = min(192,r0+rows)
-        density = (total[r1][c1]-total[r0][c1]-total[r1][c0]+total[r0][c0])/max(1,(r1-r0)*(c1-c0))
-        cost = density + 14*(top-low)/max(1,high-low)
-        if best is None or cost < best[0]:
-            best = (cost,top)
-    return best[1] if best else low
+KEEP_COLUMNS, KEEP_ROWS, KEEP_CELL = 54, 96, 20
+HEAD_ROOM = 1
+
+
+def main_blobs(grown):
+    seen, blobs = set(), []
+    for start, found in enumerate(grown):
+        if found and start not in seen:
+            seen.add(start)
+            cells, pending = [], [start]
+            while pending:
+                i = pending.pop()
+                cells.append(i)
+                x, y = i % KEEP_COLUMNS, i//KEEP_COLUMNS
+                for n, ok in ((i+1,x+1 < KEEP_COLUMNS),(i-1,x > 0),(i+KEEP_COLUMNS,y+1 < KEEP_ROWS),(i-KEEP_COLUMNS,y > 0)):
+                    if ok and grown[n] and n not in seen:
+                        seen.add(n)
+                        pending.append(n)
+            blobs.append(cells)
+    biggest = max((len(b) for b in blobs),default=0)
+    kept = [False]*len(grown)
+    for cells in blobs:
+        if len(cells)*10 >= biggest:
+            for i in cells:
+                kept[i] = True
+    return kept
+
+
+def subject_keepout(canvas):
+    from PIL import Image, ImageFilter
+    small = canvas.convert('RGB').resize((KEEP_COLUMNS,KEEP_ROWS),Image.BOX)
+    hsv = small.convert('HSV')
+    saturation, value = hsv.getchannel(1).tobytes(), hsv.getchannel(2).tobytes()
+    fine = small.filter(ImageFilter.GaussianBlur(0.7)).tobytes()
+    surround = small.filter(ImageFilter.GaussianBlur(9)).tobytes()
+    contrast = []
+    for i in range(KEEP_COLUMNS*KEEP_ROWS):
+        x, y = i % KEEP_COLUMNS/KEEP_COLUMNS - 0.5, i//KEEP_COLUMNS/KEEP_ROWS - 0.55
+        centre = math.exp(-(x*x/0.09 + y*y/0.12))
+        contrast.append(sum(abs(fine[3*i+k]-surround[3*i+k]) for k in range(3))*centre)
+    cut = sorted(contrast)[int(len(contrast)*0.8)]
+    marked = [saturation[i] > 165 and value[i] > 120 or cut > 0 and contrast[i] >= cut for i in range(len(contrast))]
+    grown = marked[:]
+    for i, found in enumerate(marked):
+        if found:
+            x, y = i % KEEP_COLUMNS, i//KEEP_COLUMNS
+            for ny in range(max(0,y-HEAD_ROOM),min(KEEP_ROWS,y+2)):
+                for nx in range(max(0,x-1),min(KEEP_COLUMNS,x+2)):
+                    grown[ny*KEEP_COLUMNS+nx] = True
+    return integral([int(v) for v in main_blobs(grown)],KEEP_COLUMNS,KEEP_ROWS)
+
+
+def box_sum(total, scale, left, top, width, height):
+    columns, rows = len(total[0])-1, len(total)-1
+    c0, c1 = max(0,left//scale), min(columns,-(-(left+width)//scale))
+    r0, r1 = max(0,top//scale), min(rows,-(-(top+height)//scale))
+    if c1 <= c0 or r1 <= r0:
+        return 0, 1
+    return total[r1][c1]-total[r0][c1]-total[r1][c0]+total[r0][c0], (r1-r0)*(c1-c0)
+
+
+def subject_rows(keeps, low, high):
+    rows = [row*KEEP_CELL for _, keep in keeps for row in range(KEEP_ROWS) if box_sum(keep,KEEP_CELL,0,row*KEEP_CELL,1080,KEEP_CELL)[0]]
+    return (min(rows),max(rows)+KEEP_CELL) if rows else (high,high)
+
+
+def free_slot(frames, layouts, low, high):
+    top_edge, bottom_edge = subject_rows(frames,low,high)
+    def options(width, height):
+        left = (1080-width)//2
+        for top in range(low,high-height+1,10):
+            density = 0
+            for busy, keep in frames:
+                if box_sum(keep,KEEP_CELL,left,top,width,height)[0]:
+                    break
+                cells, count = box_sum(busy,10,left,top,width,height)
+                density = max(density,cells/count)
+            else:
+                yield 0 if top+height/2 <= (top_edge+bottom_edge)/2 else 2 if top >= bottom_edge else 1, density + 14*(top-low)/max(1,high-low), top
+    for variant, (width, height) in enumerate(layouts):
+        above = [(cost,top) for where, cost, top in options(width,height) if where == 0]
+        if above:
+            return variant, (1080-width)//2, min(above)[1]
+    width, height = layouts[-1]
+    rest = sorted(options(width,height))
+    if rest:
+        return len(layouts)-1, (1080-width)//2, rest[0][2]
+    return None
 
 
 def backdrop(canvas, box):
@@ -426,6 +514,16 @@ def backdrop(canvas, box):
     canvas.paste(blurred,box[:2],mask.filter(ImageFilter.GaussianBlur(8)))
 
 
+def story_variants(overlay):
+    text, place = overlay['text'], overlay.get('place') or None
+    bare = re.sub(r'\s+',' ',re.sub(r'\s*@[A-Za-z0-9._]{2,30}','',text)).strip(' -–—,:;')
+    cut = re.split(r'\s[-–—]\s|[,;:.!?]\s',bare,1)[0].strip()
+    words = bare.split()
+    short = cut if cut and cut != bare else ' '.join(words[:max(1,len(words)//2)])
+    variants = [(text,place),(bare,place),(bare,None),(short,None)]
+    return [v for i, v in enumerate(variants) if v[0] and v not in variants[:i]]
+
+
 def compose_story(source, destination, overlay):
     from PIL import Image, ImageOps, ImageCms
     source, destination = Path(source), Path(destination)
@@ -434,37 +532,59 @@ def compose_story(source, destination, overlay):
     scale = max(1080/photo.width,1920/photo.height)
     left = (photo.width*scale-1080)/2
     canvas = ImageOps.fit(photo,(1080,1920)).convert('RGBA')
-    ax = overlay['anchor'][0]*photo.width*scale - left
-    busy = edge_map(canvas)
-    def place(block):
-        margin = block.info['margin']
-        width, height = block.size
-        x = round(min(max(ax - width/2,STORY_SAFE[0]-margin),STORY_SAFE[2]-width+margin))
-        return x, emptiest_top(busy,x+margin,width-2*margin,height-2*margin,STORY_SAFE[1],STORY_SAFE[3]) - margin
-    block, box = story_block(overlay,False)
-    x, y = place(block)
+    frames = [(edge_map(canvas),subject_keepout(canvas))]
+    def place(dark):
+        blocks = []
+        for text, pill in story_variants(overlay):
+            try:
+                blocks.append(story_block(overlay,dark,text,pill))
+            except Error:
+                pass
+        if not blocks:
+            raise Error('Story text cannot fit the safe width')
+        layouts = [(foot[2]-foot[0],foot[3]-foot[1]) for _, _, foot in blocks]
+        found = free_slot(frames,layouts,STORY_SAFE[1],STORY_SAFE[3])
+        if not found:
+            raise Error('No free space for the story text')
+        variant, left, top = found
+        block, box, foot = blocks[variant]
+        return block, box, left - foot[0], top - foot[1], foot
+    block, box, x, y, foot = place(False)
     if is_light(canvas.crop((x+box[0],y+box[1],x+box[2],y+box[3]))):
-        block, box = story_block(overlay,True)
-        x, y = place(block)
-    margin = block.info['margin']
-    width, height = block.size
-    backdrop(canvas,(x+box[0]-24,y+box[1]-12,x+box[2]+24,y+box[3]+12))
+        block, box, x, y, foot = place(True)
+    backdrop(canvas,(x+box[0],y+box[1]+STORY_PAD-STORY_PLATE,x+box[2],y+box[3]-STORY_PAD+STORY_PLATE))
     canvas.alpha_composite(block,(x,y))
     profile = ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
     canvas.convert('RGB').save(destination,'JPEG',quality=90,icc_profile=profile)
     if destination.stat().st_size > 8_000_000:
         raise Error('Story image exceeds 8 MB')
-    return x+margin, y+margin, x+width-margin, y+height-margin
+    return x+foot[0], y+foot[1], x+foot[2], y+foot[3]
 
 
 def speech_hints(*texts):
     words = []
-    for text in (re.sub(r'https?://\S+|www\.\S+','',t) for t in texts if isinstance(t,str)):
+    for text in (unicodedata.normalize('NFC',re.sub(r'https?://\S+|www\.\S+','',t)) for t in texts if isinstance(t,str)):
+        run, end = [], 0
+        def flush():
+            if len(run) > 1:
+                add(' '.join(run))
+            run.clear()
+        def add(value):
+            value = value[:100].strip()
+            if value and value.lower() not in (w.lower() for w in words):
+                words.append(value)
         for found in re.finditer(r"[A-Za-zА-Яа-яЁё0-9][\w'’-]{2,}",text):
             word = found.group()
             starts = not re.search(r'[^\s"«(]',text[:found.start()]) or re.search(r'[.!?…\n]["»)]*\s*$',text[:found.start()])
-            if (re.search(r'[A-Za-z]',word) or word[0].isupper() and not starts) and word.lower() not in (w.lower() for w in words):
-                words.append(word)
+            if re.search(r'[A-Za-z]',word) or word[0].isupper() and not starts:
+                if run and not re.fullmatch(r'[ \t]+',text[end:found.start()]):
+                    flush()
+                run.append(word)
+                end = found.end()
+                add(word)
+            else:
+                flush()
+        flush()
     return words[:100]
 
 
