@@ -91,7 +91,7 @@ body{margin:0;padding:calc(12px + var(--tg-content-safe-area-inset-top,0px)) 0 c
 .tg .st{grid-column:1;font-size:13px;line-height:18px}
 .tg .s{grid-column:1}
 .kv>div:first-child{min-width:0;overflow-wrap:break-word;hyphens:auto}
-@media(max-width:300px){.seg button{font-size:11px;padding:4px 2px}.kv,.tg,.step{grid-template-columns:minmax(0,1fr)}.kv .v,.step .b,.tg .r{grid-column:1;grid-row:auto;text-align:left}.kv .s,.tg .s,.step .s{grid-column:1}.cost{grid-column:1;grid-row:auto}}
+@media(max-width:300px){.seg{display:grid;grid-template-columns:1fr 1fr}.seg button{font-size:11px;padding:4px 2px}.kv,.tg,.step{grid-template-columns:minmax(0,1fr)}.kv .v,.step .b,.tg .r{grid-column:1;grid-row:auto;text-align:left}.kv .s,.tg .s,.step .s{grid-column:1}.cost{grid-column:1;grid-row:auto}}
 .tg.tap{cursor:pointer;touch-action:manipulation}
 .disc{display:grid;grid-template-columns:minmax(0,1fr) 13px;column-gap:12px;align-items:center;min-height:44px;padding:10px 16px;cursor:pointer;touch-action:manipulation;color:var(--text)}
 .disc .chev{grid-column:2;grid-row:auto}
@@ -138,13 +138,13 @@ a{color:var(--link);text-decoration:none}
 </head>
 <body>
 <p id="hd">Автопостер</p>
-<div class="seg" role="tablist" aria-label="Раздел"><button type="button" role="tab" id="tab-progress">Прогресс</button><button type="button" role="tab" id="tab-costs">Расходы</button><button type="button" role="tab" id="tab-skills">Навыки</button></div>
+<div class="seg" role="tablist" aria-label="Раздел"><button type="button" role="tab" id="tab-progress">Прогресс</button><button type="button" role="tab" id="tab-goals">Цели</button><button type="button" role="tab" id="tab-costs">Расходы</button><button type="button" role="tab" id="tab-skills">Навыки</button></div>
 <div id="view" role="tabpanel"></div>
 <p id="state" role="status"></p>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 'use strict';
-const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', box=document.getElementById('view'), state=document.getElementById('state'),hd=document.getElementById('hd'), views={progress:'Прогресс',costs:'Расходы',skills:'Навыки'}, TZ='Asia/Makassar';
+const app=window.Telegram&&Telegram.WebApp, endpoint='https://us-central1-resromcom-493b4.cloudfunctions.net/progress', box=document.getElementById('view'), state=document.getElementById('state'),hd=document.getElementById('hd'), views={progress:'Прогресс',goals:'Цели',costs:'Расходы',skills:'Навыки'}, TZ='Asia/Makassar';
 const query=new URLSearchParams(location.search);
 let view=query.get('view') in views?query.get('view'):'progress', skill=view==='skills'?query.get('skill')||null:null;
 let cache={}, offset=0, busy=false, loaded=0, failed=null, timer=null, prevWorking=new Set(), action=null, pct={};
@@ -467,6 +467,28 @@ function renderCosts(d){
   setAction(null);
   box.replaceChildren(f);
 }
+function signed(n){return (n>0?'+':n<0?'−':'')+number(Math.abs(n))}
+function renderGoals(d){
+  const f=document.createDocumentFragment();
+  d.networks.forEach(n=>{
+    const rows=[],has=n.count!==null;
+    if(!has)rows.push(empty('Нет данных.'));
+    else{
+      const hero=kv('',number(n.count)+(n.goal?' → '+number(n.goal):''),n.goal?Math.min(100,Math.round(100*n.count/n.goal))+' % цели':null,'big');
+      hero.firstChild.remove();if(n.goal)hero.style.minHeight='72px';rows.push(hero);
+    }
+    if(has&&n.goal){
+      const bar=el('div','bar3'),i=el('i');
+      i.style.width=Math.min(100,100*n.count/n.goal)+'%';bar.append(i);rows.push(bar);
+    }
+    if(n.day!==null)rows.push(kv('За сутки',signed(n.day),n.week!==null&&n.since?'За период с '+dm(Date.parse(n.since+'T12:00:00Z')/1000)+': '+signed(n.week):null));
+    if(n.phrase)rows.push(el('div','txt',n.phrase));
+    f.append(group(n.name,rows));
+  });
+  f.append(el('p','foot','Цель: /goal telegram 1000 в чате с ботом.'));
+  setAction(null);
+  box.replaceChildren(f);
+}
 function bodyText(text){
   const w=el('div','txt'),lines=String(text||'').split('\n');let list=null;
   lines.forEach(l=>{
@@ -508,7 +530,7 @@ function render(){
   if(!d){box.replaceChildren(failed?errorGroup():skeleton());return}
   const y=window.scrollY,sc={};
   document.querySelectorAll('.chat[data-k]').forEach(c=>{sc[c.dataset.k]=c.scrollTop});
-  (view==='costs'?renderCosts:view==='skills'?renderSkills:renderProgress)(d);
+  (view==='costs'?renderCosts:view==='skills'?renderSkills:view==='goals'?renderGoals:renderProgress)(d);
   document.querySelectorAll('.chat[data-k]').forEach(c=>{if(sc[c.dataset.k])c.scrollTop=sc[c.dataset.k]});
   tick();
   window.scrollTo(0,y);

@@ -31,6 +31,7 @@ from store import UNCLEAR, EXPIRED_TEXT, TOKEN_PREFIX, retryable, table_text, ta
 import agents
 import drafter
 import voice
+import goals
 import learning
 import skills
 import progress as progress_view
@@ -466,6 +467,9 @@ def handle_update(request,stop):
             parts = message['text'].split(None,1)
             enqueue({'step':'skills','text':(parts[1] if len(parts) > 1 else '') if name == '/skills' else message['text']},'skills-' + str(value['update_id']))
             return https_fn.Response('{}',content_type='application/json')
+        if isinstance(message.get('text'),str) and name == '/goal':
+            reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':goals.set_goal(store,message['text'])} if store.change('updates/' + str(value['update_id']),received) else {}
+            return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
         if isinstance(message.get('text'),str) and name and name not in COMMANDS:
             reply = {'method':'sendMessage','chat_id':config['roman_chat_id'],'text':hint_for(name)} if store.change('updates/' + str(value['update_id']),received) else {}
             return https_fn.Response(json.dumps(reply,ensure_ascii=False),content_type='application/json')
@@ -2645,6 +2649,11 @@ def daily(event):
             return False
         value['date'] = local.date().isoformat()
         return True
+    if store.change('maintenance/goals',claim):
+        try:
+            goals.run(config,store)
+        except Exception:
+            logging.error(json.dumps({'code':'goals_failed'}))
     if not store.change('maintenance/daily',claim):
         return
     platforms.configure(config,store,Path('/tmp'))

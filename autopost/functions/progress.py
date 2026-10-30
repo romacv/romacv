@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from firebase_functions import https_fn
 
+import goals
 import skills
 from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, trimmed, clock, stale
 
@@ -639,8 +640,8 @@ def respond(request, config, store):
         return https_fn.Response('',status=401,headers=cors)
     try:
         view = request.args.get('view')
-        view = view if view in ('costs', 'skills') else 'progress'
-        body = json.dumps(snapshot(store, now, view, request.args.get('skill'), config.get('timezone', 'Asia/Makassar')))
+        view = view if view in ('costs', 'skills', 'goals') else 'progress'
+        body = json.dumps(goals.view(config, store, now) if view == 'goals' else snapshot(store, now, view, request.args.get('skill'), config.get('timezone', 'Asia/Makassar')))
     except Exception:
         logging.exception('progress snapshot failed')
         return https_fn.Response('',status=503,headers=cors)
