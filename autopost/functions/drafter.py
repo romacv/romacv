@@ -410,15 +410,20 @@ def converse(config, system, text, tokens=4000, rec=None):
 
 
 CLASSIFIER_MODEL = 'claude-haiku-5-5'
-CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (material that is part of the post itself, never an address to the bot), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (a request to the bot that is not a text change: show links, the draft or the table, status, what is published, "публикуй", "повтори", "попробуй ещё раз", why something failed), rule (an order to change or remember the bot itself: "запиши в скиллы", "поправь скилл", "добавь в примеры", "запомни", "всегда делай так"; value is the rule in his words), fix (a change to the already published post). Examples: "покажи все ссылки последнего поста" is question; "добавь в примеры мои соц сети" is rule; "ну; публикуй" is question; "нет, пост это «Гонконг»" is title; "пост черновик" is question. Context JSON: collecting says whether a post is being collected, title and status describe the current post. When unsure between caption and question, return caption if collecting is true, else question.'
+CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (material that is part of the post itself, never an address to the bot), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (a request to the bot that is not a text change: show links, the draft or the table, status, what is published, "публикуй", "повтори", "попробуй ещё раз", why something failed), rule (an order to change or remember the bot itself: "запиши в скиллы", "поправь скилл", "добавь в примеры", "запомни", "всегда делай так"; value is the rule in his words), fix (a change to the already published post). Examples: "покажи все ссылки последнего поста" is question; "добавь в примеры мои соц сети" is rule; "ну; публикуй" is question; "нет, пост это «Гонконг»" is title; "пост черновик" is question. Context JSON: collecting says whether a post is being collected or its draft is open (queued, drafting, previewed), title and status describe the current post. When unsure between caption and question, return caption if collecting is true, else question.'
 
 
 def classify(config, text, context, rec=None):
-    response = connect(config).with_options(timeout=8, max_retries=0).messages.create(model=CLASSIFIER_MODEL, max_tokens=300, system=CLASSIFIER_SYSTEM, messages=[{'role':'user','content':json.dumps({'message':text, 'context':context}, ensure_ascii=False)}])
-    note(rec, response)
-    raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', final_text(response.content).strip())
-    answer = json.loads(raw)
-    return answer if isinstance(answer, dict) else None
+    for attempt in range(2):
+        try:
+            response = connect(config).with_options(timeout=8, max_retries=0).messages.create(model=CLASSIFIER_MODEL, max_tokens=300, system=CLASSIFIER_SYSTEM, messages=[{'role':'user','content':json.dumps({'message':text, 'context':context}, ensure_ascii=False)}])
+            note(rec, response)
+            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', final_text(response.content).strip())
+            answer = json.loads(raw)
+            return answer if isinstance(answer, dict) else None
+        except Exception:
+            if attempt:
+                raise
 
 
 def ask(config, payload, images, validator, montage=False, thread=None, follow=None, rec=None):

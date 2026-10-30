@@ -81,7 +81,7 @@ class EditFlowTests(unittest.TestCase):
         self.assertTrue(tell.call_args.args[1].startswith('Черновик не получился') or ' не получился' in tell.call_args.args[1])
         self.store.intake({'update_id':60,'callback_query':{'id':'60','data':data}},self.config)
         self.assertEqual(self.store.get('items/item-1')['status'],'queued')
-        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':1})
+        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':2})
 
     def test_scheduled_post_is_not_running_media_starts_a_new_post_and_text_names_the_time(self):
         self.store.put('specs/example',{**self.store.get('specs/example'),'state':'approved','spec':{**self.spec,'at':'2099-01-01T10:00:00+00:00'}})
@@ -133,10 +133,13 @@ class EditFlowTests(unittest.TestCase):
         return self.store.intake({'update_id':number,'message':{'message_id':number,'text':'сделай текст короче'}},self.config)
 
     def test_classifier_fix_and_failure_during_drafting_edit_but_question_gets_status(self):
-        for number,kind in ((91,'fix'),(92,None)):
-            self.assertIsNone(self.drafting_with(kind,number))
-            item = self.store.get('items/item-9')
-            self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.assertIsNone(self.drafting_with('fix',91))
+        item = self.store.get('items/item-9')
+        self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.setUp()
+        self.assertEqual(self.drafting_with(None,92),'Не понял: это в пост или вопрос?')
+        self.assertEqual(self.store.get('items/item-9')['revision'],8)
+        self.assertEqual(self.store.get('items/item-9')['pending_text'],['сделай текст короче'])
         self.setUp()
         reply = self.drafting_with('question',93)
         self.assertIn('текст — пишу',reply)
@@ -160,11 +163,15 @@ class PublishedMessageTests(unittest.TestCase):
 
     def test_question_on_a_previewed_draft_is_kept_without_a_read_after_write(self):
         self.store.put('items/item-2',{'status':'previewed','revision':2,'messages':[{'message_id':1,'text':'x'}],'slug':'item-2'})
-        self.store.put('specs/item-2',{'state':'previewed','item':'item-2','spec':{'targets':['tg-channel']},'hash':'abcdefgh'})
+        self.store.put('specs/item-2',{'state':'previewed','item':'item-2','spec':{'targets':['tg-channel'],'copy':{'tg-channel':'x'}},'hash':'abcdefgh'})
         self.store.put('sessions/inbox',{'current':'item-2'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         self.assertEqual(self.say(15,'ты поправил? покажи'),'')
-        self.assertTrue(self.store.get('followups/15')['answered'])
+        job = self.store.get('outbox/answer-15')['payload']
+        sent = []
+        with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append(text) or {'message_id':50}), patch.object(app.drafter,'converse',return_value='{"answer":"Да, поправил"}'):
+            app.question(self.config,self.store,job)
+        self.assertEqual(sent,['Черновик «x»: Да, поправил'])
 
     def test_repeated_publishing_status_is_sent_once(self):
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['ig-story','tg-story']},'results':{'ig-story':{}},'errors':{}})
@@ -175,7 +182,7 @@ class PublishedMessageTests(unittest.TestCase):
         self.store.put('items/old',{'status':'done','revision':1,'messages':[],'slug':'old','title':'Старый'})
         self.store.put('specs/old',{'state':'done','item':'old','published_at':99,'spec':{'targets':['tg-channel']},'results':{'tg-channel':{'url':'https://t.me/old/1','at':1}}})
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
-        self.store.put('items/album',{'status':'approved','revision':1,'messages':[],'slug':'album'})
+        self.store.put('items/album',{'status':'previewed','revision':1,'messages':[],'slug':'album'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(13,'покажи ссылки')
         self.assertNotIn('t.me/old',reply)
@@ -504,7 +511,7 @@ class PreviewRaceTests(unittest.TestCase):
         self.assertEqual((item['status'],item['revision']),('queued',2))
         self.assertIsNotNone(self.store.get('outbox/edit-e1'))
         self.assertEqual(sent[-1][0],'editMessageText')
-        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик отменён.',{'inline_keyboard':[]}))
+        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик заменён новой версией.',{'inline_keyboard':[]}))
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
     def test_a_video_file_sent_to_a_previewed_draft_joins_it_and_requeues_the_montage(self):

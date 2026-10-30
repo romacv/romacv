@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from firebase_functions import https_fn
 
 import skills
-from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
+from store import Store, backfilled, table_rows, GROUPS, NAMES, PIN_SPEC_STAGES, DRAFT_DEADLINE, FINAL_DEADLINE, UPLOAD_DEADLINE, dead_render, newest_specs, newest_states, overdue, pin_stage, post_title, stale
 
 PROJECT = 'resromcom-493b4'
 MAX_AGE = 86400
@@ -45,6 +45,20 @@ COST_ITEMS = 30
 RENDER_LIMIT = 200
 AGENT_LABELS = {'places':'места','media':'фото','copy':'тексты','merge':'сборка','montage':'монтаж'}
 RENDER_STEPS = ('prepare', 'montage', 'render', 'final')
+REASONS = ((r'^API failure: 190$', 'Нужен новый токен'), (r"can't download or generate the file", 'Telegram не принял файл'), (r'Материал истёк', 'материал устарел'))
+IDLE_LIMITS = {'draft':DRAFT_DEADLINE,'edit':DRAFT_DEADLINE,'prepare':DRAFT_DEADLINE + FINAL_DEADLINE,'montage':DRAFT_DEADLINE + FINAL_DEADLINE,'render':DRAFT_DEADLINE + FINAL_DEADLINE,'final':DRAFT_DEADLINE + FINAL_DEADLINE,'publish':600,'verify':600}
+STOPPED_WHY = 'черновик завис и остановлен'
+
+
+def stop_reason(item, spec):
+    item, spec = item or {}, spec or {}
+    if item.get('stop_why') == 'upload':
+        return 'файл не загрузился'
+    if item.get('stop_why') == 'stalled':
+        return STOPPED_WHY
+    texts = [item.get('error'), spec.get('error'), *(spec.get('errors') or {}).values()]
+    text = next((scrub(t) for t in texts if isinstance(t, str) and t), '')
+    return reason_of(text) if text else 'ошибка черновика'
 ANTHROPIC_FIELDS = ('calls', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'web_searches')
 SPECS = (
     ('svc_cpu','Cloud Run (сервисы), vCPU','с',RUN_CPU,'cloud_run_revision','month',1),
@@ -96,6 +110,13 @@ def title_of(item, spec=None):
 def public(url):
     parts = urlsplit(url) if isinstance(url, str) else None
     return bool(parts and parts.scheme == 'https' and parts.hostname in PUBLIC_HOSTS)
+
+
+def reason_of(error, target=None):
+    if not error:
+        return ''
+    text = next((text for pattern, text in REASONS if re.search(pattern, error, re.I)), error)
+    return text + ' ' + NAMES[target] if text == 'Нужен новый токен' and target in NAMES else text
 
 
 def steps_of(job, now):
@@ -186,7 +207,7 @@ def quota(store, now):
                 logging.exception('monitoring read failed: ' + key + ' ' + metric)
     measured = bool(rows)
     if not measured and cached.get('rows'):
-        return [{**row,'stale':True} for row in cached['rows']]
+        return [{**row,'stale':True,'at':cached.get('at')} for row in cached['rows']]
     try:
         seconds = (store.get('usage/' + month) or {}).get('seconds', 0)
         rows.append(quota_row('speech', 'Распознавание речи', 'мин', seconds / 60))
@@ -324,7 +345,7 @@ def targets_in(step, now):
         runs = value.get('runs') or []
         last = runs[-1] if runs else {}
         link = value.get('link')
-        rows.append({'target':target,'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'status':value.get('status'),'attempt':value.get('attempt', value.get('attempts')),'url':value.get('url') if public(value.get('url')) else None,'error':scrub(value.get('error')),'api':scrub(value.get('api')),'link':link if isinstance(link, (bool, type(None))) else link if public(link) else None,'why':scrub(value.get('why')),'seconds':spent(last.get('since'), last.get('ended'), now)})
+        rows.append({'target':target,'name':NAMES.get(target, 'Сайт' if target == 'blog' else target),'status':value.get('status'),'attempt':value.get('attempt', value.get('attempts')),'url':value.get('url') if public(value.get('url')) else None,'error':scrub(value.get('error')),'api':scrub(value.get('api')),'link':link if isinstance(link, (bool, type(None))) else link if public(link) else None,'why':scrub(value.get('why')),'reason':reason_of(scrub(value.get('error')), target),'seconds':spent(last.get('since'), last.get('ended'), now)})
     return rows
 
 
@@ -332,7 +353,18 @@ def timeline(session, now, render=None):
     steps = [{**step, 'state':step.get('state') or 'planned'} for step in session.get('steps') or []]
     running = [step for step in steps if step.get('state') == 'running']
     step = running[-1] if running else None
-    past = [{'id':s['id'],'label':s.get('label', s['id']),'seconds':spent(s.get('since'), s.get('ended'), now) if s.get('ended') else 0,'usd':round(s.get('usd') or 0, 4),'state':s['state'],'targets':targets_in(s, now)} for s in steps if s.get('state') in ('done', 'failed', 'cancelled')]
+    flat = len({(s.get('since'), s.get('ended')) for s in steps if s.get('ended')}) == 1 and sum(1 for s in steps if s.get('ended')) > 1
+    past = []
+    for s in steps:
+        if s.get('state') not in ('done', 'failed', 'cancelled'):
+            continue
+        row = {'id':s['id'],'label':s.get('label', s['id']),'seconds':None if flat else spent(s.get('since'), s.get('ended'), now) if s.get('ended') else 0,'usd':round(s.get('usd') or 0, 4),'state':s['state'],'targets':targets_in(s, now),'attempts':1,'cancelled':int(s['state'] == 'cancelled')}
+        last = past[-1] if past else None
+        if last and last['id'] == row['id']:
+            row = {**row,'seconds':None if flat else last['seconds'] + row['seconds'],'usd':round(last['usd'] + row['usd'], 4),'attempts':last['attempts'] + 1,'cancelled':last['cancelled'] + row['cancelled']}
+            past[-1] = row
+        else:
+            past.append(row)
     current = None
     if step:
         current = {'id':step['id'],'label':step.get('label', step['id']),'since':step.get('since'),'seconds':spent(step.get('since'), None, now),'usd':round(step.get('usd') or 0, 4),'agents':agents_of(step, now),'targets':targets_in(step, now),'render':list(render or []) if step['id'] in RENDER_STEPS else []}
@@ -355,10 +387,19 @@ def session_view(key, session, item, spec, now, zone, render=None):
     state = session.get('state')
     if spec and spec.get('state') in ('done', 'partial') and state in ('open', 'published') and (spec.get('results') or spec.get('published')):
         state = 'published' if spec['state'] == 'done' else 'partial'
+    stopped = state == 'open' and (bool(spec and spec.get('state') == 'failed' and not spec.get('operation')) or bool(item and item.get('status') == 'failed'))
     steps = timeline(session, now, render)
     ordered = [s for s in session.get('steps') or [] if s.get('state') == 'running']
     position = next((n for n, s in enumerate(session.get('steps') or [], 1) if s is ordered[-1]), None) if ordered else None
-    return {'step':(steps['current'] or {}).get('label'),'step_index':position,'step_count':len([e for e in session.get('steps') or [] if e.get('state')]),'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()} for row in table_rows(spec, item, zone)] if spec else []}
+    changed = max([session.get('updated') or 0] + [max(e.get('since') or 0, e.get('ended') or 0) for e in session.get('steps') or [] if e.get('state')])
+    idle = max(0, round(now - changed)) if changed else None
+    busy = any(not r.get('done') for r in render or [])
+    limit = UPLOAD_DEADLINE if (item or {}).get('waiting_upload') else DRAFT_DEADLINE + FINAL_DEADLINE if busy and ordered and ordered[-1]['id'] in ('draft', 'edit') else IDLE_LIMITS.get(ordered[-1]['id']) if ordered else None
+    stalled = state == 'open' and not stopped and bool(ordered) and idle is not None and limit is not None and idle > limit
+    outcome = {'kind':'stopped','at':changed or now,'why':stop_reason(item, spec)} if stopped else steps['outcome']
+    if stopped:
+        state = 'stopped'
+    return {'idle':idle,'stalled':stalled,'outcome':outcome,'step':(steps['current'] or {}).get('label'),'step_index':position,'step_count':len([e for e in session.get('steps') or [] if e.get('state')]),'item':key,'title':title_of(item, spec),'state':state,'opened':session.get('opened'),'ended':session.get('ended') or (spec or {}).get('published_at') if state != 'open' else None,'percent':percent_of(session, state),'steps':steps,'agents':(steps['current'] or {}).get('agents') or [],'dialog':[{'at':row.get('at'),'who':row.get('who'),'text':scrub(row.get('text'))} for row in session.get('dialog') or []],'table':[{**{k:(scrub(v) if k == 'status' else v if k != 'url' or public(v) else None) for k, v in row.items()},'reason':reason_of(scrub(row['status'])[8:], row.get('target')) if row['status'].startswith('ошибка: ') else ''} for row in table_rows(spec, item, zone)] if spec else []}
 
 
 def session_sub(session):
@@ -533,6 +574,8 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
             row['session'], sub = None, ''
         if sub and row in active:
             row['sub'] = sub
+        if row in published and not row.get('at') and row['session']:
+            row['at'] = row['session']['ended'] or row['session']['opened']
     try:
         listed = sorted(((snap.id, snap.to_dict()) for snap in store.db.collection('sessions').stream()), key=lambda row: -((row[1] or {}).get('opened') or 0))
         listed = [(key, doc) for key, doc in listed if isinstance(doc.get('steps'), list) and doc.get('item')]
@@ -554,7 +597,9 @@ def snapshot(store, now, view='progress', skill=None, zone='Asia/Makassar'):
                 continue
             row = next((r for r in active if r.get('item') == key), None)
             try:
-                views.append(session_view(key, doc, item, spec, now, zone, row.get('steps') if row else None))
+                view = session_view(key, doc, item, spec, now, zone, row.get('steps') if row else None)
+                view['stage'] = pin_stage(item, states.get(key), bool((newest.get(key) or {}).get('answered'))) if item and view['state'] == 'open' else None
+                views.append(view)
             except Exception:
                 logging.exception('session view failed')
         sessions_list = sorted(views, key=lambda view: -(view['opened'] or 0))

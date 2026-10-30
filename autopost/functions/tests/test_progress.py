@@ -96,9 +96,9 @@ class ProgressTests(unittest.TestCase):
         self.store.put('usage/anthropic-' + time.strftime('%Y-%m',time.gmtime(now)),{'calls':3,'usd':0.1234,'input_tokens':10})
         self.store.put('sessions/budget',{'costAmount':0.4,'budgetAmount':1,'costIntervalStart':'2026-10-01T07:00:00Z','currencyCode':'USD','at':now - 3600})
         used = {(app.RUN_CPU,'cloud_run_job'):250000,(app.RUN_MEMORY,'cloud_run_job'):1000,(app.FIRESTORE_READS,app.FIRESTORE_DATABASE):1200}
-        with patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=lambda client,project,metric,resource,*rest: used.get((metric,resource),0)), patch.object(app,'registry_bytes',return_value=3 * 2 ** 30), patch.object(app,'billing_rows',return_value=None):
+        with patch.object(app.time,'time',return_value=now), patch.object(app,'monitoring_client',return_value=Mock()), patch.object(app,'series_total',side_effect=lambda client,project,metric,resource,*rest: used.get((metric,resource),0)), patch.object(app,'registry_bytes',return_value=3 * 2 ** 30), patch.object(app,'billing_rows',return_value=None):
             costs = json.loads(self.call(signed(),'costs').get_data(as_text=True))
-        with patch.object(app,'monitoring_client',side_effect=AssertionError), patch.object(app,'billing_rows',side_effect=AssertionError):
+        with patch.object(app.time,'time',return_value=now), patch.object(app,'monitoring_client',side_effect=AssertionError), patch.object(app,'billing_rows',side_effect=AssertionError):
             body = json.loads(self.call(signed()).get_data(as_text=True))
         progress = body
         self.assertTrue(body['active'][0]['title'].startswith('Первый очень длинный') and not body['active'][0]['title'].endswith('…'))
@@ -224,7 +224,7 @@ class ProgressTests(unittest.TestCase):
         self.store.put('sessions/quota',{'at':now - 700,'rows':[{'key':'reads','used':5}]})
         with patch.object(app,'monitoring_client',side_effect=RuntimeError), patch.object(app,'billing_rows',return_value=None):
             rows = app.snapshot(self.store,now,'costs')['quota']
-        self.assertEqual(rows,[{'key':'reads','used':5,'stale':True}])
+        self.assertEqual(rows,[{'key':'reads','used':5,'stale':True,'at':now - 700}])
 
 
 if __name__ == '__main__':
