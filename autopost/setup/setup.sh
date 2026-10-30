@@ -80,13 +80,13 @@ def policies():
     with tempfile.TemporaryDirectory(prefix='autopost-setup-') as directory:
         root = Path(directory)
         files = {
-            'lifecycle.json': {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 2}}]},
+            'lifecycle.json': {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 2, 'matchesPrefix': ['inbox/', 'media/']}}]},
             'cors.json': [{'origin': ['https://www.resrom.com'], 'method': ['PUT'], 'responseHeader': ['Content-Type', 'x-goog-if-generation-match'], 'maxAgeSeconds': 3600}],
             'cleanup.json': [{'name': 'autopost-keep-latest', 'action': {'type': 'Keep'}, 'mostRecentVersions': {'keepCount': 1}}, {'name': 'autopost-delete-old', 'action': {'type': 'Delete'}, 'condition': {'tagState': 'any', 'olderThan': '3600s'}}],
         }
         for name, value in files.items():
             (root / name).write_text(json.dumps(value))
-        say('Set uniform access, enforced public access prevention, two-day lifecycle and browser PUT CORS')
+        say('Set uniform access, enforced public access prevention, two-day lifecycle for inbox/ and media/ and browser PUT CORS')
         cloud('storage', 'buckets', 'update', BUCKET, '--uniform-bucket-level-access', '--public-access-prevention', '--soft-delete-duration=0', '--lifecycle-file=' + str(root / 'lifecycle.json'), '--cors-file=' + str(root / 'cors.json'))
         for repo in ('gcf-artifacts', 'cloud-run-source-deploy'):
             ensure(('artifacts', 'repositories', 'describe', repo, '--location=' + REGION), ('artifacts', 'repositories', 'create', repo, '--location=' + REGION, '--repository-format=docker'))

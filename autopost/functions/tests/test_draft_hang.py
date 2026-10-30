@@ -94,18 +94,14 @@ class RoutingTests(Base):
         reply = self.say(2,'когда будет готово?')
         self.assertNotIn('t.me/x/1',reply['text'])
 
-    def test_link_questions_get_the_table_even_while_a_new_post_drafts(self):
+    def test_link_questions_during_a_new_draft_never_offer_the_older_table(self):
         self.published()
         self.drafting()
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(2,'где ссылки на прошлый пост?')
         self.assertNotIn('t.me/x/1',reply['text'])
         self.assertIn(['Отменить черновик'],[[b['text'] for b in row] for row in reply['reply_markup']['inline_keyboard']])
-        data = reply['reply_markup']['inline_keyboard'][1][0]
-        self.assertEqual(data['text'],'Ссылки и таблица')
-        self.assertTrue(self.tap(3,data['callback_data']))
-        said = [v['payload']['say'] for k,v in self.store.db.values.items() if k.startswith('outbox/table-')]
-        self.assertIn('t.me/x/1',said[0])
+        self.assertNotIn('Ссылки и таблица',[b['text'] for row in reply['reply_markup']['inline_keyboard'] for b in row])
 
     def test_table_button_is_retired_when_the_spec_changed(self):
         self.published()

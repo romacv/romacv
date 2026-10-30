@@ -503,7 +503,17 @@ def free_slot(frames, layouts, low, high):
     rest = sorted(options(width,height))
     if rest:
         return len(layouts)-1, (1080-width)//2, rest[0][2]
-    return None
+    least = []
+    for variant, (width, height) in enumerate(layouts):
+        for left in range(STORY_SAFE[0],STORY_SAFE[2]-width+1,20):
+            for top in range(low,high-height+1,10):
+                covered = max(box_sum(keep,KEEP_CELL,left,top,width,height)[0]/box_sum(keep,KEEP_CELL,left,top,width,height)[1] for _, keep in frames)
+                density = max(box_sum(busy,10,left,top,width,height)[0]/box_sum(busy,10,left,top,width,height)[1] for busy, _ in frames)
+                least.append((round(covered,1),variant,abs(left+width/2-540)+abs(top-low)/4,density,left,top))
+    if not least:
+        return None
+    _, variant, _, _, left, top = min(least)
+    return variant, left, top
 
 
 def backdrop(canvas, box):

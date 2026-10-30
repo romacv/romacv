@@ -76,11 +76,12 @@ class StoryPlacementTests(unittest.TestCase):
         self.assertGreaterEqual(placed[0],80)
         self.assertLessEqual(placed[2],1000)
 
-    def test_no_free_space_fails_instead_of_overlapping(self):
+    def test_no_free_space_still_places_the_text_over_the_least_important_region(self):
         directory = Path(tempfile.mkdtemp())
         scene((0,0,1080,1920)).save(directory/'a.jpg','JPEG',quality=95)
-        with self.assertRaises(media.Error):
-            media.compose_story(directory/'a.jpg',directory/'b.jpg',OVERLAY)
+        placed = media.compose_story(directory/'a.jpg',directory/'b.jpg',OVERLAY)
+        self.assertGreaterEqual(placed[0],80)
+        self.assertLessEqual(placed[2],1000)
 
     def test_every_sampled_frame_is_respected(self):
         canvases = [scene((100,250,500,700)),scene((600,250,1000,700))]

@@ -35,7 +35,12 @@ def map_link(url):
     return parts.scheme == 'https' and parts.hostname in ('maps.google.com', 'www.google.com') and parts.path.startswith('/maps') and parts.port is None and not parts.username
 
 
-def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=False):
+def closing_material(messages,edits):
+    asked = [e for e in edits if isinstance(e,str) and not re.search('ужасн|плох|не пиши|не надо|не добавляй|слоп|убери|без вопрос|ошибк',e,re.I)]
+    return '\n'.join([m.get('text') or m.get('caption') or '' for m in messages] + asked)
+
+
+def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=False, material=None):
     """Offline: no keys, HTTP, external programs or state mutation."""
     errors = []
     size = None
@@ -50,7 +55,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
             raise Error('targets must be a nonempty unique list of supported targets')
         if chosen is not None and any(t not in chosen for t in targets):
             errors.append('targets must be within the chosen targets: ' + ', '.join(chosen))
-        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag', 'location', 'place'}:
+        if set(spec) - {'slug', 'kind', 'at', 'targets', 'media', 'copy', 'approval', 'overlay', 'notes', 'threads_tag', 'location', 'place', 'rule'}:
             errors.append('Unknown spec fields')
         if 'notes' in spec:
             note = spec['notes']
@@ -61,6 +66,8 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                 errors.append('notes must be short plain Russian with no technical words, or omitted')
         if 'location' in spec and (not isinstance(spec['location'], str) or not 1 <= len(spec['location']) <= 120):
             errors.append('location must be a string of 1–120 characters')
+        if 'rule' in spec and not (isinstance(spec['rule'], str) and 1 <= len(spec['rule'].strip()) <= 300):
+            errors.append('rule must be a string of 1-300 characters')
         if 'place' in spec:
             found = spec['place']
             if not isinstance(found, dict) or not {'name', 'address', 'lat', 'lng', 'maps_url'} <= set(found) <= {'name', 'address', 'lat', 'lng', 'maps_url', 'boxes'} or not isinstance(found['name'], str) or not 1 <= len(found['name']) <= 120 or not isinstance(found['address'], str) or not isinstance(found['maps_url'], str) or not map_link(found['maps_url']) or re.search(r'[\x00-\x1f\x7f]|https?:|www\.', found['name']) or not all(isinstance(found[k], (int, float)) and not isinstance(found[k], bool) for k in ('lat', 'lng')) or not -90 <= found['lat'] <= 90 or not -180 <= found['lng'] <= 180 or not isinstance(found.get('boxes', {}), dict):
@@ -159,7 +166,7 @@ def validate(spec, prepared=True, copy_only=False, chosen=None, owner='', clips=
                     errors.append('threads: first line must be a situation or fact')
             if foreign_emoji(text, owner):
                 errors.append(t + ': no emoji unless Roman wrote it')
-            if closing_question(text, owner):
+            if closing_question(text, owner if material is None else material):
                 errors.append(t + ': no closing question to readers unless Roman wrote it')
             if t == 'threads' and len(set(re.findall(r'(?:https?://|www\.)\S+', text))) > 5:
                 errors.append('threads: at most 5 unique links')
@@ -426,7 +433,7 @@ def converse(config, system, text, tokens=4000, rec=None):
 
 
 CLASSIFIER_MODEL = 'claude-haiku-5-5'
-CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (material that is part of the post itself, never an address to the bot), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (a request to the bot that is not a text change: show links, the draft or the table, status, what is published, "публикуй", "повтори", "попробуй ещё раз", why something failed), rule (an order to change or remember the bot itself: "запиши в скиллы", "поправь скилл", "добавь в примеры", "запомни", "всегда делай так"; value is the rule in his words), fix (a change to the already published post). Examples: "покажи все ссылки последнего поста" is question; "добавь в примеры мои соц сети" is rule; "ну; публикуй" is question; "нет, пост это «Гонконг»" is title; "пост черновик" is question. Context JSON: collecting says whether a post is being collected or its draft is open (queued, drafting, previewed), title and status describe the current post. When unsure between caption and question, return caption if collecting is true, else question.'
+CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting bot. Return only JSON {"kind":...,"value":...}. kind is one of: caption (material that is part of the post itself, never an address to the bot), title (he names or renames the post; value is the new title without quotes), instruction (how the post text must be written; value is the instruction), question (a request to the bot that is not a text change: show links, the draft or the table, status, what is published, "публикуй", "повтори", "попробуй ещё раз", why something failed), instruction also covers a complaint or remark about the draft ("плохо", "ужасно", "зачем ты дублировал"); rule (an order to change or remember the bot itself: "запиши в скиллы", "выучи скилл", "поправь скилл", "добавь в примеры", "запомни", "всегда делай так"; value is the rule in his words), fix (a change to the already published post). Examples: "покажи все ссылки последнего поста" is question; "добавь в примеры мои соц сети" is rule; "ну; публикуй" is question; "нет, пост это «Гонконг»" is title; "пост черновик" is question. Context JSON: collecting says whether a post is being collected or its draft is open (queued, drafting, previewed), title and status describe the current post. When unsure between caption and question, return caption if collecting is true, else question.'
 
 
 def classify(config, text, context, rec=None):

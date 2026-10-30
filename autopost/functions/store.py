@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import uuid
+import skills
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -23,11 +24,15 @@ GROUPS = (('story','Сторис',('ig-story','tg-story')),('ig-post','Instagram
 TOGGLES = {'tg' + str(index):group[0] for index,group in enumerate(GROUPS)}
 IMAGE_MIMES = ('image/jpeg', 'image/png', 'image/webp', 'image/heic')
 CHOICE_HINT = 'Отметь, куда пойдёт пост.'
+ASK_INSTRUCTION = 'Инструкция агенту? Напиши, что сделать с материалом, или нажми «Без инструкции».'
 COMMANDS = ('/post', '/skills')
 COMMANDS_HINT = 'Команды: /post — новый пост, /skills — навыки бота.'
 POST_HINT = 'Чтобы начать пост, отправь /post.'
 BURST_SECONDS = 20
 STATUS_REPEAT = 600
+STATUS_CARD = 180
+REFERENCE = re.compile(r'\bрефы?\b|\bреференс\w*|\brefs?\b', re.I)
+REFERENCE_TOPIC = re.compile(r'\bобложк\w*|\bскилл\w*|\bстил[ьяюе]\b|\bcover\b|\bstyle\b', re.I)
 MEDIA_KEYS = ('photo', 'video', 'voice', 'audio', 'document', 'animation', 'video_note')
 
 
@@ -339,17 +344,16 @@ def deleting(saved, item):
 
 def progress(item, job, now):
     name = 'Монтаж' if item.get('montage') else 'Превью'
-    hint = ' Если нужна правка, напиши её утверждением.'
     state = (job or {}).get('state')
     if state == 'failed':
-        return name + titled(item) + ': сборка не удалась, скоро напишу.' + hint
+        return name + titled(item) + ': сборка не удалась, скоро напишу.'
     if state == 'done':
-        return name + titled(item) + ' идёт: собираю превью.' + hint
+        return name + titled(item) + ' идёт: собираю превью.'
     stage = (job or {}).get('progress')
     if not stage or state not in ('queued', 'running'):
-        return name + titled(item) + ' идёт: ' + ('составляю план.' if item.get('montage') else 'готовлю превью.') + hint
+        return name + titled(item) + ' идёт: ' + ('составляю план.' if item.get('montage') else 'готовлю превью.')
     seconds = int(now - stage['since'])
-    return name + titled(item) + ' идёт: ' + stage['label'].lower() + ', ' + str(seconds // 60) + ':' + format(seconds % 60, '02') + '.' + hint
+    return name + titled(item) + ' идёт: ' + stage['label'].lower() + ', ' + str(seconds // 60) + ':' + format(seconds % 60, '02') + '.'
 
 
 AGENT_WORDS = {'places':'места', 'media':'медиа', 'copy':'текст', 'merge':'сборка', 'montage':'монтаж'}
@@ -561,6 +565,8 @@ class Store:
         found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current)}
         opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
         opened = opened if opened and opened.get('status') == 'collecting' else None
+        if opened and opened.get('asking'):
+            return None
         held = self.get('items/' + current) if current and not opened else None
         working_draft = bool(held and held.get('status') in ('queued', 'drafting', 'previewed'))
         if captioned:
@@ -600,6 +606,16 @@ class Store:
         except Exception:
             logging.error(json.dumps({'code':'dialog_write_failed'}))
 
+    def recent_owner(self, session, tx):
+        key = (session.get('collecting') or session.get('current'))
+        item = self.get('items/' + key, tx) if key else None
+        if not item:
+            return []
+        journal = self.get('sessions/' + item.get('slug', ''), tx) or {}
+        said = [row['text'] for row in journal.get('dialog') or [] if row.get('who') == 'owner']
+        edits = [e for e in item.get('edits') or [] if isinstance(e, str)]
+        return list(dict.fromkeys(said[-6:] + edits[-6:]))[-8:]
+
     def textual(self, tx, found, session, identifier, config, business):
         kind, value = found['kind'], found['value']
         zone = (config or {}).get('timezone', 'Asia/Makassar')
@@ -618,8 +634,8 @@ class Store:
             self.put(update_path, {'received':time.time()}, tx)
             return {'text':text, 'reply_markup':markup} if text and markup else text
         def links():
-            shown = live or finished
-            return [('Ссылки и таблица', 'tbl:' + (current['slug'] if live else found.get('finished') or '') + ':' + shown.get('hash', '')[:8])] if shown else []
+            shown = live or (finished if not opened and not (current and (current.get('status') in ('queued', 'drafting', 'previewed') or working(current))) else None)
+            return [('Ссылки и таблица', 'tbs:' + (current['slug'] if live else found.get('finished') or '') + ':' + shown.get('hash', '')[:8])] if shown else []
         def table():
             shown, shown_item = (live, current) if live else (finished, finished_item)
             if not shown:
@@ -638,6 +654,9 @@ class Store:
             return table()
         if kind == 'title' and value and (opened or current):
             item = opened or current
+            if opened:
+                item.pop('asking', None)
+                item.pop('asked', None)
             item['title'] = value[:80]
             item['updated'] = time.time()
             self.put('items/' + (session.get('collecting') if opened else session['current']), item, tx)
@@ -657,10 +676,12 @@ class Store:
             return 'Принял указание для текста: ' + value[:120]
         if kind == 'rule' and (value or found['text']):
             rule = value or found['text']
-            self.job(tx, {'step':'skills', 'text':found['text']}, 'skills-' + identifier)
-            line = 'Правило записал: ' + rule[:120]
-            return answer(line, session.get('collecting') or session.get('current'))
-        if kind in ('fix', 'instruction') and finished and not live and not opened and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
+            recent = self.recent_owner(session, tx)
+            if not recent and len(re.findall(r'\w+', rule)) <= 6 and not rule.count(':'):
+                return answer('Что именно записать в навыки?', session.get('collecting') or session.get('current'))
+            self.job(tx, {'step':'skills', 'text':skills.rule_context(rule, recent)}, 'skills-' + identifier)
+            return answer('Записываю в навыки по твоим последним сообщениям.', session.get('collecting') or session.get('current'))
+        if kind in ('fix', 'instruction') and finished and not live and not opened and not stopped and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
             self.put(update_path, {'received':time.time()}, tx)
             self.queue_fix(tx, found['finished'], finished, 'fix', found['text'], identifier)
             self.subject = finished['item']
@@ -673,7 +694,13 @@ class Store:
             if stopped:
                 return answer(stopped_status(current, journal) + ('\n' + table_text(finished, finished_item, zone) if finished else ''), session['current'], keys([('Повторить', 'again:' + session['current'] + ':' + str(current['revision']))]))
             if working(current):
-                return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'], keys([('Отменить черновик', 'cdraft:' + session['current'] + ':' + str(current['revision']))], links()))
+                last = session.get('status_for') or {}
+                if nudge(found['text']) and last.get('item') == session['current'] and time.time() - last.get('at', 0) < STATUS_CARD:
+                    return answer('', session['current'])
+                status = drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time())
+                session['status_for'] = {'item':session['current'], 'at':time.time()}
+                self.put('sessions/inbox', session, tx)
+                return answer(status, session['current'], keys([('Отменить черновик', 'cdraft:' + session['current'] + ':' + str(current['revision']))], links()))
             if current and current.get('status') == 'previewed':
                 self.keep_question(tx, current, identifier, current['slug'], session['current'], found['text'], {'text':found['text']}, (links() or [(None, None)])[0][1])
                 self.put(update_path, {'received':time.time()}, tx)
@@ -685,6 +712,8 @@ class Store:
         if kind in ('fix', 'instruction'):
             if working(current) and not nudge(found['text']):
                 return None
+            if stopped:
+                return answer(stopped_status(current, journal), session['current'], keys([('Повторить', 'again:' + session['current'] + ':' + str(current['revision']))]))
             if current:
                 return answer('Пост ещё делается: пришли правку, когда будет превью.', session['current'])
             return answer('Сейчас нет поста, к которому это относится.')
@@ -801,6 +830,26 @@ class Store:
                 session['status_line'] = {'text':line, 'at':time.time()}
                 self.put('sessions/inbox', session, tx)
                 return line
+            album = owner if owner and owner.get('refs') else None
+            opening = owned if owned and owned.get('status') == 'collecting' and owner['item'] == session.get('collecting') and all(m.get('media_group_id') == group and m.get('photo') and not (m.get('text') or m.get('caption')) for m in owned['messages']) else None
+            styled = REFERENCE.search(note) and REFERENCE_TOPIC.search(note)
+            if not name and isinstance(photo, list) and photo and not reply_id and (album or opening and styled or not owner and not session.get('collecting') and styled):
+                caption = skills.rule_context(note, self.recent_owner(session, tx)) if note else ''
+                self.put(update_path, {'received':time.time()}, tx)
+                if group and not album:
+                    self.put('albums/' + group, {'refs':True, 'at':time.time()}, tx)
+                if opening:
+                    for earlier in opening['messages']:
+                        self.job(tx, {'step':'refs', 'photo':{'message_id':earlier['message_id'], 'file_id':earlier['photo'][-1]['file_id'], 'file_size':earlier['photo'][-1].get('file_size', 0)}, 'text':''}, 'refs-' + str(earlier['message_id']))
+                    opening.update(status='rejected', updated=time.time(), revision=opening.get('revision', 0) + 1)
+                    self.put('items/' + owner['item'], opening, tx)
+                    self.delete('sessions/' + owner['item'], tx)
+                    session.pop('collecting', None)
+                    self.put('sessions/inbox', session, tx)
+                    if opening.get('keyboard_message'):
+                        self.job(tx, {'step':'remove-keyboard', 'slug':owner['item'], 'message':opening['keyboard_message']}, 'refs-' + identifier + '-keyboard')
+                self.job(tx, {'step':'refs', 'photo':{'message_id':message['message_id'], 'file_id':photo[-1]['file_id'], 'file_size':photo[-1].get('file_size', 0)}, 'text':caption}, 'refs-' + identifier)
+                return None if once() else 'Сохраняю рефы, в пост не добавляю.' + (' Что из подписи попало в навыки, напишу отдельно.' if note else '')
             routed = None
             if owned and not name and not reply_id and any(message.get(k) for k in MEDIA_KEYS):
                 if owned.get('status') == 'collecting':
@@ -859,6 +908,16 @@ class Store:
                     self.put('sessions/inbox', session, tx)
                     self.put(update_path, {'received':time.time()}, tx)
                     return fixing(target, item)
+            lone = not group and not any(message.get(k) for k in MEDIA_KEYS if k != 'voice') and (isinstance(message.get('text'), str) and message['text'].strip() or message.get('voice'))
+            instructing = self.get('items/' + session['collecting'], tx) if session.get('collecting') and not name and lone else None
+            if instructing and instructing.get('status') == 'collecting' and instructing.get('asking') and (not reply_id or reply_id == str(instructing.get('keyboard_message'))):
+                note, shot = (message['text'].strip()[:1000], None) if isinstance(message.get('text'), str) else self.edit_note(message)
+                instructing['instructions'] = (instructing.get('instructions') or []) + [note]
+                if shot:
+                    instructing.setdefault('edit_voices', []).append(shot)
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = session['collecting']
+                return self.collect_callback(tx, 'noin', session['collecting'], instructing['batch_token'], instructing, session, identifier, None, offered(config or {}, business), None, config or {}, business)
             if said and not name:
                 outcome = self.textual(tx, said, session, identifier, config, business)
                 if outcome is not None:
@@ -902,6 +961,8 @@ class Store:
                 continuing = False
                 if filled:
                     item['messages'].append(body)
+                    item.pop('asking', None)
+                    item.pop('asked', None)
                     item['revision'] += 1
                     item['updated'] = time.time()
                     continuing = routed == 'collect'
@@ -969,15 +1030,29 @@ class Store:
             if held and not name and not group and not reply_id and isinstance(text, str) and note and not any(message.get(k) for k in MEDIA_KEYS):
                 placed = said and said['kind'] in ('fix', 'instruction')
                 if nudge(note) or said and not placed:
+                    last = session.get('status_for') or {}
+                    shown = target['item'] if target else slug
+                    quiet = last.get('item') == shown and time.time() - last.get('at', 0) < STATUS_CARD
                     status = drafting_status(held, self.get('sessions/' + (target['item'] if target else slug), tx), self.get('renders/' + held['render'], tx) if held.get('render') else None, time.time())
                     self.put(update_path, {'received':time.time()}, tx)
                     self.subject = target['item'] if target else slug
+                    if quiet:
+                        return None
+                    session['status_for'] = {'item':shown, 'at':time.time()}
+                    self.put('sessions/inbox', session, tx)
                     return {'text':status, 'reply_markup':keys([('Отменить черновик', 'cdraft:' + self.subject + ':' + str(held['revision']))])} if working(held) else status
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
-                if note and note.rstrip().endswith('?') and not photo and not message.get('voice'):
+                if note and note.rstrip().endswith('?') and not photo and not message.get('voice') and not (said and said['kind'] in ('fix', 'instruction')):
                     job = self.get('renders/' + pending['render'], tx) if pending.get('render') else None
+                    last = session.get('status_for') or {}
+                    quiet = nudge(note) and last.get('item') == slug and time.time() - last.get('at', 0) < STATUS_CARD
                     self.put(update_path, {'received':time.time()}, tx)
-                    return None if once() else progress(pending, job, time.time())
+                    if quiet or once():
+                        return None
+                    if nudge(note):
+                        session['status_for'] = {'item':slug, 'at':time.time()}
+                        self.put('sessions/inbox', session, tx)
+                    return progress(pending, job, time.time())
                 edit, shot = self.edit_note(message)
                 key = 'g' + group if group else identifier
                 followup = self.get('followups/' + key, tx) if group else None
@@ -1218,11 +1293,12 @@ class Store:
             return self.unclear_callback(tx, update_path, callback_path, verb, slug, short_hash, query, taps)
         if verb == 'ulnk':
             return self.upload_link_callback(tx, update_path, callback_path, slug, query, taps)
-        batch = verb in ('done','cncl') or verb in TOGGLES
+        batch = verb in ('done','cncl','noin') or verb in TOGGLES
         path = ('items/' if batch else 'specs/') + slug
         saved = self.get(path, tx)
         item = self.get('items/' + saved['item'], tx) if saved and saved.get('item') and not batch else None
         session = self.get('sessions/inbox', tx) or {}
+        newer = self.get('items/' + (session.get('collecting') or session.get('current')), tx) if verb == 'tbs' and (session.get('collecting') or session.get('current')) else None
         journal = self.get('sessions/' + (slug if batch else saved.get('item') or ''), tx) if verb in ('cncl', 'rej') and saved and (batch or saved.get('item')) else None
         pending = self.get('specs/' + saved['deleting'], tx) if verb == 'pdel' and not batch and saved and saved.get('deleting') else None
         identifier = update_path.split('/', 1)[1]
@@ -1233,7 +1309,9 @@ class Store:
             return True if result is None and taps else result
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
-        if verb == 'tbl':
+        if verb in ('tbl', 'tbs'):
+            if newer and newer.get('status') not in ('rejected', 'cancelled') and newer.get('slug') != slug and (newer.get('created') or 0) > (saved.get('published_at') or 0):
+                return 'Эта таблица от прошлого поста.'
             self.job(tx, {'step':'say', 'say':table_text(saved, item, (config or {}).get('timezone', 'Asia/Makassar'))}, 'table-' + hashlib.sha256(query['id'].encode()).hexdigest())
             return True
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
@@ -1483,6 +1561,9 @@ class Store:
                 taps[-1].update(item=item_id, token=token, offers=list(offers))
             label = next(x[1] for x in GROUPS if x[0] == key)
             return ('Отмечено: ' if key in item['chosen'] else 'Снято: ') + label
+        if verb == 'noin':
+            verb = 'done'
+            item['asked'] = True
         if verb == 'done' and not item['messages']:
             return 'Пост пустой. Пришли текст, фото, видео или голос.'
         if verb == 'done' and offers and not [x for x in item.get('chosen', []) if x in offers]:
@@ -1494,6 +1575,12 @@ class Store:
             reasons = unsupported(chosen, photos, video)
             if chosen and len(reasons) == len(chosen):
                 return ' '.join(skipped_lines(reasons))
+        if verb == 'done' and not item.get('instructions') and not item.get('asked'):
+            item.update(asked=True, asking=True)
+            self.put('items/' + item_id, item, tx)
+            self.retire(taps, query, ASK_INSTRUCTION, {'inline_keyboard':[[{'text':'Без инструкции', 'callback_data':'noin:' + item_id + ':' + token}]]})
+            return None
+        item.pop('asking', None)
         montage = video and not photos
         last = item['messages'][-1] if item['messages'] else {}
         late = bool(last.get('media_group_id')) or time.time() - (item.get('updated') or 0) < 5

@@ -369,7 +369,8 @@ def own_place(spec, stored):
 
 def merge(item, source, places, media, copy, clips, chosen, owner):
     entries = {x.get('name'):x for x in (media or {}).get('images', []) if isinstance(x, dict)}
-    order = [n for n in dict.fromkeys((media or {}).get('order') or list(entries)) if n in entries and n in source.get('available_images', []) and entries[n].get('keep', True)][:10]
+    wanted = (media or {}).get('order') if (media or {}).get('explicit') is True else None
+    order = [n for n in dict.fromkeys(wanted or source.get('available_images') or list(entries)) if n in entries and n in source.get('available_images', []) and entries[n].get('keep', True)][:10]
     images = [{'path':n, 'alt':str(entries[n].get('alt') or '')[:1000]} for n in order]
     blocks = copy.get('copy') if isinstance(copy.get('copy'), dict) else {}
     spec = {'slug':source['slug'], 'kind':copy.get('kind'), 'at':copy.get('at') or source.get('current_time'), 'targets':list(blocks), 'media':{'images':images}, 'copy':dict(blocks), 'approval':{}}
@@ -388,7 +389,7 @@ def merge(item, source, places, media, copy, clips, chosen, owner):
         place = next((p['name'] for p in (places or {}).get('places', []) if isinstance(p, dict) and isinstance(p.get('name'), str) and 1 <= len(p['name']) <= 40 and p.get('confidence') == 'high'), None)
         spec['overlay'] = {t:{'text':blocks[t], 'place':place, 'anchor':[0.5, 0.5], 'align':'center'} for t in stories}
     errors = {}
-    for error in drafter.validate(spec, prepared=False, chosen=chosen, owner=owner, clips=bool(clips)):
+    for error in drafter.validate(spec, prepared=False, chosen=chosen, owner=owner, clips=bool(clips), material=drafter.closing_material([m for m in source.get('messages', []) if isinstance(m, dict)], source.get('edits', []) + source.get('instructions', []))):
         errors.setdefault(owner_of(error), []).append(error)
     return spec, errors
 
@@ -409,9 +410,9 @@ def run_draft(config, store, item, revision, source, images, clips, validate, re
         return pool.submit(contextvars.copy_context().run, run.agent, name, payload, images, TOKENS[name], time.monotonic() + bound)
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
-            first = submit(pool, 'places', keys('slug', 'messages', 'edits', 'transcripts', 'available_images', 'clips', 'chosen_targets', 'timezone', 'current_time'), BUDGETS['places'])
+            first = submit(pool, 'places', keys('slug', 'messages', 'instructions', 'edits', 'transcripts', 'available_images', 'clips', 'chosen_targets', 'timezone', 'current_time'), BUDGETS['places'])
             run.started['places'].wait(START_WAIT)
-            second = submit(pool, 'media', keys('slug', 'messages', 'edits', 'available_images', 'clips', 'chosen_targets', 'timezone', 'current_time'), BUDGETS['media'])
+            second = submit(pool, 'media', keys('slug', 'messages', 'instructions', 'edits', 'available_images', 'clips', 'chosen_targets', 'timezone', 'current_time'), BUDGETS['media'])
             outputs, failure = {}, None
             for name, future in (('places', first), ('media', second)):
                 try:
@@ -429,7 +430,7 @@ def run_draft(config, store, item, revision, source, images, clips, validate, re
                 raise failure
             if run.cancel.is_set():
                 raise Cancelled()
-            written = submit(pool, 'copy', {**keys('slug', 'messages', 'edits', 'transcripts', 'clips', 'chosen_targets', 'public_projects', 'edit_screenshots', 'timezone', 'current_time'), 'places':outputs['places'], 'media':outputs['media']}, BUDGETS['copy']).result()
+            written = submit(pool, 'copy', {**keys('slug', 'messages', 'instructions', 'edits', 'transcripts', 'clips', 'chosen_targets', 'public_projects', 'edit_screenshots', 'timezone', 'current_time'), 'places':outputs['places'], 'media':outputs['media']}, BUDGETS['copy']).result()
         if run.cancel.is_set():
             raise Cancelled()
         run.show('merge', status='running', action='собираю черновик')

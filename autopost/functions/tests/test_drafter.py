@@ -31,6 +31,7 @@ class ValidatorTests(unittest.TestCase):
         self.spec['copy']['threads'] = 'A fact.\nWould you pair breakfast with a sauna?'
         self.assertIn('threads: no closing question to readers unless Roman wrote it',drafter.validate(self.spec))
         self.assertEqual(drafter.validate(self.spec,owner='Would you pair breakfast with a sauna?'),[])
+        self.assertIn('threads: no closing question to readers unless Roman wrote it',drafter.validate(self.spec,owner='Would you pair breakfast with a sauna? - bad',material='Breakfast post'))
         self.spec['targets'] = ['blog']
         self.assertTrue(any('supported targets' in e for e in drafter.validate(self.spec)))
 

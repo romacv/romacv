@@ -22,7 +22,7 @@ SEED = {
 - Cover: a clear real frame with the person and device visible, a title that sells the result; no isolated cropped head.
 - Inspect the first frame of every take for stray overlays, notifications, private windows, usernames or location widgets; avoid takes that leak them.
 - Compose each format for its own frame; never reuse a portrait crop in a wide empty composition.
-- Cover text stays inside the middle 3:4 crop (y=240-1680 of 1080x1920).
+- Cover text stays inside the middle 3:4 crop (y=240-1680 of 1080x1920); the render draws the title left-aligned in the upper third over a soft glow, white on a darkened frame or soft deep plum on a lightened one by frame brightness, the closing words purple.
 - When defects recur, stop patching: re-plan from the script, references and recorded remarks.
 - Text sits in the central safe zone with equal side margins; one or two lines; no scrim on plain backgrounds.
 - Keep protected beats and approved staging when revising; never silently omit a device, caption or beat."""},
@@ -36,7 +36,7 @@ SEED = {
 - Never add location metadata to outgoing posts; clean every file's metadata.
 - In tg-channel and Threads copy an Instagram account is its URL https://www.instagram.com/<handle>, never @handle: there a handle opens a Telegram or Threads user.
 - Telegram and Instagram stories with the same media are previewed once, in one step, labelled for both networks.
-- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption and never overlap the subject.
+- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption. When no free space holds even that, it goes over the least-covered region, possibly off-centre.
 - ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."""},
 'roman-social-networks': {'title': 'Соцсети Романа', 'body': """What each of Roman's networks is for and how it sounds.
 - Telegram channel @romacv777, «Канал им. Ресенчука Романа»: Russian, work or personal, the home of every post; media with copy, captions up to 1024 units.

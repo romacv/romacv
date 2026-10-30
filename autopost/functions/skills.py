@@ -15,7 +15,7 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
-MIGRATION = 6
+MIGRATION = 8
 MIGRATIONS = [
     (4, 'writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
     (4, 'montage', " Short unspoken headlines are titles, not subtitles.", ""),
@@ -31,6 +31,8 @@ MIGRATIONS = [
     (5, 'publishing', '', "\n- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object."),
     (5, 'publishing', '', "\n- ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."),
     (6, 'publishing', '- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object.', '- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption and never overlap the subject.'),
+    (7, 'montage', "- Cover text stays inside the middle 3:4 crop (y=240-1680 of 1080x1920).", "- Cover text stays inside the middle 3:4 crop (y=240-1680 of 1080x1920); the render draws the title left-aligned in the upper third over a soft glow, white on a darkened frame or soft deep plum on a lightened one by frame brightness, the closing words purple."),
+    (8, 'publishing', '- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption and never overlap the subject.', '- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption. When no free space holds even that, it goes over the least-covered region, possibly off-centre.'),
 ]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 
@@ -197,6 +199,13 @@ def words(value):
     if isinstance(value, list):
         return [x for v in value for x in words(v)]
     return []
+
+
+def rule_context(text, recent):
+    notes = [x.strip()[:300] for x in recent if isinstance(x, str) and x.strip()]
+    if not notes:
+        return text
+    return text + '\n\nRoman\'s recent messages. Derive the concrete rule from them; the command itself is never the rule:\n' + '\n'.join('- ' + x for x in notes)
 
 
 def flat(text):

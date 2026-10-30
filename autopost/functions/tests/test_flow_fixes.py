@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 import time
 import unittest
@@ -59,6 +60,105 @@ class FlowFixTests(unittest.TestCase):
                 app.take_answer(self.config,self.store,{'item':'item-1','revision':1,'slug':'album','text':text,'update':str(number)},self.store.get('items/item-1'),{'action':'skills'})
         self.assertEqual(delivered,['запиши в скиллы А','запиши в скиллы Б'])
         self.assertEqual(len(sent),3)
+
+    def test_complaints_while_drafting_are_edits_and_only_nudges_get_one_card(self):
+        self.store.put('items/item-9',{'status':'drafting','revision':8,'slug':'item-9','messages':[{'message_id':1,'text':'Тема'}]})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.classifier = lambda text,context:{'kind':'instruction'}
+        for number,text in enumerate(('Плохо оч плохо','Зачем ты дублировал?'),1):
+            self.assertNotIn('идёт',str(self.say(number,text)))
+        self.store.classifier = lambda text,context:{'kind':'question'}
+        self.assertIn('идёт',self.say(3,'ну?')['text'])
+        self.assertFalse(self.say(4,'долго?'))
+
+    def test_status_card_of_a_working_draft_never_offers_an_older_posts_table(self):
+        self.published('old','item-old',state='done',hash='abcdefgh')
+        self.store.put('items/item-9',{'status':'drafting','revision':3,'slug':'item-9','created':50,'messages':[{'message_id':1,'text':'Тема'}]})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.classifier = lambda text,context:{'kind':'question'}
+        card = self.say(1,'как там?')
+        self.assertNotIn('tbl:',str(card))
+        self.assertEqual(self.store.intake({'update_id':2,'callback_query':{'id':'2','data':'tbs:old:abcdefgh'}},self.config),'Эта таблица от прошлого поста.')
+        self.assertIsNone(self.store.get('outbox/table-' + __import__('hashlib').sha256(b'2').hexdigest()))
+        self.assertTrue(self.store.intake({'update_id':3,'callback_query':{'id':'3','data':'tbl:old:abcdefgh'}},self.config))
+        self.store.change('items/item-9',lambda value:value.update(status='rejected'))
+        self.assertTrue(self.store.intake({'update_id':4,'callback_query':{'id':'4','data':'tbs:old:abcdefgh'}},self.config))
+
+    def test_learn_order_stores_the_rule_from_recent_messages_never_the_command(self):
+        self.store.put('items/item-9',{'status':'previewed','revision':8,'slug':'item-9','messages':[],'edits':['На рилс обложке надо делать надписи с блюром градиентом']})
+        self.store.put('sessions/inbox',{'current':'item-9'})
+        self.store.classifier = lambda text,context:{'kind':'rule','value':'Выучи скилл создания обложек'}
+        reply = self.say(3,'Выучи скилл создания обложек')
+        self.assertNotIn('Правило записал',reply)
+        text = self.store.get('outbox/skills-3')['payload']['text']
+        self.assertIn('блюром градиентом',text)
+        self.store.put('items/item-9',{'status':'previewed','revision':9,'slug':'item-9','messages':[]})
+        self.assertEqual(self.say(4,'Выучи скилл создания обложек'),'Что именно записать в навыки?')
+        self.assertIsNone(self.store.get('outbox/skills-4'))
+
+    def test_reference_photos_route_to_refs_only_when_clearly_a_style_reference(self):
+        def album(number, caption, group=None):
+            return self.store.intake({'update_id':number,'message':{'message_id':number,'caption':caption,'media_group_id':group or str(number),'photo':[{'file_id':'f' + str(number),'file_size':10}]}},self.config)
+        album(1,'Вот тебе рефы как обложки делать')
+        self.assertEqual(self.store.get('outbox/refs-1')['payload']['photo']['message_id'],1)
+        self.assertIsNone(self.store.get('items/item-1'))
+        self.store.intake({'update_id':2,'message':{'message_id':2,'media_group_id':'1','photo':[{'file_id':'f2','file_size':10}]}},self.config)
+        self.assertIsNotNone(self.store.get('outbox/refs-2'))
+        album(3,'Рефлексия о стиле жизни')
+        self.assertIsNone(self.store.get('outbox/refs-3'))
+        self.store.put('albums/9',{'item':'item-7','at':1})
+        album(4,'рефы обложка','9')
+        self.assertIsNone(self.store.get('outbox/refs-4'))
+        self.store.put('sessions/inbox',{'collecting':'item-8'})
+        self.store.put('items/item-8',{'status':'collecting','revision':1,'slug':'item-8','messages':[],'batch_token':'t'})
+        album(5,'рефы обложка')
+        self.assertIsNone(self.store.get('outbox/refs-5'))
+        self.store.put('sessions/inbox',{})
+        self.store.intake({'update_id':6,'message':{'message_id':6,'media_group_id':'7','photo':[{'file_id':'f6','file_size':10}]}},self.config)
+        self.assertEqual(self.store.get('sessions/inbox')['collecting'],'item-6')
+        album(7,'Вот рефы как обложки делать','7')
+        self.assertEqual(self.store.get('outbox/refs-6')['payload']['photo']['message_id'],6)
+        self.assertEqual(self.store.get('outbox/refs-7')['payload']['photo']['message_id'],7)
+        self.assertEqual(self.store.get('items/item-6')['status'],'rejected')
+        self.assertNotIn('collecting',self.store.get('sessions/inbox'))
+
+    def test_rule_from_the_draft_model_can_only_add_examples_or_append_lines(self):
+        body = 'Cover headline text uses a purple gradient blur.'
+        self.store.put('skills/old',{'title':'Old','body':'x'*30,'examples':[],'revision':1})
+        self.store.put('skills/covers',{'title':'Обложки','body':body,'examples':[],'revision':1})
+        def apply(ops):
+            with patch.object(app.drafter,'converse',return_value=json.dumps({'ops':ops,'reply':'ok'})), patch.object(app,'tell'):
+                app.apply_rule(self.config,self.store,{'text':'rule'},app.tell)
+        apply([{'op':'delete','id':'old'},{'op':'set','id':'fresh','title':'Новый','body':'A brand new skill body over twenty chars.'}])
+        self.assertIsNotNone(self.store.get('skills/old'))
+        self.assertIsNone(self.store.get('skills/fresh'))
+        apply([{'op':'set','id':'covers','title':'Обложки','body':'Totally different replacement body for the cover skill.'}])
+        self.assertEqual(self.store.get('skills/covers')['body'],body)
+        apply([{'op':'set','id':'covers','title':'Обложки','body':body + '\n- Headline sits in the upper third.'}])
+        self.assertIn('upper third',self.store.get('skills/covers')['body'])
+
+    def test_clips_lead_every_target_unless_photos_are_asked_first(self):
+        photos = [(5,0),(6,1)]
+        self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],[])],['clip','image','image'])
+        self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],['Фото надо первым'])],['image','image','clip'])
+        for edit in ('сначала фото, потом видео','фото перед видео','первым фото'):
+            self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],[edit])],['image','image','clip'])
+        self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],['сначала фото, потом видео','сначала видео, потом фото'])],['clip','image','image'])
+        self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],['видео первым','фото перед видео'])],['image','image','clip'])
+        self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],['сначала фото, потом видео','короче текст'])],['image','image','clip'])
+        for edit in ('сначала фото обрежь','первое фото убери','первую картинку замени','сначала убери фото'):
+            self.assertEqual([k for _,k,_ in app.clip_order(photos,['9'],[edit])],['clip','image','image'])
+
+    def test_closing_question_material_ignores_complaints_and_keeps_requests(self):
+        messages = [{'text':'Завтрак'}]
+        self.assertNotIn('Вы бы',app.drafter.closing_material(messages,['Вы бы совмещали? - ужасно, не пиши такое']))
+        self.assertIn('Закончи словами: Как вам?',app.drafter.closing_material(messages,['Закончи словами: Как вам?']))
+        self.assertIn('Добавь вопрос в конце: Вы бы пошли?',app.drafter.closing_material(messages,['Добавь вопрос в конце: Вы бы пошли?']))
+
+    def test_reel_cover_text_is_a_clean_short_headline(self):
+        text = app.reel_cover_text({'copy':{'ig-reel':'\U0001f305 Завтрак {в} Arctic с сауной и бассейном на крыше\n#bali'}})
+        self.assertTrue(1 <= len(text) <= 40 and not any(c in text for c in '{}\\\U0001f305'))
+        self.assertEqual(app.reel_cover_text({'copy':{}}),'')
 
     def test_post_narration_never_triggers_a_table_or_a_rule(self):
         item = {'status':'drafting','messages':[]}

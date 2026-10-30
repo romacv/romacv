@@ -595,17 +595,56 @@ class CollectingTests(unittest.TestCase):
                     store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
                 token = store.get('items/item-10')['batch_token']
                 self.assertIsNone(self.tap(store,'done','item-10',token,12))
+                self.assertEqual(store.get('items/item-10')['status'],'collecting')
+                self.assertIsNone(self.tap(store,'noin','item-10',token,14))
                 item = store.get('items/item-10')
                 self.assertEqual((item['status'],item['montage']),('queued',clips))
-                self.assertEqual(store.get('outbox/draft-12')['payload'],{'item':'item-10','step':step,'revision':item['revision']})
+                self.assertEqual(store.get('outbox/draft-14')['payload'],{'item':'item-10','step':step,'revision':item['revision']})
                 self.assertNotIn('collecting',store.get('sessions/inbox'))
                 self.assertIsNone(self.tap(store,'done','item-10',token,13))
+
+    def test_post_text_goes_to_copy_and_the_next_text_is_the_agent_instruction(self):
+        store = Store(FakeFirestore())
+        self.post(store,10,text='/post')
+        store.intake({'update_id':11,'message':{'message_id':11,'text':'Завтрак в Arctic'}},self.config)
+        token = store.get('items/item-10')['batch_token']
+        self.assertIsNone(self.tap(store,'done','item-10',token,12))
+        self.assertEqual(store.get('items/item-10')['status'],'collecting')
+        store.intake({'update_id':13,'message':{'message_id':13,'text':'Соедини первые два видео в рилс, остальное как сторис'}},self.config)
+        item = store.get('items/item-10')
+        self.assertEqual(([m['text'] for m in item['messages']],item['instructions'],item['status']),(['Завтрак в Arctic'],['Соедини первые два видео в рилс, остальное как сторис'],'queued'))
+        self.assertEqual(store.get('outbox/draft-13')['payload']['step'],'draft')
+
+    def asked(self):
+        store = Store(FakeFirestore())
+        store.classifier = lambda text,context:self.fail('the instruction step is never classified')
+        self.post(store,10,text='/post')
+        store.intake({'update_id':11,'message':{'message_id':11,'text':'Завтрак в Arctic'}},self.config)
+        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        store.change('items/item-10',lambda value:value.update(keyboard_message=77))
+        return store
+
+    def test_reply_to_the_instruction_question_is_the_instruction(self):
+        store = self.asked()
+        store.intake({'update_id':13,'message':{'message_id':13,'text':'Сделай рилс','reply_to_message':{'message_id':77}}},self.config)
+        item = store.get('items/item-10')
+        self.assertEqual((item['instructions'],item['status']),(['Сделай рилс'],'queued'))
+        self.assertEqual(len([k for k in store.db.values if k.startswith('outbox/draft-')]),1)
+
+    def test_lone_voice_at_the_instruction_question_is_the_instruction_once(self):
+        store = self.asked()
+        store.intake({'update_id':13,'message':{'message_id':13,'voice':{'file_id':'v','duration':3}}},self.config)
+        item = store.get('items/item-10')
+        self.assertEqual((item['instructions'],item['status'],[v['message_id'] for v in item['edit_voices']]),(['[голосовое сообщение 13]'],'queued',[13]))
+        store.intake({'update_id':14,'message':{'message_id':14,'voice':{'file_id':'w','duration':3}}},self.config)
+        self.assertEqual(store.get('items/item-10')['instructions'],['[голосовое сообщение 13]'])
+        self.assertEqual(len([k for k in store.db.values if k.startswith('outbox/draft-')]),1)
 
     def test_progress_question_during_montage_gets_status_and_adds_no_edit(self):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')
         self.video(store,11,'Jakarta Chinatown')
-        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        self.tap(store,'noin','item-10',store.get('items/item-10')['batch_token'],12)
         store.put('renders/r1',{'state':'running','progress':{'label':'Рендерю черновик','since':0}})
         store.change('items/item-10',lambda value:value.update(render='r1'))
         reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Прогресс ?'}},self.config)
@@ -616,7 +655,7 @@ class CollectingTests(unittest.TestCase):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')
         store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
-        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        self.tap(store,'noin','item-10',store.get('items/item-10')['batch_token'],12)
         reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Что там?'}},self.config)
         self.assertIn('готовлю превью',reply['text'])
         self.assertNotIn('Монтаж',reply)
@@ -626,7 +665,7 @@ class CollectingTests(unittest.TestCase):
         store = Store(FakeFirestore())
         self.post(store,10,text='/post')
         store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
-        self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
+        self.tap(store,'noin','item-10',store.get('items/item-10')['batch_token'],12)
         store.change('items/item-10',lambda value:value.update(status='previewed'))
         store.put('specs/item-10',{'state':'previewed','item':'item-10','spec':{'targets':['tg-channel']},'preview_message':100})
         store.put('published-messages/100',{'slug':'item-10'})
@@ -649,7 +688,7 @@ class CollectingTests(unittest.TestCase):
             self.assertIn(': собираю · 1 фото, 1 клип',calls[0][1]['text'])
             self.assertTrue(calls[2][1]['disable_notification'])
             token = store.get('items/item-10')['batch_token']
-            self.tap(store,'done','item-10',token,13)
+            self.tap(store,'noin','item-10',token,13)
             app.sync_pin(self.config,store)
         item = store.get('items/item-10')
         self.assertEqual((item['status'],item['montage']),('queued',False))

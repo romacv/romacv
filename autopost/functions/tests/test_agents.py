@@ -123,6 +123,16 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(live.cancel.is_set())
         self.assertIn('media',self.store.get('sessions/i')['steps'][0]['agents'])
 
+    def test_merge_keeps_roman_sending_order_unless_he_asked_for_another(self):
+        source = {**self.source,'available_images':['clean-851.jpg','clean-852.jpg']}
+        entries = [{'name':n,'alt':'a','keep':True} for n in source['available_images']]
+        good = {'copy':{'tg-channel':'Тост'}}
+        def order(media):
+            spec, _ = agents.merge(None,source,PLACES,media,good,[],None,'x')
+            return [i['path'] for i in spec['media']['images']]
+        self.assertEqual(order({'images':entries,'order':['clean-852.jpg','clean-851.jpg']}),['clean-851.jpg','clean-852.jpg'])
+        self.assertEqual(order({'images':entries,'order':['clean-852.jpg','clean-851.jpg'],'explicit':True}),['clean-852.jpg','clean-851.jpg'])
+
     def test_merge_produces_a_spec_the_validator_accepts(self):
         good = copy_reply('Тихое утро в Убуде и кофе с видом на рисовые террасы.')
         found = {'name':'Suka Espresso','address':'Ubud','lat':-8.5,'lng':115.26,'maps_url':'https://maps.google.com/?cid=1'}

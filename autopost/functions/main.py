@@ -32,6 +32,7 @@ import agents
 import drafter
 import voice
 import learning
+import skills
 import progress as progress_view
 import media
 import montage
@@ -89,7 +90,7 @@ def superseded(store, payload):
     return not item or item['revision'] != payload['revision'] or item.get('status') == 'rejected'
 
 
-ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing','skill':'typing','learn':None,'remove-keyboard':None}
+ACTIONS = {'draft':'typing','fix':'typing','montage':'upload_video','prepared':'upload_video','rendered':'upload_video','run':'upload_photo','apply-fix':'upload_photo','upload-complete':'upload_document','skills':'typing','rule':None,'skill':'typing','refs':None,'learn':None,'remove-keyboard':None}
 
 
 def activity(config, kind, stop):
@@ -148,7 +149,7 @@ def retire_taps(config, store, taps):
                     pass
         else:
             struck = tap['text'].strip() if tap.get('strike') else ''
-            edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip(),entities=[{'type':'strikethrough','offset':0,'length':len(struck.encode('utf-16-le')) // 2}] if struck else None)
+            edit_message(config,tap['message_id'],(tap['text'] + '\n' + tap['line']).strip(),tap.get('markup'),entities=[{'type':'strikethrough','offset':0,'length':len(struck.encode('utf-16-le')) // 2}] if struck else None)
 
 
 WEBHOOK_EDIT_SECONDS = 8
@@ -693,7 +694,10 @@ def offer(config, store, bucket, item_id, spec, assets, directory, basis, revisi
     groups = {}
     for target in platforms.live(spec['targets']):
         files = {}
-        for name, manifest in assets.get(target,{}).items():
+        mine = assets.get(target,{})
+        ordered = [('image' if kind == 'image' else 'clip') + str(index) + ('.jpg' if kind == 'image' else '.mp4') for kind, index in platforms.sequence(spec)]
+        for name in [n for n in ordered if n in mine] + [n for n in mine if n not in ordered]:
+            manifest = mine[name]
             files.setdefault(manifest.get('sha256') or json.dumps(manifest,sort_keys=True),(name,manifest))
         text = '' if target in STORIES else spec['copy'].get(target,'')
         entry = groups.setdefault((frozenset(files),text),[files,text,[]])
@@ -1047,11 +1051,11 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
     source['public_projects'] = projects.result()
     if shots:
         source['edit_screenshots'] = SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))
-    owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
+    owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits + item.get('instructions',[]))
     def validate(value):
         if drafter.answered(value):
             return first_draft_skill(payload,item,'a draft') if follow is None and value == {'action':'skills'} else drafter.answer_errors(value,True) if follow is not None else ['Return a draft, not an answer']
-        errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips))
+        errors = drafter.validate(value, prepared=False, chosen=allowed, owner=owner, clips=bool(clips), material=drafter.closing_material(item['messages'],edits + item.get('instructions',[])))
         if value.get('slug') != item['slug']:
             errors.append('Keep the supplied slug')
         if 'Unknown media fields' not in errors:
@@ -1067,7 +1071,8 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             detail = 'Invalid media path ' + json.dumps(wrong,ensure_ascii=False) + '; use only these available_images paths exactly: ' + json.dumps(list(files))
             errors = [detail if x == 'Invalid media path' else x for x in errors]
         return list(dict.fromkeys(errors))
-    fresh = edits[store.seen(key,payload['revision']):] if store.get('specs/' + item['slug']) else []
+    redo = bool(store.get('specs/' + item['slug']))
+    fresh = edits[store.seen(key,payload['revision']):] if redo else []
     follow = {'task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{} if follow is not None else {'agents':{name:{'status':'waiting'} for name in agents.NAMES}},payload['revision'])
     if follow is None:
@@ -1091,6 +1096,9 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             agents.own_place(spec,store.get('specs/' + item['slug']))
     if superseded(store,payload):
         return
+    learned = spec.pop('rule',None) if not drafter.answered(spec) else None
+    if follow is not None and isinstance(learned,str) and learned.strip():
+        enqueue({'step':'rule','text':skills.rule_context(learned.strip(),[])},'skills-rule-' + hashlib.sha256(learned.strip().encode()).hexdigest()[:16])
     stages.finish(None)
     track(store.step,payload['item'],'edit' if follow is not None else 'draft',{'state':'done'},payload['revision'])
     if drafter.answered(spec):
@@ -1142,14 +1150,14 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
             continue
         assets[target] = target_assets
     if dropped:
-        notes = ['Сторис пропущена: на фото нет места для текста, не перекрывая человека (' + SKIP_NAMES[target] + ').' for target in dropped]
+        notes = ['Сторис пропущена: текст не поместился или картинка тяжелее 8 МБ (' + SKIP_NAMES[target] + ').' for target in dropped]
         if not spec['targets']:
             raise Error('Черновик не готов: ' + ' '.join(notes))
         store.change('items/' + payload['item'],lambda value:value.update(skipped=value.get('skipped',[]) + [line for line in notes if line not in value.get('skipped',[])]))
     if clips:
         acknowledge_remount(config,store,payload,item)
         show_texts(config,store,item,payload['item'],spec['targets'],spec['copy'])
-        start_clips(config,store,bucket,payload,item,spec,assets,clips)
+        start_clips(config,store,bucket,payload,item,spec,assets,clips,edits)
         return
     preview(config,store,bucket,payload['item'],spec,assets,directory,revision=payload['revision'])
 
@@ -1171,9 +1179,28 @@ def reel_timeline(clips,durations):
     return timeline
 
 
-def start_clips(config,store,bucket,payload,item,spec,assets,clips):
+def reel_cover_text(spec):
+    copy = (spec.get('copy') or {}).get('ig-reel') or ''
+    line = next((x for x in copy.splitlines() if x.strip() and not x.strip().startswith('#')),'') or ((spec.get('place') or {}).get('name') or '')
+    line = ' '.join(re.sub(r'[{}\\]','',platforms.EMOJI.sub('',line)).split())
+    if len(line) > 40:
+        line = line[:41].rsplit(' ',1)[0] if ' ' in line[:41] else line[:40]
+    return line.strip()
+
+
+def clip_order(photos,clips,edits):
+    entries = [(mid,'image',index) for mid,index in photos] + [(int(stem),'clip',position) for position,stem in enumerate(sorted(clips,key=int))]
+    photo,video = '(?:фото|картинк|снимк)','(?:видео|клип)'
+    def first(kind,other):
+        return 'сначала\\s+' + kind + '\\w*[^.!?\\n]{0,20}?потом\\s+' + other + '|' + kind + '\\w*\\s+(?:перед|до)\\s+' + other + '|' + kind + '\\w*\\s+(?:надо\\s+)?перв(?:ыми|ым|ой|ые)|перв(?:ым|ыми)\\s+(?:надо\\s+)?' + kind
+    mentions = [(index,match.start(),kind) for index,e in enumerate(edits) if isinstance(e,str) for kind,pattern in (('photos',first(photo,video)),('video',first(video,photo))) for match in re.finditer(pattern,e,re.I)]
+    explicit = bool(mentions) and max(mentions)[2] == 'photos'
+    return sorted(entries) if explicit else sorted(entries,key=lambda e:(e[1] != 'clip',e[0]))
+
+
+def start_clips(config,store,bucket,payload,item,spec,assets,clips,edits):
     photos = [(int(Path(image['path']).stem.removeprefix('clean-')),index) for index,image in enumerate(spec['media']['images'])]
-    order = sorted([(mid,'image',index) for mid,index in photos] + [(int(stem),'clip',position) for position,stem in enumerate(sorted(clips,key=int))])
+    order = clip_order(photos,clips,edits)
     spec['media'] = {**spec['media'],'clips':[{'path':'clip' + str(position) + '.mp4'} for position in range(len(clips))],'sequence':[{'kind':kind,'index':index} for mid,kind,index in order]}
     stems = sorted(clips,key=int)
     prepared = item['prepared']
@@ -1187,7 +1214,8 @@ def start_clips(config,store,bucket,payload,item,spec,assets,clips):
                 raise Error('Черновик не готов: для Reels нужно минимум 3 секунды видео.')
             store.change('items/' + payload['item'],lambda value:value.setdefault('skipped',[]).append('Не пойдёт в Reels: клипов меньше 3 секунд.'))
         else:
-            edl = {'version':1,'kind':spec['kind'],'fit':'crop','targets':{'ig-reel':{'clips':timeline,'subtitles':[]}},'cover':{'target':'ig-reel','time':0.0},'copy':{}}
+            cover = reel_cover_text(spec)
+            edl = {'version':1,'kind':spec['kind'],'fit':'crop','targets':{'ig-reel':{'clips':timeline,'subtitles':[]}},'cover':{'target':'ig-reel','time':0.0,**({'text':cover} if cover else {})},'copy':{}}
     identifier = secrets.token_hex(16)
     project = firebase_admin.get_app().project_id
     formats = sorted({CLIP_FORMATS[t] for t in spec['targets'] if t in CLIP_FORMATS})
@@ -1208,12 +1236,37 @@ def unique_clips(inputs):
     return [a for a in inputs if a['kind'] not in ('video','photo') or not repeated(a)]
 
 
+def save_reference(config,bucket,payload,directory):
+    photo = payload['photo']
+    if photo.get('file_size',0) > 20*1024*1024:
+        raise Error('Reference image rejected')
+    held = media.intake(bucket,'refs-' + str(photo['message_id']),{'messages':[{'message_id':photo['message_id'],'photo':[photo]}]},config,directory)[0]
+    media.upload(bucket,held['path'],'refs/' + str(photo['message_id']) + '.jpg')
+    if payload.get('text'):
+        enqueue({'step':'skills','text':payload['text']},'skills-refs-' + str(photo['message_id']))
+
+
+def apply_rule(config,store,payload,tell):
+    current = skills.load(store)
+    try:
+        value = skills.parse(drafter.converse(config,learning.EDIT + '\n\n' + skills.render(current,True),payload['text'],rec=lambda usage:store.record_usage(None,'skills',usage)))
+    except (ValueError,TypeError):
+        raise Error('Навыки не изменены: ответ модели не разобран.') from None
+    def additive(op):
+        known = current.get(op['id'])
+        return op['op'] == 'example' or op['op'] == 'set' and bool(known) and op['title'] == known['title'] and op['body'].startswith(known['body'].strip())
+    names = skills.change(store,[o for o in skills.operations(value,current) if additive(o)])
+    if names:
+        tell(config,'Записал в навыки: ' + ', '.join(names) + '.')
+
+
 def cancel_button(item_id,revision):
     return [{'text':'Отменить черновик','callback_data':'cdraft:' + item_id + ':' + str(revision)}]
 
 
 def record_skill(payload,item):
-    text = payload.get('text') or (item.get('edits') or [''])[-1] or '\n'.join(x.get('text') or x.get('caption') or '' for x in item.get('messages',[])).strip()
+    edits = [e for e in item.get('edits') or [] if isinstance(e,str)]
+    text = skills.rule_context(payload.get('text') or (edits[-1] if edits else '') or '\n'.join(x.get('text') or x.get('caption') or '' for x in item.get('messages',[])).strip(),edits[-6:-1] if not payload.get('text') else edits[-5:])
     enqueue({'step':'skills','text':text},'skills-act-' + payload['item'] + '-' + hashlib.sha256((payload.get('update') or text).encode()).hexdigest()[:16])
 
 
@@ -1393,10 +1446,12 @@ def edit_media(config,store,bucket,payload,item,directory):
         return note
     def save(value):
         value['edits'] = [fill(note) for note in value.get('edits',[])]
+        value['instructions'] = [fill(note) for note in value.get('instructions',[])]
         value['edit_voices'] = [voice for voice in value.get('edit_voices',[]) if voice['message_id'] not in {v['message_id'] for v in voices}]
         for name in spoken:
             value.get('edit_transcripts',{}).pop(name,None)
     store.change('items/' + payload['item'],save)
+    item['instructions'] = [fill(note) for note in item.get('instructions',[])]
     return settle([fill(note) for note in edits]),shots
 
 
@@ -1460,7 +1515,7 @@ def plan_montage(config,store,bucket,payload,directory):
     if len(images) > 100:
         raise Error('Слишком много кадров. Раздели материал на несколько пакетов.')
     allowed = reeled(restrict(config,store,payload,item,False,True))
-    owner = '\n'.join([m.get('text') or m.get('caption') or '' for m in item['messages']] + edits)
+    owner = drafter.closing_material(item['messages'],edits + item.get('instructions',[]))
     key = 'conversations/' + payload['item'] + '-montage'
     fresh = edits[store.seen(key,payload['revision']):] if item.get('edl') else []
     follow = {'mode':'montage','task':EDIT_TASK,'edits':fresh,**({'chosen_targets':allowed} if allowed else {}),**({'edit_screenshots':SCREENSHOTS % (len(shots),min(len(shots),max(len(item.get('edit_photos',[])) - item.get('photos_applied',0),0)))} if shots else {})} if fresh else None
@@ -2015,7 +2070,7 @@ def fix(config,store,slug):
             if not isinstance(value['copy'],dict) or set(value['copy']) != set(spec['copy']):
                 return ['Keep exactly the published copy targets']
             candidate = {**spec,'copy':value['copy']}
-            return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'])
+            return drafter.validate(candidate,prepared=False,copy_only=True,owner=saved['instruction'],material=drafter.closing_material([],[saved['instruction']]))
         status = {t:{'url':source.get('results',{}).get(t,{}).get('url'),'error':source.get('errors',{}).get(t)} for t in platforms.live(source['spec']['targets'])}
         retry = source.get('state') == 'partial' and bool(source.get('hash')) and retryable(source) and any(source.get('errors',{}).get(t) and t not in source.get('results',{}) for t in source['spec']['targets'])
         asked = {'mode':'fix','published':{'copy':spec['copy']},'status':status,'table':table_rows(source,store.get('items/' + source['item']),config.get('timezone','Asia/Makassar')),'instruction':saved['instruction'],**({'retry_available':True} if retry else {})}
@@ -2279,6 +2334,10 @@ def handle_worker(request):
                 learning.step(config,store,payload)
                 if learned:
                     track(store.step,learned,'learn',{'state':'done'})
+            elif step == 'refs':
+                save_reference(config,bucket,payload,directory)
+            elif step == 'rule':
+                apply_rule(config,store,payload,tell)
             elif step == 'skills':
                 learning.command(config,store,payload,tell)
             elif step == 'skill':

@@ -55,6 +55,13 @@ def bold_font(size):
     return ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'InterDisplay-Bold.otf'),size)
 
 
+def cover_font(size):
+    from PIL import ImageFont
+    font = ImageFont.truetype(str(Path(__file__).parent / 'fonts' / 'onest.ttf'),size)
+    font.set_variation_by_axes([800])
+    return font
+
+
 def tracked_width(text, font, tracking):
     return sum(font.getlength(character) for character in text) + tracking*(len(text)-1)
 
@@ -268,49 +275,85 @@ def wrap_lines(text, font, limit):
     return lines + ([current] if current else [])
 
 
+COVER_THEMES = {
+    'dark': {'wash':(6,8,14),'text':(255,255,255),'accent':(201,160,255),'glow':0.65},
+    'light': {'wash':(244,240,232),'text':(59,49,80),'accent':(122,63,224),'glow':0.75},
+}
+COVER_LIGHT_FRAME = 0.55
+
+
+def accent_start(text):
+    if ',' in text and text.split(',')[-1].strip():
+        tail = text.split(',')[-1].strip().split()
+    else:
+        tail = text.split()[-2:] if len(text.split()) > 3 else text.split()[-1:]
+    return len(''.join(text.split())) - len(''.join(tail))
+
+
 def cover_headline(image, text):
     from PIL import Image, ImageDraw, ImageFilter
     scale = image.width/1080
-    pad = round(34*scale)
-    limit = 780*scale - 2*pad
-    size = 80
+    limit = 900*scale
+    size = 96
     while True:
-        font = bold_font(round(size*scale))
+        font = cover_font(round(size*scale))
         lines = wrap_lines(text,font,limit)
-        if lines and len(lines) <= 2:
+        if lines and len(lines) <= 3:
             break
         size -= 2
         if size < TITLE_SHRINK_FLOOR:
             print('Cover headline dropped: does not fit',flush=True)
             return image
-    line_height = round(size*1.05*scale)
-    top, bottom = font.getbbox('Ду')[1::2]
-    width = round(max(font.getlength(line) for line in lines)) + 2*pad
-    height = (len(lines)-1)*line_height + bottom - top + 2*pad
-    radius = round(line_height*0.45)
-    x = round(150*scale)
-    y = round(max(1250,1500-height/scale)*scale)
-    reach = round(80*scale)
+    line_height = round(size*1.06*scale)
+    top = font.getbbox('Ду')[1]
+    block = (len(lines)-1)*line_height + font.getbbox('Ду')[3] - top
+    safe_top, safe_bottom = round(285*scale), round(1635*scale)
+    draw_top = min(max(round(400*scale),safe_top),safe_bottom - block)
     base = image.convert('RGB')
-    region = base.crop((x-reach,y-reach,x+width+reach,y+height+reach)).filter(ImageFilter.GaussianBlur(40*scale))
-    region = Image.blend(region.point(lambda value: value*8//10),Image.new('RGB',region.size,(8,10,14)),0.45)
-    grow = 4
-    mask = Image.new('L',(width*grow,height*grow),0)
-    ImageDraw.Draw(mask).rounded_rectangle((0,0,width*grow-1,height*grow-1),radius=radius*grow,fill=255)
-    mask = mask.resize((width,height),Image.LANCZOS)
-    result = base.convert('RGBA')
-    shadow = Image.new('RGBA',result.size,(0,0,0,0))
-    ImageDraw.Draw(shadow).rounded_rectangle((x,y+round(10*scale),x+width,y+height+round(10*scale)),radius=radius,fill=(0,0,0,90))
-    result.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(22*scale)))
-    plate = region.crop((reach,reach,reach+width,reach+height)).convert('RGBA')
-    plate.putalpha(mask)
-    result.alpha_composite(plate,(x,y))
-    ring = Image.new('RGBA',(width*grow,height*grow),(0,0,0,0))
-    ImageDraw.Draw(ring).rounded_rectangle((0,0,width*grow-1,height*grow-1),radius=radius*grow,outline=(255,255,255,70),width=grow)
-    result.alpha_composite(ring.resize((width,height),Image.LANCZOS),(x,y))
-    draw = ImageDraw.Draw(result)
+    fade = round(1250*scale)
+    x0 = round(60*scale)
+    box = (x0,draw_top,min(image.width,x0 + round(max(font.getlength(line) for line in lines))),draw_top + block)
+    def mean(picture):
+        return sum(picture.crop(box).convert('L').getdata())/(255*max(1,(box[2]-box[0])*(box[3]-box[1])))
+    theme = 'light' if mean(base) >= COVER_LIGHT_FRAME else 'dark'
+    colours = COVER_THEMES[theme]
+    wash = Image.new('RGB',base.size,colours['wash'])
+    reach = round(100*scale)
+    glow = Image.new('L',base.size,0)
+    ImageDraw.Draw(glow).rectangle((box[0]-reach//2,box[1]-reach//2,box[2]+reach//2,box[3]+reach//2),fill=round(255*colours['glow']))
+    glow = glow.filter(ImageFilter.GaussianBlur(100*scale))
+    peak = 0.80
+    while True:
+        mask = Image.new('L',(1,image.height),round(255*0.45))
+        for row in range(min(fade,image.height)):
+            t = 1 - row/fade
+            mask.putpixel((0,row),round(255*(0.45 + (peak-0.45)*t*t*(3-2*t))))
+        shaded = Image.composite(wash,base,mask.resize(image.size))
+        shaded = Image.composite(wash,shaded,glow)
+        luminance = mean(shaded)
+        if (luminance <= 0.25 if theme == 'dark' else luminance >= 0.75) or peak >= 0.95:
+            break
+        peak += 0.05
+    result = shaded.convert('RGBA')
+    supersample = 2
+    big = cover_font(round(size*scale)*supersample)
+    ascent = big.getmetrics()[0]
+    layer = Image.new('RGBA',(image.width*supersample,image.height*supersample),(0,0,0,0))
+    draw = ImageDraw.Draw(layer)
+    start, seen = accent_start(text), 0
     for index, line in enumerate(lines):
-        draw.text((x+pad,y+pad-top+index*line_height),line,font=font,fill=(255,255,255,255))
+        split = len(line)
+        for position, character in enumerate(line):
+            if not character.isspace() and seen >= start:
+                split = position
+                break
+            seen += not character.isspace()
+        seen += sum(not character.isspace() for character in line[split:])
+        baseline = (draw_top - top + index*line_height)*supersample + ascent
+        draw.text((x0*supersample,baseline),line[:split],font=big,fill=colours['text']+(255,),anchor='ls')
+        if line[split:]:
+            draw.text((x0*supersample + big.getlength(line[:split]),baseline),line[split:],font=big,fill=colours['accent']+(255,),anchor='ls')
+    result.alpha_composite(layer.resize(image.size,Image.LANCZOS))
     return result.convert('RGB')
 
 
