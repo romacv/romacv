@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -59,22 +60,72 @@ class StoryTests(unittest.TestCase):
         self.assertIn('Telegram не принял историю',str(caught.exception))
         self.assertIn("can't download",str(caught.exception))
 
-    def test_photo_story_is_posted_directly_as_a_five_second_video(self):
+    def test_photo_story_is_posted_as_a_unique_photo(self):
         self.spec['targets'] = ['tg-story']
         calls = []
         def fake(method, fields=None, files=None):
-            calls.append((method,fields,files))
+            calls.append((method,fields,files and files.get('asset') and files['asset'].read_bytes()))
             return {'id':7}
-        def convert(path):
-            video = self.root/'converted'/'photo-story.mp4'
-            video.parent.mkdir(exist_ok=True)
-            video.write_bytes(b'mp4')
-            return video
-        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()), patch.object(p,'photo_story_video',convert):
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()):
             url = p.post_telegram(self.spec,{'steps':{}},'tg-story')
-        stories = [(f['content'],files['asset'].name) for method,f,files in calls if method == 'postStory']
-        self.assertEqual(stories,[({'type':'video','video':'attach://asset','duration':5.0,'cover_frame_timestamp':0.0,'is_animation':True},'photo-story.mp4')])
+        stories = [(f['content'],data) for method,f,data in calls if method == 'postStory']
+        self.assertEqual(stories[0][0],{'type':'photo','photo':'attach://asset'})
+        self.assertNotEqual(stories[0][1],(self.root/'image0.jpg').read_bytes())
         self.assertTrue(url.endswith('/s/7'))
+
+    def test_unique_photo_differs_per_call_and_stays_a_1080x1920_jpeg(self):
+        from PIL import Image
+        first, second = p.unique_photo(self.root/'image0.jpg'), p.unique_photo(self.root/'image0.jpg')
+        self.addCleanup(shutil.rmtree,first.parent,True)
+        self.addCleanup(shutil.rmtree,second.parent,True)
+        self.assertNotEqual(first.read_bytes(),second.read_bytes())
+        with Image.open(first) as image:
+            self.assertEqual(image.size,(1080,1920))
+        (self.root/'x.png').write_bytes(b'\x89PNG')
+        with self.assertRaises(p.BuildError):
+            p.unique_photo(self.root/'x.png')
+
+    def test_failed_video_fallback_reraises_the_400_rejection(self):
+        self.spec['targets'] = ['tg-story']
+        def fake(method, fields=None, files=None):
+            raise p.Error('API failure: 400',status_code=400)
+        def broken(path):
+            raise p.BuildError('ffmpeg failed')
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()), patch.object(p,'photo_story_video',broken), self.assertRaises(p.Error) as caught:
+            p.post_telegram(self.spec,{'steps':{}},'tg-story')
+        self.assertEqual(caught.exception.status_code,400)
+
+    def test_unique_photo_inserts_the_comment_after_leading_app_segments(self):
+        data = b'\xff\xd8\xff\xe1\x00\x06abcd\xff\xdb\x00\x02'
+        (self.root/'app.jpg').write_bytes(data)
+        made = p.unique_photo(self.root/'app.jpg')
+        self.addCleanup(shutil.rmtree,made.parent,True)
+        out = made.read_bytes()
+        self.assertEqual(out[:10],data[:10])
+        self.assertEqual(out[10:12],b'\xff\xfe')
+        self.assertTrue(out.endswith(b'\xff\xdb\x00\x02'))
+
+    def test_photo_rejected_with_400_falls_back_to_a_silent_five_second_video(self):
+        self.spec['targets'] = ['tg-story']
+        calls = []
+        def fake(method, fields=None, files=None):
+            calls.append((method,fields))
+            if method == 'postStory' and fields['content']['type'] == 'photo':
+                raise p.Error('API failure: 400',status_code=400)
+            return {'id':7}
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()), patch.object(p,'photo_story_video',self.convert), patch.object(p,'video_info',return_value={}):
+            p.post_telegram(self.spec,{'steps':{}},'tg-story')
+        self.assertEqual([f['content']['type'] for m,f in calls if m == 'postStory'],['photo','video'])
+        self.assertTrue([f['content'] for m,f in calls if m == 'postStory'][1]['is_animation'])
+
+    def test_photo_story_video_has_no_audio_stream(self):
+        with patch.object(p,'ffmpeg_binary',return_value='ffmpeg'), patch.object(p.subprocess,'run',return_value=Mock(returncode=1)) as run:
+            with self.assertRaises(p.BuildError):
+                p.photo_story_video(self.root/'image0.jpg')
+        command = run.call_args[0][0]
+        self.assertIn('-an',command)
+        self.assertNotIn('anullsrc=r=48000:cl=stereo',command)
+        self.assertEqual(command[command.index('-preset')+1],'ultrafast')
 
     def test_local_build_failure_keeps_its_text_and_never_enters_the_checkpoint(self):
         self.spec['targets'] = ['tg-story']
@@ -83,11 +134,11 @@ class StoryTests(unittest.TestCase):
             steps.append(step)
             return action()
         def broken(path):
-            raise p.BuildError('Не удалось собрать видео из фото для истории Telegram.')
-        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram') as sent, patch.object(p,'checkpoint',checkpoint), patch.object(p,'photo_story_video',broken):
+            raise p.BuildError('Фото истории Telegram должно быть JPEG.')
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram') as sent, patch.object(p,'checkpoint',checkpoint), patch.object(p,'unique_photo',broken):
             with self.assertRaises(p.BuildError) as caught:
                 p.post_telegram(self.spec,{'steps':{}},'tg-story')
-        self.assertIn('Не удалось собрать видео',str(caught.exception))
+        self.assertIn('должно быть JPEG',str(caught.exception))
         self.assertNotIn('код сети',str(caught.exception))
         self.assertEqual(steps,[])
         sent.assert_not_called()
@@ -166,14 +217,14 @@ class MixedPostTests(unittest.TestCase):
         self.spec['targets'] = ['tg-story']
         with patch.object(p,'photo_story_video',self.convert):
             stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
-        self.assertEqual(stories,['video','video','video'])
+        self.assertEqual(stories,['video','photo','video'])
 
     def test_seven_photos_become_seven_telegram_stories_in_order(self):
         self.spec['targets'] = ['tg-story']
         self.spec['media'] = {'images':[{'path':'image0.jpg','alt':'a'}] * 7}
         with patch.object(p,'photo_story_video',self.convert):
             stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
-        self.assertEqual(stories,['video'] * 7)
+        self.assertEqual(stories,['photo'] * 7)
 
     def test_album_checkpoints_are_saved_per_album_so_a_retry_never_reposts(self):
         self.spec['media']['clips'] = [{'path':'clip0.mp4'},{'path':'clip1.mp4'}]
@@ -218,7 +269,7 @@ class MixedPostTests(unittest.TestCase):
         def fake(method, url, fields=None, token=None, **rest):
             requests.append(fields or {})
             if fail_with_tags and fields and 'user_tags' in fields:
-                raise p.Error('API failure: 400',status_code=400)
+                raise p.Error('API failure: ' + str(fail_with_tags),status_code=400 if fail_with_tags is True else fail_with_tags)
             return {'id':'1','shortcode':'abc'}
         spec = {'slug':'trip','media':{'images':[{'path':'image0.jpg','alt':'a'}]},'targets':['ig-story'],'copy':{'ig-story':text}}
         with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
@@ -233,6 +284,10 @@ class MixedPostTests(unittest.TestCase):
         self.assertIn('user_tags',containers[0])
         self.assertNotIn('user_tags',containers[1])
         self.assertNotIn('user_tags',self.instagram_story('Без упоминаний')[0])
+
+    def test_untagged_retry_happens_only_after_a_400(self):
+        with self.assertRaises(p.Error):
+            self.instagram_story('Новая версия @nostress.app',fail_with_tags=500)
 
     def test_instagram_story_tags_only_the_first_frame_and_not_after_an_error(self):
         spec = {'slug':'trip','media':{'images':[{'path':'image0.jpg','alt':'a'}] * 2,'sequence':[{'kind':'image','index':0},{'kind':'image','index':1}]},'targets':['ig-story'],'copy':{'ig-story':'@nostress.app'}}

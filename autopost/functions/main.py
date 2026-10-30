@@ -43,7 +43,7 @@ REGION = 'us-central1'
 RUNTIME_SERVICE_ACCOUNT = 'autopost-runtime@resromcom-493b4.iam.gserviceaccount.com'
 
 
-RENDER_SETTINGS = 'final-v1'
+RENDER_SETTINGS = 'final-v2'
 EDIT_TASK = 'Apply only these new edits to your previous JSON answer; keep every other field exactly as it was. An edit that only asks a question or remarks without requesting a change gets {"answer":"..."} instead; an explicit request to cancel the draft or to move these messages to a new post gets {"action":"cancel"} or {"action":"new-post"}.'
 SCREENSHOTS = 'The last %d attached images, oldest first, are screenshots sent with the edits: feedback on the previous preview, never post media. Only the newest %d are new since the last draft; the older ones were already applied.'
 
@@ -1099,8 +1099,10 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
         tell(config,feedback(store.get('specs/' + item['slug']) or {},item,'; '.join(fresh)),reply_markup={'inline_keyboard':([markup] if markup else []) + [cancel_button(payload['item'],payload['revision'])]})
     assets = {}
     composed = {}
-    for number,target in enumerate(spec['targets'],1):
-        stages('assets','Готовлю файлы ' + str(number) + '/' + str(len(spec['targets'])),0.9 + 0.1 * (number - 1) / max(len(spec['targets']),1),shown)
+    dropped = []
+    total = len(spec['targets'])
+    for number,target in enumerate(list(spec['targets']),1):
+        stages('assets','Готовлю файлы ' + str(number) + '/' + str(total),0.9 + 0.1 * (number - 1) / max(total,1),shown)
         target_assets = {}
         for index,image in enumerate([] if target == 'ig-reel' else spec.get('media',{}).get('images',[])):
             path = directory/image['path']
@@ -1111,14 +1113,30 @@ def draft_body(config,store,bucket,payload,directory,item,stages,projects,key):
                     cleaned = directory/(target + '-overlay-source-' + str(index) + '.jpg')
                     media.clean_image(path,cleaned)
                     composed[key] = directory/(target + '-overlay-' + str(index) + '.jpg')
-                    media.compose_story(cleaned,composed[key],overlay)
+                    try:
+                        media.compose_story(cleaned,composed[key],overlay)
+                    except media.Error:
+                        composed[key] = None
+                if composed[key] is None:
+                    dropped.append(target)
+                    break
                 path = composed[key]
             elif target in ('ig-story','tg-story','ig-post','threads','tg-channel'):
                 converted = directory/(target + '-' + str(index) + '.jpg')
                 media.clean_image(path,converted,target in ('ig-story','tg-story'),target not in ('ig-story','tg-story'))
                 path = converted
             target_assets['image' + str(index) + '.jpg'] = media.upload(bucket,path,'media/' + item['slug'] + '/' + str(payload['revision']) + '/' + target + '/' + str(index) + '.jpg')
+        if target in dropped:
+            spec['targets'].remove(target)
+            spec['copy'].pop(target,None)
+            spec.get('overlay',{}).pop(target,None)
+            continue
         assets[target] = target_assets
+    if dropped:
+        notes = ['Сторис пропущена: на фото нет места для текста, не перекрывая человека (' + SKIP_NAMES[target] + ').' for target in dropped]
+        if not spec['targets']:
+            raise Error('Черновик не готов: ' + ' '.join(notes))
+        store.change('items/' + payload['item'],lambda value:value.update(skipped=value.get('skipped',[]) + [line for line in notes if line not in value.get('skipped',[])]))
     if clips:
         acknowledge_remount(config,store,payload,item)
         show_texts(config,store,item,payload['item'],spec['targets'],spec['copy'])

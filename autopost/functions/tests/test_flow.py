@@ -851,6 +851,20 @@ class SupersededRevisionTests(unittest.TestCase):
         entry = next(e for e in self.store.get('sessions/i')['steps'] if e['id'] == 'draft')
         self.assertEqual((entry['agents']['places']['status'],entry['agents']['copy']['status']),('cancelled','cancelled'))
 
+    def test_a_story_without_free_space_is_dropped_with_a_russian_note_and_the_rest_goes_on(self):
+        from PIL import Image
+        picture = self.root/'clean-a.jpg'
+        Image.new('RGB',(1080,1920),(90,90,90)).save(picture,'JPEG')
+        spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
+        spec.update(slug='trip',targets=['tg-channel','tg-story'],media={'images':[{'path':'clean-a.jpg','alt':'a'}]},overlay={'tg-story':{'text':'Бали','place':None,'anchor':[0.5,0.5],'align':'center'}})
+        spec['copy'] = {'tg-channel':'a','tg-story':'Бали'}
+        photo = {'kind':'photo','name':'a.jpg','path':picture,'manifest':{'sha256':'abc'}}
+        with patch.object(app.media,'intake',return_value=[photo]), patch.object(app.media,'clean_image'), patch.object(app.media,'compose_story',side_effect=app.media.Error('No free space for the story text')), patch.object(app.media,'upload',return_value={}), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app.agents,'run_draft',return_value=spec), patch.object(app,'preview') as preview, patch.object(app,'show_texts'):
+            app.draft(self.config,self.store,None,{'item':'i','revision':1},self.root)
+        self.assertEqual(list(preview.call_args[0][4]['targets']),['tg-channel'])
+        self.assertEqual(list(preview.call_args[0][5]),['tg-channel'])
+        self.assertTrue(any('Сторис пропущена' in line for line in self.store.get('items/i')['skipped']))
+
 
 class VerifyTests(unittest.TestCase):
     def setUp(self):

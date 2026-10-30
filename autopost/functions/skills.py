@@ -15,7 +15,7 @@ ID = re.compile(r'[a-z0-9-]{1,40}')
 SEEDED = 'meta/skills-seed'
 CONTRACT = Path(__file__).with_name('draft-agent.md').read_text()
 HISTORY = 10
-MIGRATION = 5
+MIGRATION = 6
 MIGRATIONS = [
     (4, 'writing-texts', "find it with web_search (real venue, city, country) and use", "find it with web_search (real venue, city, country; also for any title or overlay place) and use"),
     (4, 'montage', " Short unspoken headlines are titles, not subtitles.", ""),
@@ -30,6 +30,7 @@ MIGRATIONS = [
     (5, 'publishing', '', "\n- Telegram and Instagram stories with the same media are previewed once, in one step, labelled for both networks."),
     (5, 'publishing', '', "\n- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object."),
     (5, 'publishing', '', "\n- ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."),
+    (6, 'publishing', '- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object.', '- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption and never overlap the subject.'),
 ]
 VIEWER = 'https://www.resrom.com/p?view=skills&skill='
 

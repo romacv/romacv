@@ -36,7 +36,7 @@ SEED = {
 - Never add location metadata to outgoing posts; clean every file's metadata.
 - In tg-channel and Threads copy an Instagram account is its URL https://www.instagram.com/<handle>, never @handle: there a handle opens a Telegram or Threads user.
 - Telegram and Instagram stories with the same media are previewed once, in one step, labelled for both networks.
-- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object.
+- Story text is one centred block, the place pill centred above it, the same size on every frame and at least 80 px from each side edge. It never touches a face, head, headwear or the main object. When the free space above the subject cannot hold it, drop the handle from the text, then the pill, then shorten the line; never shrink it into a small caption and never overlap the subject.
 - ig-post and Threads copy always carry tags: 3-5 hashtags on ig-post, one threads_tag on Threads."""},
 'roman-social-networks': {'title': 'Соцсети Романа', 'body': """What each of Roman's networks is for and how it sounds.
 - Telegram channel @romacv777, «Канал им. Ресенчука Романа»: Russian, work or personal, the home of every post; media with copy, captions up to 1024 units.
