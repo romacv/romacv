@@ -103,13 +103,72 @@ def title_position(frame):
     return round((150-TITLE_MARGIN)*scale), round((330-TITLE_MARGIN)*scale)
 
 
+KEEP_COLUMNS, KEEP_ROWS = 54, 96
+
+
+def main_blobs(grown):
+    seen, blobs = set(), []
+    for start, found in enumerate(grown):
+        if found and start not in seen:
+            seen.add(start)
+            cells, pending = [], [start]
+            while pending:
+                i = pending.pop()
+                cells.append(i)
+                x, y = i % KEEP_COLUMNS, i//KEEP_COLUMNS
+                for n, ok in ((i+1,x+1 < KEEP_COLUMNS),(i-1,x > 0),(i+KEEP_COLUMNS,y+1 < KEEP_ROWS),(i-KEEP_COLUMNS,y > 0)):
+                    if ok and grown[n] and n not in seen:
+                        seen.add(n)
+                        pending.append(n)
+            blobs.append(cells)
+    biggest = max((len(b) for b in blobs),default=0)
+    kept = [False]*len(grown)
+    for cells in blobs:
+        if len(cells)*10 >= biggest:
+            for i in cells:
+                kept[i] = True
+    return kept
+
+
+def keepout_cells(image):
+    import math
+    from PIL import Image, ImageFilter
+    small = image.convert('RGB').resize((KEEP_COLUMNS,KEEP_ROWS),Image.BOX)
+    hsv = small.convert('HSV')
+    saturation, value = hsv.getchannel(1).tobytes(), hsv.getchannel(2).tobytes()
+    fine = small.filter(ImageFilter.GaussianBlur(0.7)).tobytes()
+    surround = small.filter(ImageFilter.GaussianBlur(9)).tobytes()
+    contrast = []
+    for i in range(KEEP_COLUMNS*KEEP_ROWS):
+        x, y = i % KEEP_COLUMNS/KEEP_COLUMNS - 0.5, i//KEEP_COLUMNS/KEEP_ROWS - 0.55
+        contrast.append(sum(abs(fine[3*i+k]-surround[3*i+k]) for k in range(3))*math.exp(-(x*x/0.09 + y*y/0.12)))
+    cut = sorted(contrast)[int(len(contrast)*0.8)]
+    marked = [saturation[i] > 165 and value[i] > 120 or cut > 0 and contrast[i] >= cut for i in range(len(contrast))]
+    grown = marked[:]
+    for i, found in enumerate(marked):
+        if found:
+            x, y = i % KEEP_COLUMNS, i//KEEP_COLUMNS
+            for ny in range(max(0,y-1),min(KEEP_ROWS,y+2)):
+                for nx in range(max(0,x-1),min(KEEP_COLUMNS,x+2)):
+                    grown[ny*KEEP_COLUMNS+nx] = True
+    return main_blobs(grown)
+
+
+def title_overlap(cells, x, top, size, frame):
+    c0, c1 = max(0,int(x/frame[0]*KEEP_COLUMNS)), min(KEEP_COLUMNS,-(-(x+size[0])*KEEP_COLUMNS//frame[0]))
+    r0, r1 = max(0,int(top/frame[1]*KEEP_ROWS)), min(KEEP_ROWS,-(-(top+size[1])*KEEP_ROWS//frame[1]))
+    count = max(1,(c1-c0)*(r1-r0))
+    return sum(cells[r*KEEP_COLUMNS+c] for r in range(r0,r1) for c in range(c0,c1))/count
+
+
 def emptiest_title_y(frames, x, size, scale, ceiling=1250):
     from PIL import Image, ImageFilter
     cell = max(1,round(10*scale))
-    maps = []
+    maps, keeps = [], []
     for frame in frames:
         with Image.open(frame) as image:
             small = image.convert('L').filter(ImageFilter.FIND_EDGES).resize((image.width//cell,image.height//cell),Image.BOX)
+            keeps.append((keepout_cells(image),image.size))
         maps.append((small.size[0],small.size[1],small.tobytes()))
     low, high = round((300-TITLE_MARGIN)*scale), round(ceiling*scale) - size[1]
     c0, c1 = max(0,x//cell), -(-(x+size[0])//cell)
@@ -121,7 +180,8 @@ def emptiest_title_y(frames, x, size, scale, ceiling=1250):
         for columns, rows, data in maps:
             values = [data[r*columns+c] for r in range(r0,min(rows,r0+span)) for c in range(c0,min(columns,c1))]
             density = max(density,sum(values)/max(1,len(values)))
-        cost = density + 14*(top-low)/max(1,high-low)
+        overlap = max((title_overlap(cells,x,top,size,frame) for cells, frame in keeps),default=0)
+        cost = (0 if overlap <= 0.02 else 1, round(overlap,2), density + 14*(top-low)/max(1,high-low))
         if best[0] is None or cost < best[0]:
             best = (cost,top)
     return best[1]
@@ -347,7 +407,7 @@ def audio_filter(draft):
 def encode_arguments(target, draft):
     if draft:
         return ['-c:v','libx264','-preset','ultrafast','-crf','32','-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','96k']
-    video = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if target == 'tg-story' else ['-c:v','libx264','-preset','fast','-crf','22']
+    video = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if target == 'tg-story' else ['-c:v','libx264','-preset','fast','-crf','22','-g','30']
     return video + ['-pix_fmt','yuv420p','-r','30','-c:a','aac','-b:a','128k']
 
 
@@ -444,12 +504,13 @@ def render(bucket, job, root):
             else:
                 grabs = []
                 try:
-                    for number, moment in enumerate((cue['start'],(cue['start']+cue['end'])/2,max(cue['start'],cue['end']-0.1))):
-                        grab = root / f'{target}-title-{index}-{number}.jpg'
-                        run(['-ss',f"{moment:.3f}",'-i',joined_files[target],'-frames:v','1','-q:v','3',grab])
-                        grabs.append(grab)
+                    span = max(0.1,cue['end']-cue['start'])
+                    pattern = root / f'{target}-title-{index}-%03d.jpg'
+                    run(['-ss',f"{cue['start']:.3f}",'-t',f"{span:.3f}",'-i',joined_files[target],'-vf','fps=2,scale=360:-2','-frames:v','120','-q:v','3',pattern])
+                    grabs = sorted(root.glob(f'{target}-title-{index}-*.jpg'))
                     with Image.open(image) as full:
-                        y = emptiest_title_y(grabs,x,full.size,width/1080,980 if timeline['subtitles'] else 1250)
+                        y = emptiest_title_y(grabs,round(x*360/width),(round(full.width*360/width),round(full.height*360/width)),1/3,980 if timeline['subtitles'] else 1250)
+                    y = round(y*width/360)
                 except (RuntimeError,OSError):
                     pass
                 for grab in grabs:

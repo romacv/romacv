@@ -18,6 +18,8 @@ MAX_AGE = 86400
 BACKOFF = 6 * 3600
 CAP = 8
 STATE = 'meta/voice'
+EXPIRED = 'API failure: 190'
+notify = None
 NETWORKS = {'tg-channel': 'telegram', 'threads': 'threads', 'ig-post': 'instagram', 'ig-reel': 'instagram'}
 TAGS = re.compile(r'(?<!\w)#\w+')
 HEAD = "Roman's own recent posts (examples follow under the skill): the voice to match in length, rhythm, vocabulary, humour and first-person directness. Never copy a phrase."
@@ -88,7 +90,7 @@ def refresh(config, store, timeout=20, networks=None):
     saved = store.get(PATH) or {}
     state = store.get(STATE) or {}
     cursors = saved.get('cursors', {})
-    ok, failed = dict(state.get('ok', {})), dict(state.get('failed', {}))
+    ok, failed, told = dict(state.get('ok', {})), dict(state.get('failed', {})), dict(state.get('told', {}))
     now = time.time()
     added, moved = [], {}
     sources = {
@@ -104,15 +106,22 @@ def refresh(config, store, timeout=20, networks=None):
         except Exception as failure:
             logging.error('voice_source_failed %s %s', network, str(failure)[:100])
             failed[network] = now
+            if str(failure) == EXPIRED and notify and network not in told:
+                try:
+                    notify(network)
+                    told[network] = now
+                except Exception as problem:
+                    logging.error('voice_notice_failed %s %s', network, str(problem)[:100])
             continue
         ok[network] = now
         failed.pop(network, None)
+        told.pop(network, None)
         fresh = [(network, text, at) for text, at in rows if at > cursors.get(network, 0)]
         if fresh:
             added += fresh
             moved[network] = max(at for _, _, at in fresh)
     merge(store, added, moved)
-    store.put(STATE, {'ok': ok, 'failed': failed})
+    store.put(STATE, {'ok': ok, 'failed': failed, 'told': told})
     return len(added)
 
 

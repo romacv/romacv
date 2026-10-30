@@ -19,9 +19,21 @@ class OwedRulesTests(unittest.TestCase):
         store.put('skills/publishing', old)
         store.put(skills.SEEDED, {'at': 1, 'version': 4})
         found = skills.load(store)['publishing']
-        for rule in ('never @handle', 'previewed once', 'free space above the subject', 'always carry tags'):
+        for rule in ('never @handle', 'previewed once', 'one centred block', 'always carry tags'):
             self.assertEqual(found['body'].count(rule), 1)
         self.assertEqual(found['history'][-1]['body'], 'Mine.\n- Hints win.')
+        self.assertEqual(skills.load(store)['publishing']['revision'], found['revision'])
+
+    def test_story_text_rule_is_rewritten_once(self):
+        store = Store(FakeFirestore())
+        skills.load(store)
+        store.put(skills.SEEDED, {'at': 1, 'version': 5})
+        doc = skills.fresh(skills.SEED['publishing'])
+        doc['body'] = 'Mine.\n- Story text, place pill and stickers sit in free space above the subject, never on a face, person or object.'
+        store.put('skills/publishing', doc)
+        found = skills.load(store)['publishing']
+        self.assertEqual(found['body'].count('one centred block'), 1)
+        self.assertNotIn('stickers sit in free space', found['body'])
         self.assertEqual(skills.load(store)['publishing']['revision'], found['revision'])
 
     def test_old_migrations_do_not_rerun(self):

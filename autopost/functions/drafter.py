@@ -414,11 +414,16 @@ CLASSIFIER_SYSTEM = 'You sort one Telegram message from the owner of a posting b
 
 
 def classify(config, text, context, rec=None):
-    response = connect(config).with_options(timeout=8, max_retries=0).messages.create(model=CLASSIFIER_MODEL, max_tokens=300, system=CLASSIFIER_SYSTEM, messages=[{'role':'user','content':json.dumps({'message':text, 'context':context}, ensure_ascii=False)}])
-    note(rec, response)
-    raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', final_text(response.content).strip())
-    answer = json.loads(raw)
-    return answer if isinstance(answer, dict) else None
+    for attempt in range(2):
+        try:
+            response = connect(config).with_options(timeout=8, max_retries=0).messages.create(model=CLASSIFIER_MODEL, max_tokens=300, system=CLASSIFIER_SYSTEM, messages=[{'role':'user','content':json.dumps({'message':text, 'context':context}, ensure_ascii=False)}])
+            note(rec, response)
+            raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', final_text(response.content).strip())
+            answer = json.loads(raw)
+            return answer if isinstance(answer, dict) else None
+        except Exception:
+            if attempt:
+                raise
 
 
 def ask(config, payload, images, validator, montage=False, thread=None, follow=None, rec=None):

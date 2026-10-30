@@ -109,15 +109,17 @@ def hinted(text, offers, chosen=()):
     return text + '\n' + CHOICE_HINT if text and offers and not chosen else text
 
 
-WORDS = {'повторить':'retry', 'отмени':'cancel', 'отмена':'cancel', 'готово':'done', 'принять':'accept', 'принимаю':'accept', 'принято':'accept', 'таблица':'table', 'покажи таблицу':'table', 'что куда когда':'table'}
+def keys(*rows):
+    kept = [[{'text':text, 'callback_data':data} for text, data in row if len(data.encode()) <= 64] for row in rows]
+    kept = [row for row in kept if row]
+    return {'inline_keyboard':kept} if kept else None
+
+
+UNCLEAR = 'Не понял: это в пост или вопрос?'
 KINDS = ('caption', 'title', 'instruction', 'question', 'rule', 'fix')
 CONTAINER_AGE = 23 * 3600
 DIALOG_TEXT = 4096
 DIALOG_BYTES = 512 * 1024
-
-
-def word(text):
-    return WORDS.get(' '.join((text or '').lower().split()).strip('.!«»'))
 
 
 def clock(at, zone):
@@ -399,7 +401,7 @@ def located(message):
 def titled(item):
     if item.get('title'):
         return snippet(item['title'])
-    texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if (m.get('text') or m.get('caption')) and not word(m.get('text') or m.get('caption'))]
+    texts = [m.get('text') or m.get('caption') for m in item.get('messages', []) if m.get('text') or m.get('caption')]
     return snippet(next((t for t in texts if not t.startswith(('Место: ', 'Место (координаты): '))), texts[0] if texts else ''))
 
 
@@ -545,29 +547,33 @@ class Store:
 
     def verdict(self, message, name, query):
         text = message.get('text')
-        if query or name or not isinstance(text, str) or not text.strip() or any(message.get(k) for k in MEDIA_KEYS) or message.get('reply_to_message') or message.get('media_group_id'):
+        captioned = not isinstance(text, str) and any(message.get(k) for k in ('photo', 'video')) and not any(message.get(k) for k in MEDIA_KEYS if k not in ('photo', 'video'))
+        if captioned:
+            text = message.get('caption')
+        if query or name or not isinstance(text, str) or not text.strip() or message.get('reply_to_message') or message.get('media_group_id') or not captioned and any(message.get(k) for k in MEDIA_KEYS):
             return None
         inbox = self.get('sessions/inbox') or {}
         if inbox.get('awaiting'):
             return None
         current = inbox.get('current')
-        found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current), 'retry':self.latest(('partial',), current)}
-        command_word = word(text)
+        found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current)}
         opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
-        if command_word == 'accept' and opened and opened.get('status') == 'collecting':
-            return None
-        if command_word:
-            return {**found, 'kind':'command', 'value':command_word}
+        opened = opened if opened and opened.get('status') == 'collecting' else None
+        held = self.get('items/' + current) if current and not opened else None
+        working_draft = bool(held and held.get('status') in ('queued', 'drafting', 'previewed'))
+        if captioned:
+            if opened or working_draft:
+                return None
         if not self.classifier:
             return None
-        item = opened if opened and opened.get('status') == 'collecting' else self.get('items/' + current) if current else None
+        item = opened or held or (self.get('items/' + current) if current else None)
         context = {'collecting':bool(opened and opened.get('status') == 'collecting') or (item or {}).get('status') in ('queued', 'drafting', 'previewed'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
         try:
             answer = self.classifier(text.strip(), context)
         except Exception:
             logging.error(json.dumps({'code':'classifier_failed'}))
-            return None
-        if not isinstance(answer, dict) or answer.get('kind') not in KINDS:
+            return {**found, 'kind':'unclear', 'value':None} if working_draft and not captioned else None
+        if not isinstance(answer, dict) or answer.get('kind') not in KINDS or captioned and answer['kind'] not in ('question', 'rule'):
             return None
         value = answer.get('value')
         return {**found, 'kind':answer['kind'], 'value':value.strip() if isinstance(value, str) and value.strip() else None}
@@ -592,7 +598,7 @@ class Store:
         except Exception:
             logging.error(json.dumps({'code':'dialog_write_failed'}))
 
-    def textual(self, tx, found, session, identifier, config, business, taps):
+    def textual(self, tx, found, session, identifier, config, business):
         kind, value = found['kind'], found['value']
         zone = (config or {}).get('timezone', 'Asia/Makassar')
         offers = offered(config or {}, business)
@@ -603,60 +609,31 @@ class Store:
         finished_item = self.get('items/' + finished['item'], tx) if finished else None
         live = self.get('specs/' + current['slug'], tx) if current and current.get('slug') else None
         live = live if live and live.get('state') in ('approved', 'running', 'rendering') else None
-        retrying = self.get('specs/' + found['retry'], tx) if found.get('retry') else None
         journal = self.get('sessions/' + (opened or current or {}).get('slug', ''), tx) if opened or current else None
         update_path = 'updates/' + identifier
-        def answer(text, subject=None):
+        def answer(text, subject=None, markup=None):
             self.subject = subject or self.subject
             self.put(update_path, {'received':time.time()}, tx)
-            return text
+            return {'text':text, 'reply_markup':markup} if text and markup else text
+        def links():
+            shown = live or finished
+            return [('Ссылки и таблица', 'tbl:' + (current['slug'] if live else found.get('finished') or '') + ':' + shown.get('hash', '')[:8])] if shown else []
         def table():
             shown, shown_item = (live, current) if live else (finished, finished_item)
             if not shown:
                 return answer('Опубликованных постов пока нет.')
             return answer(table_text(shown, shown_item, zone), shown['item'])
         stopped = bool(current and current.get('status') == 'failed' and (not finished or (current.get('failed_at') or current.get('updated') or current.get('created') or 0) > (finished.get('published_at') or 0)))
-        if kind == 'command' and value == 'table' or kind == 'question' and not opened and not stopped and (live or finished and not (current and current.get('status') in ('queued', 'drafting', 'previewed'))):
+        if kind == 'unclear' and not current:
+            return None
+        if kind == 'unclear':
+            told = current.get('unclear_told')
+            current['pending_text'] = (current.get('pending_text') or [])[-9:] + [found['text'][:500]]
+            current['unclear_told'] = True
+            self.put('items/' + session['current'], current, tx)
+            return answer('' if told else UNCLEAR, session['current'], keys([('В пост', 'utxt:' + session['current'] + ':' + str(current['revision'])), ('Это вопрос', 'uqst:' + session['current'] + ':' + str(current['revision']))]))
+        if kind == 'question' and not opened and not stopped and (live or finished and not (current and current.get('status') in ('queued', 'drafting', 'previewed'))):
             return table()
-        if kind == 'command' and value == 'accept':
-            target = finished
-            if live and not scheduled(live):
-                return answer(publishing(live, current), session['current'])
-            if not target or target.get('operation') or not target.get('results') or target.get('state') not in ('done', 'partial'):
-                return answer('Принимать нечего: нет опубликованного поста.')
-            if target.get('accepted'):
-                return answer('Пост' + named(target, finished_item) + ' уже принят.', finished['item'])
-            target['state'] = 'done'
-            target['accepted'] = True
-            self.put('specs/' + found['finished'], target, tx)
-            self.job(tx, {'slug':found['finished'], 'step':'accept'}, 'accept-' + hashlib.sha256(identifier.encode()).hexdigest())
-            return answer('', finished['item'])
-        if kind == 'command' and value == 'retry':
-            if not retrying or retrying.get('state') != 'partial':
-                return answer('Повторять нечего: нет поста с неопубликованными целями.')
-            if time.time() - (retrying.get('updated') or retrying.get('published_at') or 0) > RETRY_AGE:
-                return answer('Повторять поздно: прошло больше двух суток, пришли материал заново.', retrying['item'])
-            if not retryable(retrying):
-                return answer(EXPIRED_TEXT, retrying['item'])
-            retrying_item = self.get('items/' + retrying['item'], tx)
-            retrying['state'] = 'approved'
-            retrying['attempts'] = {t:n for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {})}
-            self.put('specs/' + found['retry'], retrying, tx)
-            self.job(tx, {'slug':found['retry'], 'step':'run'}, 'callback-' + hashlib.sha256(identifier.encode()).hexdigest())
-            return answer('Повторяю публикацию' + named(retrying, retrying_item) + '.', retrying['item'])
-        if kind == 'command' and value in ('cancel', 'done'):
-            if opened:
-                self.put(update_path, {'received':time.time()}, tx)
-                subject = session['collecting']
-                result = self.collect_callback(tx, 'done' if value == 'done' else 'cncl', session['collecting'], opened.get('batch_token'), opened, session, identifier, None, offers, taps, config or {}, business, journal)
-                self.subject = subject
-                return result or ('Собираю черновик' + titled(opened) + '.' if value == 'done' else 'Пост отменён.')
-            if value == 'cancel' and current:
-                cancelled = self.cancel_post(tx, session['current'], identifier)
-                self.put(update_path, {'received':time.time()}, tx)
-                self.subject = session['current']
-                return 'Черновик отклонён.' if cancelled else 'Отменять нечего.'
-            return answer('Отменять нечего.' if value == 'cancel' else 'Сначала пришли материал для поста.')
         if kind == 'title' and value and (opened or current):
             item = opened or current
             item['title'] = value[:80]
@@ -680,10 +657,6 @@ class Store:
             rule = value or found['text']
             self.job(tx, {'step':'skills', 'text':found['text']}, 'skills-' + identifier)
             line = 'Правило записал: ' + rule[:120]
-            if 'таблиц' in (found['text'] + ' ' + rule).lower() and finished:
-                self.put(update_path, {'received':time.time()}, tx)
-                self.subject = finished['item']
-                return line + '\n' + table_text(finished, finished_item, zone)
             return answer(line, session.get('collecting') or session.get('current'))
         if kind in ('fix', 'instruction') and finished and not live and not opened and not (current and current.get('status') in ('queued', 'drafting')) and self.fixable(finished):
             self.put(update_path, {'received':time.time()}, tx)
@@ -692,18 +665,20 @@ class Store:
             return asking(finished, finished_item)
         if kind == 'question':
             if opened:
-                return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
+                self.put(update_path, {'received':time.time()}, tx)
+                self.subject = session['collecting']
+                return {'item':self.subject, 'revision':opened['revision'], 'text':hinted('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', offers, opened.get('chosen')), 'reply_markup':keys(*[[(b['text'], b['callback_data']) for b in row] for row in collect_keyboard(self.subject, opened['batch_token'], offers, opened.get('chosen', []))['inline_keyboard']], links())}
             if stopped:
-                return answer(stopped_status(current, journal) + ('\n' + table_text(finished, finished_item, zone) if finished else ''), session['current'])
+                return answer(stopped_status(current, journal) + ('\n' + table_text(finished, finished_item, zone) if finished else ''), session['current'], keys([('Повторить', 'again:' + session['current'] + ':' + str(current['revision']))]))
             if working(current):
-                return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'])
+                return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'], keys([('Отменить черновик', 'cdraft:' + session['current'] + ':' + str(current['revision']))], links()))
             if current and current.get('status') == 'previewed':
-                self.keep_question(tx, current, identifier, current['slug'], session['current'], found['text'], {'text':found['text']})
+                self.keep_question(tx, current, identifier, current['slug'], session['current'], found['text'], {'text':found['text']}, (links() or [(None, None)])[0][1])
                 self.put(update_path, {'received':time.time()}, tx)
                 self.subject = session['current']
                 return ''
             if current:
-                return answer('Пост' + titled(current) + ' сейчас в работе, статус виден в Mini App.', session['current'])
+                return answer('Пост' + titled(current) + ' сейчас в работе, статус виден в Mini App.', session['current'], keys(links()))
             return table()
         if kind in ('fix', 'instruction'):
             if working(current) and not nudge(found['text']):
@@ -883,7 +858,7 @@ class Store:
                     self.put(update_path, {'received':time.time()}, tx)
                     return fixing(target, item)
             if said and not name:
-                outcome = self.textual(tx, said, session, identifier, config, business, taps)
+                outcome = self.textual(tx, said, session, identifier, config, business)
                 if outcome is not None:
                     return outcome
             opened = session.get('collecting')
@@ -995,7 +970,7 @@ class Store:
                     status = drafting_status(held, self.get('sessions/' + (target['item'] if target else slug), tx), self.get('renders/' + held['render'], tx) if held.get('render') else None, time.time())
                     self.put(update_path, {'received':time.time()}, tx)
                     self.subject = target['item'] if target else slug
-                    return status
+                    return {'text':status, 'reply_markup':keys([('Отменить черновик', 'cdraft:' + self.subject + ':' + str(held['revision']))])} if working(held) else status
             if pending and pending.get('status') in ('queued', 'drafting') and not pending.get('waiting_upload') and (note or photo or message.get('voice')) and not any(message.get(k) for k in ('video', 'video_note', 'animation', 'document', 'audio')):
                 if note and note.rstrip().endswith('?') and not photo and not message.get('voice'):
                     job = self.get('renders/' + pending['render'], tx) if pending.get('render') else None
@@ -1237,6 +1212,8 @@ class Store:
             return self.cancel_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
         if verb == 'again':
             return self.again_callback(tx, update_path, callback_path, slug, short_hash, query, taps)
+        if verb in ('utxt', 'uqst'):
+            return self.unclear_callback(tx, update_path, callback_path, verb, slug, short_hash, query, taps)
         if verb == 'ulnk':
             return self.upload_link_callback(tx, update_path, callback_path, slug, query, taps)
         batch = verb in ('done','cncl') or verb in TOGGLES
@@ -1254,6 +1231,9 @@ class Store:
             return True if result is None and taps else result
         if not saved or len(short_hash) != 8 or saved.get('hash', '')[:8] != short_hash:
             return None
+        if verb == 'tbl':
+            self.job(tx, {'step':'say', 'say':table_text(saved, item, (config or {}).get('timezone', 'Asia/Makassar'))}, 'table-' + hashlib.sha256(query['id'].encode()).hexdigest())
+            return True
         payload = {'slug':slug, 'step':'apply-fix' if saved.get('operation') else 'run'}
         line, status = None, False
         if verb in ('fix','del') and saved.get('operation') == ('fix' if verb == 'fix' else 'delete') and saved['state'] == 'previewed':
@@ -1299,6 +1279,10 @@ class Store:
             payload['step'] = 'accept'
             line = 'Принято.'
         elif verb == 'retry' and saved['state'] == 'partial':
+            if time.time() - (saved.get('updated') or saved.get('published_at') or 0) > RETRY_AGE:
+                return 'Повторять поздно: прошло больше двух суток, пришли материал заново.'
+            if not retryable(saved):
+                return EXPIRED_TEXT
             saved['state'] = 'approved'
             saved['attempts'] = {t:n for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{})}
             line, status = 'Повторяю…', True
@@ -1316,11 +1300,11 @@ class Store:
             return 'Напиши, что поменять в черновике' + named(saved, item) + '.'
         return True
 
-    def keep_question(self, tx, held, identifier, slug, item_id, text, message):
+    def keep_question(self, tx, held, identifier, slug, item_id, text, message, links=None):
         self.put('followups/' + identifier, {'slug':slug, 'item':item_id, 'notes':[text], 'messages':[message], 'token':uuid.uuid4().hex[:8], 'answered':True}, tx)
         held['followup'] = identifier
         self.put('items/' + item_id, held, tx)
-        self.job(tx, {'step':'answer', 'slug':slug, 'item':item_id, 'text':text, 'update':identifier}, 'answer-' + identifier)
+        self.job(tx, {'step':'answer', 'slug':slug, 'item':item_id, 'text':text, 'update':identifier, **({'links':links} if links else {})}, 'answer-' + identifier)
 
     def edit_from_question(self, tx, slug, text, identifier):
         spec = self.get('specs/' + slug, tx)
@@ -1370,11 +1354,46 @@ class Store:
             self.retire(taps, query, 'Повтор больше не нужен.')
             return None
         self.retire(taps, query, 'Повторяю…')
-        item.update(status='queued', updated=time.time())
+        item.update(status='queued', updated=time.time(), revision=item['revision'] + 1)
         item.pop('stop_why', None)
         item.pop('status_message', None)
         self.put('items/' + item_id, item, tx)
         self.job(tx, {'item':item_id, 'step':'montage' if item.get('montage') else 'draft', 'revision':item['revision']}, 'again-' + update_path.split('/', 1)[1])
+        return True
+
+    def unclear_callback(self, tx, update_path, callback_path, verb, item_id, revision, query, taps):
+        item = self.get('items/' + item_id, tx)
+        session = self.get('sessions/inbox', tx) or {}
+        target = self.get('specs/' + item['slug'], tx) if item and item.get('slug') else None
+        render = self.get('renders/' + item['render'], tx) if item and item.get('render') else None
+        journal = self.get('sessions/' + item['slug'], tx) if item and item.get('slug') else None
+        self.put(update_path, {'received':time.time()}, tx)
+        self.put(callback_path, {'received':time.time()}, tx)
+        if not item or str(item.get('revision')) != revision or not item.get('pending_text') or session.get('current') != item_id:
+            self.retire(taps, query, 'Кнопка больше не нужна.')
+            return None
+        note = '\n'.join(item.pop('pending_text'))
+        item.pop('unclear_told', None)
+        identifier = update_path.split('/', 1)[1]
+        self.subject = item_id
+        if verb == 'utxt':
+            self.retire(taps, query, 'В пост.')
+            if target and not target.get('operation') and target.get('state') in ('previewed', 'drafting', 'needs-edit'):
+                previewed = target['state'] == 'previewed'
+                self.queue_edit(tx, item['slug'], target, note, None, identifier, session, None, item)
+                if previewed and target.get('preview_message'):
+                    self.job(tx, {'slug':item['slug'], 'step':'remove-keyboard', 'message':target['preview_message']}, 'unkey-' + identifier)
+                self.put('sessions/inbox', session, tx)
+            else:
+                self.add_edit(tx, item, item_id, note, None, identifier)
+            return True
+        self.retire(taps, query, 'Вопрос.')
+        if item.get('status') == 'previewed' and target:
+            self.keep_question(tx, item, identifier, item['slug'], item_id, note, {'text':note})
+            return True
+        self.put('items/' + item_id, item, tx)
+        status = drafting_status(item, journal, render, time.time()) if working(item) else stopped_status(item, journal) if item.get('status') == 'failed' else 'Пост' + titled(item) + ' сейчас в работе, статус виден в Mini App.'
+        self.job(tx, {'step':'say', 'say':status}, 'unclear-' + identifier)
         return True
 
     def upload_link_callback(self, tx, update_path, callback_path, item_id, query, taps):
@@ -1480,6 +1499,8 @@ class Store:
             session.pop('collecting')
         item['revision'] += 1
         item['updated'] = time.time()
+        if item.get('keyboard_message') and not query.get('message'):
+            self.job(tx, {'step':'remove-keyboard', 'slug':item_id, 'message':item['keyboard_message']}, 'unkey-collect-' + identifier)
         if verb == 'cncl':
             item['status'] = 'rejected'
             item['waiting_upload'] = False

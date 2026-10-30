@@ -81,7 +81,7 @@ class EditFlowTests(unittest.TestCase):
         self.assertTrue(tell.call_args.args[1].startswith('Черновик не получился') or ' не получился' in tell.call_args.args[1])
         self.store.intake({'update_id':60,'callback_query':{'id':'60','data':data}},self.config)
         self.assertEqual(self.store.get('items/item-1')['status'],'queued')
-        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':1})
+        self.assertEqual(self.store.get('outbox/again-60')['payload'],{'item':'item-1','step':'montage','revision':2})
 
     def test_scheduled_post_is_not_running_media_starts_a_new_post_and_text_names_the_time(self):
         self.store.put('specs/example',{**self.store.get('specs/example'),'state':'approved','spec':{**self.spec,'at':'2099-01-01T10:00:00+00:00'}})
@@ -115,7 +115,7 @@ class EditFlowTests(unittest.TestCase):
         self.store.put('sessions/inbox',{'current':'item-9'})
         self.store.put('sessions/item-9',{'state':'open','steps':[{'id':'draft','label':'Черновик','state':'running','since':time.time() - 200,'agents':{'places':{'status':'running','action':'ищу'},'media':{'status':'done'},'copy':{'status':'waiting'}}}]})
         reply = self.store.intake({'update_id':90,'message':{'message_id':90,'text':'ну'}},self.config)
-        self.assertEqual(reply,'Черновик пишется 3 мин: места — ищу, медиа — готово, текст — ждёт.')
+        self.assertEqual(reply['text'],'Черновик пишется 3 мин: места — ищу, медиа — готово, текст — ждёт.')
         item = self.store.get('items/item-9')
         self.assertEqual(item['revision'],8)
         self.assertNotIn('followup',item)
@@ -133,13 +133,16 @@ class EditFlowTests(unittest.TestCase):
         return self.store.intake({'update_id':number,'message':{'message_id':number,'text':'сделай текст короче'}},self.config)
 
     def test_classifier_fix_and_failure_during_drafting_edit_but_question_gets_status(self):
-        for number,kind in ((91,'fix'),(92,None)):
-            self.assertIsNone(self.drafting_with(kind,number))
-            item = self.store.get('items/item-9')
-            self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.assertIsNone(self.drafting_with('fix',91))
+        item = self.store.get('items/item-9')
+        self.assertEqual((item['revision'],item['edits']),(9,['сделай текст короче']))
+        self.setUp()
+        self.assertEqual(self.drafting_with(None,92)['text'],'Не понял: это в пост или вопрос?')
+        self.assertEqual(self.store.get('items/item-9')['revision'],8)
+        self.assertEqual(self.store.get('items/item-9')['pending_text'],['сделай текст короче'])
         self.setUp()
         reply = self.drafting_with('question',93)
-        self.assertIn('текст — пишу',reply)
+        self.assertIn('текст — пишу',reply['text'])
         self.assertEqual(self.store.get('items/item-9')['revision'],8)
 
 
@@ -152,11 +155,6 @@ class PublishedMessageTests(unittest.TestCase):
 
     def say(self, identifier, text):
         return self.store.intake({'update_id':identifier,'message':{'message_id':identifier,'text':text}},self.config)
-
-    def test_typed_accept_accepts_the_latest_published_post(self):
-        self.store.put('specs/album',{'state':'partial','item':'item-1','published_at':5,'spec':{'targets':['tg-channel','threads']},'results':{'tg-channel':{'url':'u','at':1}},'errors':{'threads':'x'}})
-        self.assertEqual(self.say(14,'Принять'),'')
-        self.assertTrue(self.store.get('specs/album')['accepted'])
 
     def test_question_on_a_previewed_draft_is_kept_without_a_read_after_write(self):
         self.store.put('items/item-2',{'status':'previewed','revision':2,'messages':[{'message_id':1,'text':'x'}],'slug':'item-2'})
@@ -508,7 +506,7 @@ class PreviewRaceTests(unittest.TestCase):
         self.assertEqual((item['status'],item['revision']),('queued',2))
         self.assertIsNotNone(self.store.get('outbox/edit-e1'))
         self.assertEqual(sent[-1][0],'editMessageText')
-        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик отменён.',{'inline_keyboard':[]}))
+        self.assertEqual((sent[-1][1]['text'],sent[-1][1]['reply_markup']),('Черновик заменён новой версией.',{'inline_keyboard':[]}))
         self.assertNotIn('current',self.store.get('sessions/inbox') or {})
 
     def test_a_video_file_sent_to_a_previewed_draft_joins_it_and_requeues_the_montage(self):
@@ -620,7 +618,7 @@ class CollectingTests(unittest.TestCase):
         store.intake({'update_id':11,'message':{'message_id':11,'text':'Привет'}},self.config)
         self.tap(store,'done','item-10',store.get('items/item-10')['batch_token'],12)
         reply = store.intake({'update_id':13,'message':{'message_id':13,'text':'Что там?'}},self.config)
-        self.assertIn('готовлю превью',reply)
+        self.assertIn('готовлю превью',reply['text'])
         self.assertNotIn('Монтаж',reply)
         self.assertEqual(store.get('items/item-10').get('edits',[]),[])
 
@@ -852,6 +850,20 @@ class SupersededRevisionTests(unittest.TestCase):
         self.assertEqual(self.store.get('items/i')['status'],'drafting')
         entry = next(e for e in self.store.get('sessions/i')['steps'] if e['id'] == 'draft')
         self.assertEqual((entry['agents']['places']['status'],entry['agents']['copy']['status']),('cancelled','cancelled'))
+
+    def test_a_story_without_free_space_is_dropped_with_a_russian_note_and_the_rest_goes_on(self):
+        from PIL import Image
+        picture = self.root/'clean-a.jpg'
+        Image.new('RGB',(1080,1920),(90,90,90)).save(picture,'JPEG')
+        spec = json.loads((FUNCTIONS.parent/'examples/example-work.json').read_text())
+        spec.update(slug='trip',targets=['tg-channel','tg-story'],media={'images':[{'path':'clean-a.jpg','alt':'a'}]},overlay={'tg-story':{'text':'Бали','place':None,'anchor':[0.5,0.5],'align':'center'}})
+        spec['copy'] = {'tg-channel':'a','tg-story':'Бали'}
+        photo = {'kind':'photo','name':'a.jpg','path':picture,'manifest':{'sha256':'abc'}}
+        with patch.object(app.media,'intake',return_value=[photo]), patch.object(app.media,'clean_image'), patch.object(app.media,'compose_story',side_effect=app.media.Error('No free space for the story text')), patch.object(app.media,'upload',return_value={}), patch.object(app,'edit_media',return_value=([],[])), patch.object(app,'restrict',return_value=None), patch.object(app.platforms,'request',return_value=[]), patch.object(app.agents,'run_draft',return_value=spec), patch.object(app,'preview') as preview, patch.object(app,'show_texts'):
+            app.draft(self.config,self.store,None,{'item':'i','revision':1},self.root)
+        self.assertEqual(list(preview.call_args[0][4]['targets']),['tg-channel'])
+        self.assertEqual(list(preview.call_args[0][5]),['tg-channel'])
+        self.assertTrue(any('Сторис пропущена' in line for line in self.store.get('items/i')['skipped']))
 
 
 class VerifyTests(unittest.TestCase):

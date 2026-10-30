@@ -37,7 +37,7 @@ class GeoTest(unittest.TestCase):
             if method == 'POST':
                 posted.append(dict(fields))
                 if reject and 'location_id' in fields:
-                    raise platforms.Error('bad location')
+                    raise platforms.Error('bad location', status_code=400)
                 return {'id': '1'}
             return {'shortcode': 'abc'}
         platforms.CONTEXT.set(({}, store, None))
