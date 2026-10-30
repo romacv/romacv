@@ -78,24 +78,18 @@ class WebhookTests(unittest.TestCase):
         self.request(update)
         self.task.assert_called_once()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def test_upload_receipt_requires_origin_expiry_and_hmac(self):
+        self.store.put('items/item-1',{'revision':1,'waiting_upload':True})
+        expires = int(app.time.time())+900
+        receipt = {'action':'uploaded','item':'item-1','revision':1,'expires':expires,'token':app.upload_mac(self.config,'item-1',1,expires)}
+        self.assertEqual(self.request(receipt,origin='https://example.com').status_code,403)
+        with patch.object(app.time,'time',return_value=expires+1):
+            self.assertEqual(self.request(receipt,origin='https://www.resrom.com').status_code,403)
+        receipt['token'] = 'forged'
+        self.assertEqual(self.request(receipt,origin='https://www.resrom.com').status_code,403)
+        receipt['token'] = app.upload_mac(self.config,'item-1',1,expires)
+        self.assertEqual(self.request(receipt,origin='https://www.resrom.com').status_code,200)
+        self.task.assert_called_once()
 
 
 if __name__ == '__main__':
