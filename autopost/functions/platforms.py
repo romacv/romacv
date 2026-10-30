@@ -1,6 +1,7 @@
 import hashlib
 import html
 import json
+import logging
 import mimetypes
 from pathlib import Path
 import re
@@ -32,6 +33,10 @@ class Error(Exception):
         self.status_code = status_code
 
 class ExpiredMaterial(Error):
+    pass
+
+
+class BuildError(Error):
     pass
 
 
@@ -303,7 +308,7 @@ def ready_all(session, containers, instagram, invalidate):
             if value != 'PUBLISHED':
                 invalidate(position)
         if failed:
-            raise Error('Container ' + str(failed[0][1]) + '; reconcile before retry')
+            raise Error('Container ' + str(next((value for position, value in failed if value == 'ERROR'), failed[0][1])) + '; reconcile before retry')
         if not waiting:
             return
         if i < rounds - 1:
@@ -339,68 +344,124 @@ def link_area(url, y=73):
 
 def story_areas(spec, state, text):
     link = channel_post_url(spec, state)
-    brand = re.search(r'(?<![\w@])@([A-Za-z0-9._]{2,30})', text or '')
-    return ([link_area(link)] if link else []) + ([link_area('https://www.instagram.com/' + brand.group(1).rstrip('.'), 83)] if brand else [])
+    brand = story_handles(text)[:1]
+    return ([link_area(link)] if link else []) + [link_area('https://www.instagram.com/' + handle, 83) for handle in brand]
+
+
+def story_handles(text):
+    return list(dict.fromkeys(handle.rstrip('.') for handle in re.findall(r'(?<![\w@])@([A-Za-z0-9._]{2,30})', text or '')))
+
+
+def ffmpeg_binary():
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return shutil.which('ffmpeg')
 
 
 def photo_story_video(path):
-    try:
-        import imageio_ffmpeg
-        binary = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        binary = shutil.which('ffmpeg')
+    binary = ffmpeg_binary()
     if not binary:
-        return None
+        raise BuildError('Для фото-истории Telegram нужен ffmpeg, а его нет.')
     directory = Path(tempfile.mkdtemp(prefix='story-'))
     target = directory / 'photo-story.mp4'
-    base = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-loop', '1', '-framerate', '30', '-i', str(path), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '5',
-            '-vf', 'scale=720:1280:out_range=tv,setsar=1,format=yuv420p', '-pix_fmt', 'yuv420p', '-r', '30',
-            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-shortest', '-map_metadata', '-1']
-    tail = ['-movflags', '+faststart', str(target)]
-    for codec in (['-c:v', 'libx265', '-tag:v', 'hvc1', '-x265-params', 'keyint=30:min-keyint=30:scenecut=0', '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k'],
-                  ['-c:v', 'libx264', '-g', '30', '-crf', '23', '-maxrate', '3M', '-bufsize', '6M']):
-        try:
-            if subprocess.run(base + codec + tail, capture_output=True, timeout=120).returncode == 0 and target.is_file() and 0 < target.stat().st_size <= 30 * 1024 * 1024:
-                return target
-        except (OSError, subprocess.SubprocessError):
-            pass
+    command = [binary, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-loop', '1', '-framerate', '30', '-i', str(path), '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '5',
+               '-vf', 'scale=720:1280:out_range=tv,setsar=1,format=yuv420p', '-pix_fmt', 'yuv420p', '-r', '30',
+               '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-shortest', '-map_metadata', '-1',
+               '-c:v', 'libx265', '-preset', 'veryfast', '-tag:v', 'hvc1', '-x265-params', 'keyint=30:min-keyint=30:scenecut=0', '-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k',
+               '-movflags', '+faststart', str(target)]
+    try:
+        if subprocess.run(command, capture_output=True, timeout=120).returncode == 0 and target.is_file() and 0 < target.stat().st_size <= 30 * 1024 * 1024:
+            return target
+    except (OSError, subprocess.SubprocessError):
+        pass
     shutil.rmtree(directory, ignore_errors=True)
-    return None
+    raise BuildError('Не удалось собрать видео из фото для истории Telegram.')
+
+
+def video_info(path):
+    binary = ffmpeg_binary()
+    if not binary:
+        return {}
+    try:
+        text = subprocess.run([binary, '-hide_banner', '-nostdin', '-i', str(path)], capture_output=True, timeout=30).stderr.decode(errors='replace')
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    info = {}
+    found = re.search(r'Video: (\w+).*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]', text)
+    if found:
+        info.update(codec=found.group(1), width=int(found.group(2)), height=int(found.group(3)))
+    found = re.search(r'Duration: (\d+):(\d+):(\d+(?:\.\d+)?)', text)
+    if found:
+        info['duration'] = round(int(found.group(1)) * 3600 + int(found.group(2)) * 60 + float(found.group(3)), 3)
+    info['audio'] = bool(re.search(r'Stream #\S+: Audio:', text))
+    return info
 
 
 def video_size(path):
-    try:
-        import imageio_ffmpeg
-        binary = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        binary = shutil.which('ffmpeg')
-    if not binary:
-        return {}
-    try:
-        found = re.search(r'Video:.*?[ ,](\d{2,5})x(\d{2,5})[ ,\[]', subprocess.run([binary, '-hide_banner', '-nostdin', '-i', str(path)], capture_output=True, timeout=30).stderr.decode(errors='replace'))
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    return {'width': int(found.group(1)), 'height': int(found.group(2))} if found else {}
+    info = video_info(path)
+    return {key: info[key] for key in ('width', 'height') if key in info}
 
 
 def video_fields(path):
     return {**video_size(path), 'supports_streaming': True}
 
 
+def clip_story_content(content, path):
+    info = video_info(path)
+    extra = {}
+    if info.get('duration'):
+        extra['duration'] = min(60.0, info['duration'])
+    if 'duration' in info and not info['audio']:
+        extra['is_animation'] = True
+    return {**content, **extra}
+
+
+def story_rejection(failure, path):
+    try:
+        info = video_info(path)
+        logging.error(json.dumps({'code': 'story_rejected', 'status': failure.status_code, 'description': getattr(failure, 'description', ''), 'bytes': path.stat().st_size,
+                                  **{key: info[key] for key in ('width', 'height', 'codec') if key in info}}))
+    except Exception:
+        pass
+
+
+def prepare_story(fields, path):
+    content = fields['content']
+    directory = None
+    if content['type'] == 'photo':
+        try:
+            path = photo_story_video(path)
+        except BuildError:
+            raise
+        except Exception:
+            raise BuildError('Не удалось собрать видео из фото для истории Telegram.') from None
+        directory = path.parent
+        content = {'type': 'video', 'video': 'attach://asset', 'duration': 5.0, 'cover_frame_timestamp': 0.0, 'is_animation': True}
+    else:
+        content = clip_story_content(content, path)
+    return {**fields, 'content': content}, path, directory
+
+
 def post_story(fields, path):
     try:
         return telegram('postStory', fields, {'asset': path})
     except Error as failure:
-        if fields['content']['type'] != 'photo' or failure.status_code != 400:
-            raise
-        video = photo_story_video(path)
-        if not video:
-            raise
-        try:
-            content = {'type': 'video', 'video': 'attach://asset', 'duration': 5.0, 'cover_frame_timestamp': 0.0}
-            return telegram('postStory', {**fields, 'content': content}, {'asset': video})
-        finally:
-            shutil.rmtree(video.parent, ignore_errors=True)
+        if failure.status_code == 400:
+            story_rejection(failure, path)
+        raise
+
+
+def send_story(spec, state, target, step, fields, path):
+    if state.get('steps', {}).get(target + ':' + step, {}).get('status') == 'done':
+        return checkpoint(spec, state, target, step, lambda: None)
+    fields, path, directory = prepare_story(fields, path)
+    try:
+        return checkpoint(spec, state, target, step, lambda: post_story(fields, path))
+    finally:
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 def post_telegram(spec, state, target):
@@ -422,7 +483,9 @@ def post_telegram(spec, state, target):
                 if areas:
                     fields['areas'] = areas
             try:
-                stories.append(checkpoint(spec, state, target, 'story' + str(position), lambda fields=fields, name=name: post_story(fields, files[name])))
+                stories.append(send_story(spec, state, target, 'story' + str(position), fields, files[name]))
+            except BuildError:
+                raise
             except Error as failure:
                 reason = getattr(failure, 'description', '')
                 raise Error('Telegram не принял историю ' + str(position + 1) + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None
@@ -444,7 +507,9 @@ def post_telegram(spec, state, target):
         if areas:
             fields['areas'] = areas
         try:
-            result = checkpoint(spec, state, target, 'publish', lambda: post_story(fields, files['video' if video else 'image0']))
+            result = send_story(spec, state, target, 'publish', fields, files['video' if video else 'image0'])
+        except BuildError:
+            raise
         except Error as failure:
             reason = getattr(failure, 'description', '')
             raise Error('Telegram не принял историю' + (' (' + reason + ')' if reason else ', код ' + str(failure.status_code or 'сети')), status_code=failure.status_code) from None
@@ -509,9 +574,9 @@ def post_social(spec, state, target, urls, session):
             try:
                 return numeric(request('POST', f'{base}/{user}/{edge}', fields, token=token))
             except Error:
-                if 'location_id' not in fields:
+                if not {'location_id', 'user_tags'} & set(fields):
                     raise
-                plain = {k: v for k, v in fields.items() if k != 'location_id'}
+                plain = {k: v for k, v in fields.items() if k not in ('location_id', 'user_tags')}
                 return numeric(request('POST', f'{base}/{user}/{edge}', plain, token=token))
         return checkpoint(spec, state, target, step, send)
     published = state['steps'].get(target + ':publish')
@@ -530,6 +595,9 @@ def post_social(spec, state, target, urls, session):
             found = lookup(spec['location'], 'instagram' if instagram else 'threads')
             if found:
                 caption['location_id'] = found
+        def untag():
+            checkpoint(spec, state, target, 'untagged', lambda: True)
+        tags = {'user_tags': json.dumps([{'username': handle} for handle in story_handles(text)])} if target == 'ig-story' and story_handles(text) and target + ':untagged' not in state['steps'] else {}
         order = sequence(spec)
         stories = target == 'ig-story' and (bool(spec.get('media', {}).get('sequence')) or len(order) > 1)
         if spec.get('media', {}).get('clips') and target != 'ig-story' and len(order) < 2:
@@ -538,11 +606,16 @@ def post_social(spec, state, target, urls, session):
             media_ids = []
             created = []
             for position, (kind, index) in enumerate(order):
-                fields = {'media_type': 'STORIES', ('image_url' if kind == 'image' else 'video_url'): urls[('image' if kind == 'image' else 'clip') + str(index)]}
+                fields = {'media_type': 'STORIES', ('image_url' if kind == 'image' else 'video_url'): urls[('image' if kind == 'image' else 'clip') + str(index)], **(tags if position == 0 else {})}
                 done = state['steps'].get(target + ':publish' + str(position), {}).get('status') == 'done'
                 created.append(None if done else create('container' + str(position), fields))
             waiting = [position for position in range(len(created)) if state['steps'].get(target + ':publish' + str(position), {}).get('status') != 'done']
-            ready_all(session, [created[position] for position in waiting], instagram, lambda i: CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(waiting[i])))
+            try:
+                ready_all(session, [created[position] for position in waiting], instagram, lambda i: CONTEXT.get()[1].invalidate(spec['slug'], target + ':container' + str(waiting[i])))
+            except Error as failure:
+                if 'Container ERROR' in str(failure):
+                    untag()
+                raise
             for position, story in enumerate(created):
                 if story is not None:
                     quota(session, instagram)
@@ -567,7 +640,7 @@ def post_social(spec, state, target, urls, session):
             container = create('container', fields)
         else:
             video = bool(spec.get('media', {}).get('video'))
-            fields = dict(caption)
+            fields = {**caption, **tags}
             if video:
                 fields.update(video_url=urls['video'], media_type='STORIES' if instagram else 'VIDEO')
             elif images:
@@ -588,8 +661,10 @@ def post_social(spec, state, target, urls, session):
             except Error as failure:
                 if 'Container ERROR' in str(failure) or 'Container EXPIRED' in str(failure):
                     store = CONTEXT.get()[1]
+                    if 'Container ERROR' in str(failure):
+                        untag()
                     for name in list(state['steps']):
-                        if name.startswith(target + ':') and name != target + ':publish':
+                        if name.startswith(target + ':') and name not in (target + ':publish', target + ':untagged'):
                             store.invalidate(spec['slug'], name)
                 raise
             quota(session, instagram)
@@ -632,7 +707,6 @@ def social_session(provider, deleting=False):
 
 
 def request(method, url, fields=None, token=None, data=None, headers=None, timeout=60, label=None):
-    import logging
     headers = dict(headers or {})
     if token:
         headers['Authorization'] = 'Bearer ' + token

@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -147,7 +148,7 @@ RETRY_AGE = 48 * 3600
 
 
 def retryable(saved):
-    return any(not str((saved.get('errors') or {}).get(t) or '').startswith((EXPIRED_TEXT, TOKEN_PREFIX)) for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES and t not in (saved.get('results') or {}))
+    return any(not str((saved.get('errors') or {}).get(t) or '').startswith(EXPIRED_TEXT) for t in (saved.get('spec') or {}).get('targets', []) if t in NAMES and t not in (saved.get('results') or {}))
 
 
 def table_rows(saved, item, zone='Asia/Makassar'):
@@ -359,6 +360,18 @@ def drafting_status(item, journal, job, now):
     return step.get('label', 'Черновик') + ' ' + ('пишется' if step.get('id') == 'draft' else 'идёт') + ' ' + (str(minutes) + ' мин' if minutes else 'меньше минуты') + ('' if not rows else ': ' + ', '.join(rows)) + '.'
 
 
+def stopped_status(item, journal):
+    steps = (journal or {}).get('steps') or []
+    step = next((e for e in reversed(steps) if e.get('state') == 'failed'), None) or next((e for e in reversed(steps) if e.get('state') == 'running'), None)
+    where = ' на шаге «' + step.get('label', step.get('id', '')) + '»' if step else ''
+    if item.get('upload_timeout'):
+        why = 'файл так и не загрузился'
+    else:
+        reason = (step or {}).get('error') or ''
+        why = reason if re.search('[а-яё]', reason.lower()) else 'сервис не ответил или отклонил запрос' if reason else 'причина не записана'
+    return 'Черновик' + titled(item) + ' остановлен' + where + ': ' + why.rstrip('.') + '. Начни /post.'
+
+
 def located(message):
     venue, point = message.get('venue'), message.get('location')
     if not venue and not point:
@@ -527,13 +540,15 @@ class Store:
         current = inbox.get('current')
         found = {'text':text.strip(), 'finished':self.latest(('done', 'partial'), current), 'retry':self.latest(('partial',), current)}
         command_word = word(text)
+        opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
+        if command_word == 'accept' and opened and opened.get('status') == 'collecting':
+            return None
         if command_word:
             return {**found, 'kind':'command', 'value':command_word}
         if not self.classifier:
             return None
-        opened = self.get('items/' + inbox['collecting']) if inbox.get('collecting') else None
         item = opened if opened and opened.get('status') == 'collecting' else self.get('items/' + current) if current else None
-        context = {'collecting':bool(opened and opened.get('status') == 'collecting'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
+        context = {'collecting':bool(opened and opened.get('status') == 'collecting') or (item or {}).get('status') in ('queued', 'drafting', 'previewed'), 'title':trimmed(titled(item or {}).strip(' «»…')) if item else None, 'status':(item or {}).get('status')}
         try:
             answer = self.classifier(text.strip(), context)
         except Exception:
@@ -587,11 +602,14 @@ class Store:
             if not shown:
                 return answer('Опубликованных постов пока нет.')
             return answer(table_text(shown, shown_item, zone), shown['item'])
-        if kind == 'command' and value == 'table' or kind == 'question' and (finished or live) and not opened and not (current and current.get('status') in ('queued', 'drafting', 'previewed')):
+        stopped = bool(current and current.get('status') == 'failed' and (not finished or (current.get('failed_at') or current.get('updated') or current.get('created') or 0) > (finished.get('published_at') or 0)))
+        if kind == 'command' and value == 'table' or kind == 'question' and not opened and not stopped and (live or finished and not (current and current.get('status') in ('queued', 'drafting', 'previewed'))):
             return table()
         if kind == 'command' and value == 'accept':
             target = finished
-            if not target or target.get('operation') or not target.get('results'):
+            if live and not scheduled(live):
+                return answer(publishing(live, current), session['current'])
+            if not target or target.get('operation') or not target.get('results') or target.get('state') not in ('done', 'partial'):
                 return answer('Принимать нечего: нет опубликованного поста.')
             if target.get('accepted'):
                 return answer('Пост' + named(target, finished_item) + ' уже принят.', finished['item'])
@@ -606,11 +624,10 @@ class Store:
             if time.time() - (retrying.get('updated') or retrying.get('published_at') or 0) > RETRY_AGE:
                 return answer('Повторять поздно: прошло больше двух суток, пришли материал заново.', retrying['item'])
             if not retryable(retrying):
-                token = [e for e in ((retrying.get('errors') or {}).get(t) for t in (retrying.get('spec') or {}).get('targets', []) if t not in (retrying.get('results') or {})) if str(e or '').startswith(TOKEN_PREFIX)]
-                return answer(token[0] if token and all(e != EXPIRED_TEXT for e in (retrying.get('errors') or {}).values()) else EXPIRED_TEXT, retrying['item'])
+                return answer(EXPIRED_TEXT, retrying['item'])
             retrying_item = self.get('items/' + retrying['item'], tx)
             retrying['state'] = 'approved'
-            retrying['attempts'] = {t:(3 if str((retrying.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX) else n) for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {}) or str((retrying.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX)}
+            retrying['attempts'] = {t:n for t, n in retrying.get('attempts', {}).items() if t in retrying.get('results', {})}
             self.put('specs/' + found['retry'], retrying, tx)
             self.job(tx, {'slug':found['retry'], 'step':'run'}, 'callback-' + hashlib.sha256(identifier.encode()).hexdigest())
             return answer('Повторяю публикацию' + named(retrying, retrying_item) + '.', retrying['item'])
@@ -663,6 +680,8 @@ class Store:
         if kind == 'question':
             if opened:
                 return answer('Пост' + titled(opened) + ' собирается. Присылай материал и нажми «Готово».', session['collecting'])
+            if stopped:
+                return answer(stopped_status(current, journal) + ('\n' + table_text(finished, finished_item, zone) if finished else ''), session['current'])
             if working(current):
                 return answer(drafting_status(current, journal, self.get('renders/' + current['render'], tx) if current.get('render') else None, time.time()), session['current'])
             if current and current.get('status') == 'previewed':
@@ -868,6 +887,15 @@ class Store:
             starts = not name and not opened and not (drafting and not fresh) and not running and not (group and session.get('answered_group') == group) and any(message.get(k) for k in MEDIA_KEYS)
             if starts:
                 session.pop('awaiting', None)
+            if reply_id and not name and note and not opened and not drafting and (message['reply_to_message'].get('from') or {}).get('is_bot') and not (target and not target.get('operation') and self.fixable(target)) and not any(message.get(k) for k in MEDIA_KEYS):
+                source = replied['slug'] if replied else slug or self.latest(('done', 'partial'))
+                if source:
+                    known = self.get('specs/' + source, tx)
+                    self.subject = (known or {}).get('item') or source
+                    quoted = message['reply_to_message']
+                    self.job(tx, {'step':'reply', 'slug':source, 'text':note[:1000], 'quoted':(quoted.get('text') or quoted.get('caption') or '')[:1000]}, 'reply-' + identifier)
+                    self.put(update_path, {'received':time.time()}, tx)
+                    return None
             if name == '/post' or opened or starts:
                 item_id = opened or 'item-' + identifier
                 item = self.get('items/' + item_id, tx)
@@ -1259,7 +1287,7 @@ class Store:
             line = 'Принято.'
         elif verb == 'retry' and saved['state'] == 'partial':
             saved['state'] = 'approved'
-            saved['attempts'] = {t:(3 if str((saved.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX) else n) for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{}) or str((saved.get('errors') or {}).get(t) or '').startswith(TOKEN_PREFIX)}
+            saved['attempts'] = {t:n for t,n in saved.get('attempts',{}).items() if t in saved.get('results',{})}
             line, status = 'Повторяю…', True
         elif verb == 'edit' and not saved.get('operation') and saved['state'] == 'needs-edit' and session.get('awaiting') == {'kind':'edit','slug':slug}:
             return 'Жду правку: напиши, что поменять.'
@@ -1279,7 +1307,7 @@ class Store:
         self.put('followups/' + identifier, {'slug':slug, 'item':item_id, 'notes':[text], 'messages':[message], 'token':uuid.uuid4().hex[:8], 'answered':True}, tx)
         held['followup'] = identifier
         self.put('items/' + item_id, held, tx)
-        self.job(tx, {'step':'answer', 'slug':slug, 'item':item_id, 'text':text}, 'answer-' + identifier)
+        self.job(tx, {'step':'answer', 'slug':slug, 'item':item_id, 'text':text, 'update':identifier}, 'answer-' + identifier)
 
     def edit_from_question(self, tx, slug, text, identifier):
         spec = self.get('specs/' + slug, tx)

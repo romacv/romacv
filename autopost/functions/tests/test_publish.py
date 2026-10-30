@@ -25,6 +25,12 @@ class StoryTests(unittest.TestCase):
         self.spec = {'slug':'trip','targets':['tg-channel','tg-story'],'media':{'images':[{'path':'image0.jpg','alt':'a'}]},'copy':{'tg-story':'Дом'}}
         self.identity = {'id':'biz','user':{'id':1,'username':'romacv777'}}
 
+    def convert(self, path):
+        video = self.root/'converted'/'photo-story.mp4'
+        video.parent.mkdir(exist_ok=True)
+        video.write_bytes(b'mp4')
+        return video
+
     def post(self, state, reply=None):
         calls = []
         def fake(method, fields=None, files=None):
@@ -38,7 +44,8 @@ class StoryTests(unittest.TestCase):
     def test_story_links_the_channel_post_and_waits_for_it(self):
         with self.assertRaises(p.Error):
             self.post({'steps':{}})
-        url, calls = self.post({'steps':{'tg-channel:publish':{'status':'done','value':{'message_id':305}}}})
+        with patch.object(p,'photo_story_video',self.convert):
+            url, calls = self.post({'steps':{'tg-channel:publish':{'status':'done','value':{'message_id':305}}}})
         area = calls[-1][1]['areas'][0]
         self.assertEqual(area['type'],{'type':'link','url':'https://t.me/romacv777/305'})
         self.assertGreater(area['position']['y_percentage'],60)
@@ -47,30 +54,80 @@ class StoryTests(unittest.TestCase):
         failure = p.Error('API failure: 400',status_code=400)
         failure.description = "Bad Request: can't download or generate the file"
         self.spec['targets'] = ['tg-story']
-        with self.assertRaises(p.Error) as caught:
+        with patch.object(p,'photo_story_video',self.convert), patch.object(p,'video_info',return_value={}), self.assertRaises(p.Error) as caught:
             self.post({'steps':{}},failure)
         self.assertIn('Telegram не принял историю',str(caught.exception))
         self.assertIn("can't download",str(caught.exception))
 
-    def test_rejected_photo_story_is_retried_as_a_video_story(self):
-        failure = p.Error('API failure: 400',status_code=400)
-        failure.description = "Bad Request: can't download or generate the file"
+    def test_photo_story_is_posted_directly_as_a_five_second_video(self):
         self.spec['targets'] = ['tg-story']
         calls = []
         def fake(method, fields=None, files=None):
             calls.append((method,fields,files))
-            if method == 'postStory' and fields['content']['type'] == 'photo':
-                raise failure
             return {'id':7}
         def convert(path):
-            video = self.root/'photo-story.mp4'
+            video = self.root/'converted'/'photo-story.mp4'
+            video.parent.mkdir(exist_ok=True)
             video.write_bytes(b'mp4')
             return video
         with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram',fake), patch.object(p,'checkpoint',lambda spec,st,target,step,action:action()), patch.object(p,'photo_story_video',convert):
             url = p.post_telegram(self.spec,{'steps':{}},'tg-story')
-        stories = [(f['content']['type'],files['asset'].name) for method,f,files in calls if method == 'postStory']
-        self.assertEqual(stories,[('photo','image0.jpg'),('video','photo-story.mp4')])
+        stories = [(f['content'],files['asset'].name) for method,f,files in calls if method == 'postStory']
+        self.assertEqual(stories,[({'type':'video','video':'attach://asset','duration':5.0,'cover_frame_timestamp':0.0,'is_animation':True},'photo-story.mp4')])
         self.assertTrue(url.endswith('/s/7'))
+
+    def test_local_build_failure_keeps_its_text_and_never_enters_the_checkpoint(self):
+        self.spec['targets'] = ['tg-story']
+        steps = []
+        def checkpoint(spec, state, target, step, action):
+            steps.append(step)
+            return action()
+        def broken(path):
+            raise p.BuildError('Не удалось собрать видео из фото для истории Telegram.')
+        with patch.object(p,'telegram_identity',return_value=self.identity), patch.object(p,'telegram') as sent, patch.object(p,'checkpoint',checkpoint), patch.object(p,'photo_story_video',broken):
+            with self.assertRaises(p.BuildError) as caught:
+                p.post_telegram(self.spec,{'steps':{}},'tg-story')
+        self.assertIn('Не удалось собрать видео',str(caught.exception))
+        self.assertNotIn('код сети',str(caught.exception))
+        self.assertEqual(steps,[])
+        sent.assert_not_called()
+
+    def test_photo_story_without_ffmpeg_fails_clearly(self):
+        with patch.object(p,'ffmpeg_binary',return_value=None):
+            with self.assertRaises(p.Error) as caught:
+                p.photo_story_video(self.root/'image0.jpg')
+        self.assertIn('ffmpeg',str(caught.exception))
+
+    def test_story_rejection_logs_size_and_codec_without_secrets(self):
+        failure = p.Error('API failure: 400',status_code=400)
+        failure.description = "Bad Request: can't download or generate the file"
+        clip = self.root/'clip.mp4'
+        clip.write_bytes(b'mp4')
+        def reject(method, fields=None, files=None):
+            raise failure
+        with patch.object(p,'telegram',reject), patch.object(p,'video_info',return_value={'width':720,'height':1280,'codec':'hevc','duration':4.0,'audio':True}), self.assertLogs(level='ERROR') as logged:
+            with self.assertRaises(p.Error):
+                p.post_story({'content':{'type':'video','video':'attach://asset'}},clip)
+        entry = json.loads(logged.records[0].getMessage())
+        self.assertEqual((entry['bytes'],entry['width'],entry['height'],entry['codec']),(3,720,1280,'hevc'))
+        self.assertIn("can't download",entry['description'])
+
+    def test_clip_story_carries_duration_and_animation_flag_when_silent(self):
+        clip = self.root/'clip.mp4'
+        clip.write_bytes(b'mp4')
+        content = {'type':'video','video':'attach://asset','cover_frame_timestamp':0.0}
+        with patch.object(p,'video_info',return_value={'duration':12.5,'audio':False}):
+            first = p.prepare_story({'content':content},clip)[0]['content']
+        with patch.object(p,'video_info',return_value={'duration':80.0,'audio':True}):
+            second = p.prepare_story({'content':content},clip)[0]['content']
+        self.assertEqual(first,{**content,'duration':12.5,'is_animation':True})
+        self.assertEqual(second,{**content,'duration':60.0})
+
+    def test_video_info_reads_duration_codec_size_and_audio(self):
+        text = b"Duration: 00:01:02.50, start: 0.0\n  Stream #0:0: Video: hevc (Main), yuv420p, 720x1280, 30 fps\n  Stream #0:1: Audio: aac, 48000 Hz\n"
+        with patch.object(p,'ffmpeg_binary',return_value='ffmpeg'), patch.object(p.subprocess,'run',return_value=Mock(stderr=text)):
+            info = p.video_info(self.root/'x.mp4')
+        self.assertEqual(info,{'codec':'hevc','width':720,'height':1280,'duration':62.5,'audio':True})
 
 
 class MixedPostTests(unittest.TestCase):
@@ -85,6 +142,12 @@ class MixedPostTests(unittest.TestCase):
         p.configure({'channels':{'tg-channel':-100123},'telegram_bot_token':'x'},Store(FakeFirestore()),self.root)
         self.spec = {'slug':'trip','targets':['tg-channel'],'media':{'images':[{'path':'image0.jpg','alt':'a'}],'clips':[{'path':'clip0.mp4'},{'path':'clip1.mp4'}],'sequence':[{'kind':'clip','index':0},{'kind':'image','index':0},{'kind':'clip','index':1}]},'copy':{'tg-channel':'Дом','tg-story':'Дом','ig-post':'Home'}}
         self.identity = {'id':'biz','user':{'id':1,'username':'romacv777'}}
+
+    def convert(self, path):
+        video = self.root/'converted'/'photo-story.mp4'
+        video.parent.mkdir(exist_ok=True)
+        video.write_bytes(b'mp4')
+        return video
 
     def telegram(self, target):
         calls = []
@@ -101,14 +164,16 @@ class MixedPostTests(unittest.TestCase):
         album = self.telegram('tg-channel')[-1][1]['media']
         self.assertEqual([(m['type'],m['media']) for m in album],[('video','attach://clip0'),('photo','attach://image0'),('video','attach://clip1')])
         self.spec['targets'] = ['tg-story']
-        stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
-        self.assertEqual(stories,['video','photo','video'])
+        with patch.object(p,'photo_story_video',self.convert):
+            stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
+        self.assertEqual(stories,['video','video','video'])
 
     def test_seven_photos_become_seven_telegram_stories_in_order(self):
         self.spec['targets'] = ['tg-story']
         self.spec['media'] = {'images':[{'path':'image0.jpg','alt':'a'}] * 7}
-        stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
-        self.assertEqual(stories,['photo'] * 7)
+        with patch.object(p,'photo_story_video',self.convert):
+            stories = [fields['content']['type'] for method,fields in self.telegram('tg-story') if method == 'postStory']
+        self.assertEqual(stories,['video'] * 7)
 
     def test_album_checkpoints_are_saved_per_album_so_a_retry_never_reposts(self):
         self.spec['media']['clips'] = [{'path':'clip0.mp4'},{'path':'clip1.mp4'}]
@@ -147,6 +212,42 @@ class MixedPostTests(unittest.TestCase):
         with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'ready_all'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
             p.post_social(spec,{'steps':{}},'ig-story',urls,('tok','1','https://graph'))
         self.assertEqual([f['image_url'] for f in requests if f.get('media_type') == 'STORIES'],['https://x/image0','https://x/image1','https://x/image2'])
+
+    def instagram_story(self, text, fail_with_tags=False):
+        requests = []
+        def fake(method, url, fields=None, token=None, **rest):
+            requests.append(fields or {})
+            if fail_with_tags and fields and 'user_tags' in fields:
+                raise p.Error('API failure: 400',status_code=400)
+            return {'id':'1','shortcode':'abc'}
+        spec = {'slug':'trip','media':{'images':[{'path':'image0.jpg','alt':'a'}]},'targets':['ig-story'],'copy':{'ig-story':text}}
+        with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
+            p.post_social(spec,{'steps':{}},'ig-story',{'image0':'https://x/image0'},('tok','1','https://graph'))
+        return [f for f in requests if f.get('media_type') == 'STORIES']
+
+    def test_instagram_story_mentions_the_brand_handle_and_retries_without_it(self):
+        containers = self.instagram_story('Новая версия @nostress.app.')
+        self.assertEqual(json.loads(containers[0]['user_tags']),[{'username':'nostress.app'}])
+        containers = self.instagram_story('Новая версия @nostress.app',fail_with_tags=True)
+        self.assertEqual(len(containers),2)
+        self.assertIn('user_tags',containers[0])
+        self.assertNotIn('user_tags',containers[1])
+        self.assertNotIn('user_tags',self.instagram_story('Без упоминаний')[0])
+
+    def test_instagram_story_tags_only_the_first_frame_and_not_after_an_error(self):
+        spec = {'slug':'trip','media':{'images':[{'path':'image0.jpg','alt':'a'}] * 2,'sequence':[{'kind':'image','index':0},{'kind':'image','index':1}]},'targets':['ig-story'],'copy':{'ig-story':'@nostress.app'}}
+        (self.root/'image1.jpg').write_bytes((self.root/'image0.jpg').read_bytes())
+        urls = {'image0':'https://x/image0','image1':'https://x/image1'}
+        def run(state):
+            requests = []
+            def fake(method, url, fields=None, token=None, **rest):
+                requests.append(fields or {})
+                return {'id':'1','shortcode':'abc'}
+            with patch.object(p,'request',fake), patch.object(p,'probe'), patch.object(p,'ready_all'), patch.object(p,'quota'), patch.object(p,'checkpoint',lambda spec,st,t,step,action:action()):
+                p.post_social(spec,state,'ig-story',urls,('tok','1','https://graph'))
+            return [f for f in requests if f.get('media_type') == 'STORIES']
+        self.assertEqual(['user_tags' in f for f in run({'steps':{}})],[True,False])
+        self.assertEqual(['user_tags' in f for f in run({'steps':{'ig-story:untagged':{'status':'done','value':True}}})],[False,False])
 
     def test_instagram_carousel_has_image_and_video_children_in_order(self):
         requests = []

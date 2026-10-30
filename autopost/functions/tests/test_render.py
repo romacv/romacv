@@ -67,6 +67,20 @@ class RenderSettingsTests(unittest.TestCase):
         self.assertIn('scale=1080:1920',render.clip_filters('crop',False))
 
 
+class ClipStoryTests(unittest.TestCase):
+    def test_telegram_story_clip_follows_the_bot_api_contract(self):
+        probes = [Mock(stdout=b'{"format":{"duration":95.0}}'),Mock(stdout=b'{"streams":[]}')]
+        with patch.object(render.subprocess,'run',side_effect=probes):
+            arguments = [str(a) for a in render.clip_arguments('in.mp4','story-tg','out.mp4')]
+        graph = arguments[arguments.index('-filter_complex') + 1]
+        for part in ('boxblur','scale=720:1280,format=yuv420p','fps=30'):
+            self.assertIn(part,graph)
+        self.assertEqual(arguments[arguments.index('-t') + 1],'60')
+        for pair in (['-c:v','libx265'],['-tag:v','hvc1'],['-x265-params','keyint=30:min-keyint=30:scenecut=0'],['-b:v','2500k'],['-c:a','aac'],['-ar','48000'],['-ac','2'],['-movflags','+faststart']):
+            self.assertIn(pair,[arguments[i:i+2] for i in range(len(arguments))])
+        self.assertEqual(render.CLIP_FORMATS['story-tg'],30_000_000)
+
+
 class FinalRenderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

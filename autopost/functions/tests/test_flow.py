@@ -160,11 +160,15 @@ class PublishedMessageTests(unittest.TestCase):
 
     def test_question_on_a_previewed_draft_is_kept_without_a_read_after_write(self):
         self.store.put('items/item-2',{'status':'previewed','revision':2,'messages':[{'message_id':1,'text':'x'}],'slug':'item-2'})
-        self.store.put('specs/item-2',{'state':'previewed','item':'item-2','spec':{'targets':['tg-channel']},'hash':'abcdefgh'})
+        self.store.put('specs/item-2',{'state':'previewed','item':'item-2','spec':{'targets':['tg-channel'],'copy':{'tg-channel':'x'}},'hash':'abcdefgh'})
         self.store.put('sessions/inbox',{'current':'item-2'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         self.assertEqual(self.say(15,'ты поправил? покажи'),'')
-        self.assertTrue(self.store.get('followups/15')['answered'])
+        job = self.store.get('outbox/answer-15')['payload']
+        sent = []
+        with patch.object(app,'tell',side_effect=lambda config,text,**extra:sent.append(text) or {'message_id':50}), patch.object(app.drafter,'converse',return_value='{"answer":"Да, поправил"}'):
+            app.question(self.config,self.store,job)
+        self.assertEqual(sent,['Черновик «x»: Да, поправил'])
 
     def test_repeated_publishing_status_is_sent_once(self):
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['ig-story','tg-story']},'results':{'ig-story':{}},'errors':{}})
@@ -175,7 +179,7 @@ class PublishedMessageTests(unittest.TestCase):
         self.store.put('items/old',{'status':'done','revision':1,'messages':[],'slug':'old','title':'Старый'})
         self.store.put('specs/old',{'state':'done','item':'old','published_at':99,'spec':{'targets':['tg-channel']},'results':{'tg-channel':{'url':'https://t.me/old/1','at':1}}})
         self.store.put('specs/album',{'state':'running','item':'item-1','spec':{'targets':['tg-channel']},'results':{},'errors':{}})
-        self.store.put('items/album',{'status':'approved','revision':1,'messages':[],'slug':'album'})
+        self.store.put('items/album',{'status':'previewed','revision':1,'messages':[],'slug':'album'})
         self.store.classifier = lambda text,context:{'kind':'question','value':None}
         reply = self.say(13,'покажи ссылки')
         self.assertNotIn('t.me/old',reply)

@@ -103,22 +103,25 @@ def title_position(frame):
     return round((150-TITLE_MARGIN)*scale), round((330-TITLE_MARGIN)*scale)
 
 
-def emptiest_title_y(frame, x, size, scale):
+def emptiest_title_y(frames, x, size, scale, ceiling=1250):
     from PIL import Image, ImageFilter
     cell = max(1,round(10*scale))
-    with Image.open(frame) as image:
-        small = image.convert('L').filter(ImageFilter.FIND_EDGES).resize((image.width//cell,image.height//cell),Image.BOX)
-    columns, rows = small.size
-    data = small.tobytes()
-    low, high = round((300-TITLE_MARGIN)*scale), round(1250*scale) - size[1]
-    c0, c1 = max(0,x//cell), min(columns,-(-(x+size[0])//cell))
+    maps = []
+    for frame in frames:
+        with Image.open(frame) as image:
+            small = image.convert('L').filter(ImageFilter.FIND_EDGES).resize((image.width//cell,image.height//cell),Image.BOX)
+        maps.append((small.size[0],small.size[1],small.tobytes()))
+    low, high = round((300-TITLE_MARGIN)*scale), round(ceiling*scale) - size[1]
+    c0, c1 = max(0,x//cell), -(-(x+size[0])//cell)
     span = max(1,-(-size[1]//cell))
     best = (None,low)
     for top in range(low,max(low,high)+1,cell):
         r0 = top//cell
-        r1 = min(rows,r0+span)
-        values = [data[r*columns+c] for r in range(r0,r1) for c in range(c0,c1)]
-        cost = sum(values)/max(1,len(values)) + 14*(top-low)/max(1,high-low)
+        density = 0
+        for columns, rows, data in maps:
+            values = [data[r*columns+c] for r in range(r0,min(rows,r0+span)) for c in range(c0,min(columns,c1))]
+            density = max(density,sum(values)/max(1,len(values)))
+        cost = density + 14*(top-low)/max(1,high-low)
         if best[0] is None or cost < best[0]:
             best = (cost,top)
     return best[1]
@@ -411,6 +414,7 @@ def render(bucket, job, root):
             clean = cover_headline(clean,settings['text'])
         clean.save(cover,'JPEG',quality=90,icc_profile=ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes())
     font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',44)
+    title_y = {}
     for target in groups:
         timeline = job['edl']['targets'][target]
         subtitles = root / (target + '.ass')
@@ -434,14 +438,24 @@ def render(bucket, job, root):
                 with Image.open(image) as full:
                     full.resize((full.width//2,full.height//2)).save(image)
             x, y = title_position((width,height))
-            grab = root / f'{target}-title-{index}.jpg'
-            try:
-                run(['-ss',f"{(cue['start']+cue['end'])/2:.3f}",'-i',joined_files[target],'-frames:v','1','-q:v','3',grab])
-                with Image.open(image) as full:
-                    y = emptiest_title_y(grab,x,full.size,width/1080)
-            except (RuntimeError,OSError):
-                pass
-            grab.unlink(missing_ok=True)
+            saved = job.get('title_y',{}).get(target,[])
+            if index < len(saved):
+                y = round(saved[index]*height)
+            else:
+                grabs = []
+                try:
+                    for number, moment in enumerate((cue['start'],(cue['start']+cue['end'])/2,max(cue['start'],cue['end']-0.1))):
+                        grab = root / f'{target}-title-{index}-{number}.jpg'
+                        run(['-ss',f"{moment:.3f}",'-i',joined_files[target],'-frames:v','1','-q:v','3',grab])
+                        grabs.append(grab)
+                    with Image.open(image) as full:
+                        y = emptiest_title_y(grabs,x,full.size,width/1080,980 if timeline['subtitles'] else 1250)
+                except (RuntimeError,OSError):
+                    pass
+                for grab in grabs:
+                    grab.unlink(missing_ok=True)
+            for name in groups[target]:
+                title_y.setdefault(name,[]).append(y/height)
             title_inputs += ['-i',image]
             video_filter += f"[t{index}];[t{index}][{index+2}:v]overlay=x={x}:y={y}:eof_action=repeat:enable='between(t,{cue['start']+1/30:.6f},{cue['end']+1/30:.6f})'"
         if target == 'tg-story' and not draft:
@@ -463,7 +477,7 @@ def render(bucket, job, root):
         manifest = put(bucket,output,job['prefix'] + '/' + output.name)
         for name in groups[target]:
             outputs[name] = manifest
-    return {'videos':outputs,'cover':put(bucket,cover,job['prefix'] + '/cover.jpg')}
+    return {'videos':outputs,'cover':put(bucket,cover,job['prefix'] + '/cover.jpg'),'title_y':title_y}
 
 
 CLIP_LIMIT = 60
@@ -476,8 +490,10 @@ def clip_arguments(source, fmt, output):
         graph = 'scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,setsar=1,fps=30'
     elif fmt == 'channel':
         graph = 'scale=1280:1280:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=30'
+    elif fmt == 'story-tg':
+        graph = clip_filters('blur',False) + ',scale=720:1280,format=yuv420p'
     else:
-        graph = clip_filters('blur',False) + (',scale=720:1280' if fmt == 'story-tg' else '')
+        graph = clip_filters('blur',False)
     codec = ['-c:v','libx265','-tag:v','hvc1','-x265-params','keyint=30:min-keyint=30:scenecut=0','-b:v','2500k','-maxrate','3000k','-bufsize','6000k'] if fmt == 'story-tg' else ['-c:v','libx264','-preset','fast','-crf','22','-maxrate','5M','-bufsize','10M','-g','30']
     audio = bool(json.loads(subprocess.run(['ffprobe','-v','error','-select_streams','a','-show_entries','stream=index','-of','json',str(source)],capture_output=True,check=True).stdout).get('streams'))
     silence = [] if audio else ['-f','lavfi','-i','anullsrc=r=48000:cl=stereo']
