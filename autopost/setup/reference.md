@@ -24,6 +24,8 @@
 
 `media.py` использует Speech-to-Text **V1** `long_running_recognize` и опрос операции. Официальные контракты [longrunningrecognize](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/speech/longrunningrecognize) и [operations.get](https://docs.cloud.google.com/speech-to-text/docs/reference/rest/v1/operations/get) требуют OAuth scope `cloud-platform` и не указывают отдельных Speech IAM permissions. Для этих вызовов отдельная Speech role не выдаётся: API включён, используются credentials прикреплённого SA и уже выданный доступ к GCS. Не переносить требования V2 recognizers на V1.
 
+Places API (New) в `geo.py` вызывается токеном runtime SA с `X-Goog-User-Project`, поэтому runtime получает `roles/serviceusage.serviceUsageConsumer`. Квота Text Search Pro держится в бесплатных 5000/мес: preference `places-text-search-free-cap`, `SearchTextRequestPerDayPerProject` = 161; снижение требует `--allow-high-percentage-quota-decrease`.
+
 ## Секреты и обслуживание
 
 `secret` запускается владельцем только для передачи конфигурации из файлов по [шаблону](keys-template.md). Каждый явный запуск добавляет новую версию, даже при одинаковых данных; существующее значение никогда не читается. JSON передаётся через stdin в [gcloud secrets versions add](https://docs.cloud.google.com/sdk/gcloud/reference/secrets/versions/add), без аргументов со значениями и временного файла. Логи gcloud и core dumps отключены; вывод ошибок скрыт.

@@ -96,7 +96,7 @@ def policies():
 
 
 def apis():
-    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging', 'monitoring', 'bigquery']
+    services = ['serviceusage', 'firebase', 'firebasehosting', 'firebaserules', 'firebasestorage', 'cloudfunctions', 'run', 'cloudbuild', 'artifactregistry', 'eventarc', 'pubsub', 'cloudtasks', 'cloudscheduler', 'secretmanager', 'speech', 'places', 'firestore', 'storage', 'iam', 'iamcredentials', 'cloudresourcemanager', 'cloudbilling', 'billingbudgets', 'logging', 'monitoring', 'bigquery']
     say('Enable APIs: ' + ', '.join(services))
     for start in range(0, len(services), 20):
         cloud('services', 'enable', *[service + '.googleapis.com' for service in services[start:start + 20]])
@@ -151,6 +151,7 @@ def iam():
     grant(RUNTIME, monitoring)
     grant(RUNTIME, 'roles/bigquery.jobUser')
     grant(RUNTIME, 'roles/artifactregistry.reader')
+    grant(RUNTIME, 'roles/serviceusage.serviceUsageConsumer')
     dataset_reader(RUNTIME)
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST'), RUNTIME, 'roles/secretmanager.secretAccessor')
     bind(('secrets', 'add-iam-policy-binding', 'AUTOPOST_NOTIFY'), RENDER, 'roles/secretmanager.secretAccessor')
