@@ -6,7 +6,7 @@ from datetime import timezone
 from email.utils import format_datetime
 from pathlib import Path
 
-from contract import parse_iso
+from contract import INLINE_IMAGE, inline_files, parse_iso, valid_image_file
 
 SITE_URL = "https://www.resrom.com"
 AUTHOR = "Roman Resenchuk"
@@ -62,9 +62,14 @@ def iso_duration(total_seconds):
 def post_kind(post, files):
     if post.get("youtubeId"):
         return "video"
-    if post.get("images"):
+    if carousel_images(post):
         return "carousel"
     return "text"
+
+
+def carousel_images(post):
+    inlined = inline_files(post["body"])
+    return [image for image in post.get("images", []) if image["src"] not in inlined]
 
 
 def media_path(slug, file):
@@ -90,6 +95,7 @@ def parse_blocks(markdown):
     blocks = []
     paragraph = []
     items = None
+    figure = []
 
     def flush():
         nonlocal paragraph, items
@@ -100,17 +106,29 @@ def parse_blocks(markdown):
         paragraph = []
         items = None
 
+    def end_figure():
+        nonlocal figure
+        if figure:
+            blocks.append(("figure", figure))
+        figure = []
+
     for raw in markdown.split("\n"):
         line = raw.strip()
         heading = HEADING.match(line)
         bullet = BULLET.match(line)
         numbered = NUMBERED.match(line)
+        image = INLINE_IMAGE.match(line)
         if not line:
             flush()
+        elif image and valid_image_file(image.group(2)):
+            flush()
+            figure.append((image.group(1), image.group(2)))
         elif heading:
+            end_figure()
             flush()
             blocks.append(("h2" if len(heading.group(1)) == 2 else "h3", heading.group(2)))
         elif bullet or numbered:
+            end_figure()
             kind = "ul" if bullet else "ol"
             if paragraph or (items is not None and items[0] != kind):
                 flush()
@@ -120,8 +138,10 @@ def parse_blocks(markdown):
         elif items is not None:
             items[1][-1] += f" {line}"
         else:
+            end_figure()
             paragraph.append(line)
     flush()
+    end_figure()
     return blocks
 
 
@@ -157,10 +177,24 @@ def heading_id(text):
     return re.sub(r"^-|-$", "", re.sub(r"[^a-z0-9]+", "-", plain(text).lower()))
 
 
-def render_markdown(source):
+def render_figure(slug, content, sizes):
+    count = len(content)
+    grid = ""
+    if count > 1:
+        grid = " blog-figure-grid blog-figure-grid-3" if count == 3 or count >= 5 else " blog-figure-grid"
+    images = ""
+    for alt, src in content:
+        size = sizes[src]
+        images += f'<img src="{escape(media_path(slug, src))}" alt="{escape(alt)}" width="{size["width"]}" height="{size["height"]}" loading="lazy" decoding="async" class="blog-image">'
+    return f'<figure class="blog-figure{grid}">{images}</figure>'
+
+
+def render_markdown(source, slug="", sizes=None):
     out = []
     for kind, content in parse_blocks(source):
-        if kind in ("h2", "h3"):
+        if kind == "figure":
+            out.append(render_figure(slug, content, sizes or {}))
+        elif kind in ("h2", "h3"):
             out.append(f'<{kind} id="{escape(heading_id(content))}">{render_inline(content)}</{kind}>')
         elif kind in ("ul", "ol"):
             out.append(f"<{kind}>" + "".join(f"<li>{render_inline(item)}</li>" for item in content) + f"</{kind}>")
@@ -240,8 +274,12 @@ def page(shell, head, content):
     )
 
 
-def img(src, alt, width, height, class_name):
-    return f'<img src="{escape(src)}" alt="{escape(alt)}" width="{width}" height="{height}" loading="lazy" decoding="async" class="{class_name}">'
+def dimensions(size):
+    return f' width="{size[0]}" height="{size[1]}"' if size else ""
+
+
+def img(src, alt, size, class_name):
+    return f'<img src="{escape(src)}" alt="{escape(alt)}"{dimensions(size)} loading="lazy" decoding="async" class="{class_name}">'
 
 
 def render_video(post):
@@ -254,7 +292,7 @@ def render_video(post):
     )
 
 
-def render_article(post, files):
+def render_article(post, files, cover_size=None):
     slug = post["slug"]
     kind = post_kind(post, files)
     updated = ""
@@ -263,15 +301,15 @@ def render_article(post, files):
     video = render_video(post) if kind == "video" else ""
     if not video:
         cover = media_path(slug, post["cover"])
-        video = f'<img src="{escape(cover)}" alt="{escape(post["title"])}" width="1280" height="720" loading="eager" fetchpriority="high" decoding="async" class="blog-cover">'
+        video = f'<img src="{escape(cover)}" alt="{escape(post["title"])}"{dimensions(cover_size)} loading="eager" fetchpriority="high" decoding="async" class="blog-cover">'
     carousel = ""
     if kind == "carousel":
         frames = "".join(
             "<li>" + img(
                 media_path(slug, image["src"]), image["alt"],
-                image.get("width", DEFAULT_IMAGE_SIZE[0]), image.get("height", DEFAULT_IMAGE_SIZE[1]), "blog-image",
+                (image.get("width", DEFAULT_IMAGE_SIZE[0]), image.get("height", DEFAULT_IMAGE_SIZE[1])), "blog-image",
             ) + "</li>"
-            for image in post["images"]
+            for image in carousel_images(post)
         )
         carousel = f'<ol class="blog-carousel" aria-label="Carousel images">{frames}</ol>'
     paragraphs = [chunk for chunk in re.split(r"\n\s*\n", post.get("transcript", "")) if chunk.strip()]
@@ -283,7 +321,7 @@ def render_article(post, files):
     return (
         f'<article class="blog-post"><h1>{escape(post["title"])}</h1>'
         f'<p class="blog-meta">By {AUTHOR}, <time datetime="{escape(post["publishedAt"])}">{format_post_date(post["publishedAt"])}</time>{updated}</p>'
-        f'{video}{carousel}<div class="blog-body">{render_markdown(post["body"])}{transcript}</div>'
+        f'{video}{carousel}<div class="blog-body">{render_markdown(post["body"], slug, {image["src"]: image for image in post.get("images", [])})}{transcript}</div>'
         f"{tag_list}"
         '<p><a href="/blog" class="blog-back">All posts</a></p></article>'
     )
@@ -374,7 +412,7 @@ def render_post_json_ld(post, files):
     return "".join(scripts)
 
 
-def render_index(posts, media, shell):
+def render_index(posts, media, shell, cover_sizes):
     items = []
     for post in newest_first(posts):
         slug = post["slug"]
@@ -382,7 +420,7 @@ def render_index(posts, media, shell):
         href = f"/blog/{slug}"
         items.append(
             "<li>"
-            f'<a href="{href}" class="blog-thumb">{img(media_path(slug, post["cover"]), post["title"], 1280, 720, "blog-image")}</a>'
+            f'<a href="{href}" class="blog-thumb">{img(media_path(slug, post["cover"]), post["title"], cover_sizes.get(slug), "blog-image")}</a>'
             '<div>'
             f'<a href="{href}" class="blog-title">{escape(post["title"])}</a>'
             f'<time datetime="{escape(post["publishedAt"])}">{kind.capitalize()} · {format_post_date(post["publishedAt"])}</time>'
@@ -469,12 +507,13 @@ def render_llms_txt(posts):
     return f"# Roman Resenchuk blog\n\n> {BLOG_DESCRIPTION} Site: {SITE_URL}/\n\n" + "\n".join(entries)
 
 
-def render_site(posts, media, shell):
+def render_site(posts, media, shell, cover_sizes=None):
+    cover_sizes = cover_sizes or {}
     files = {"blog/blog.css": BLOG_CSS.encode()}
-    files["blog/index.html"] = render_index(posts, media, shell).encode()
+    files["blog/index.html"] = render_index(posts, media, shell, cover_sizes).encode()
     for post in posts:
         slug = post["slug"]
-        files[f"blog/{slug}.html"] = page(shell, render_post_head(post, media[slug]), render_article(post, media[slug])).encode()
+        files[f"blog/{slug}.html"] = page(shell, render_post_head(post, media[slug]), render_article(post, media[slug], cover_sizes.get(slug))).encode()
     files["blog/feed.xml"] = render_feed(posts).encode()
     files["blog/sitemap.xml"] = render_sitemap(posts, media).encode()
     files["blog/llms.txt"] = render_llms_txt(posts).encode()

@@ -86,3 +86,36 @@ def test_link_inside_emphasis_is_rendered_and_cover_shown_on_the_post_page():
     assert '<em>Posted on <a href="https://example.com/a" rel="noopener noreferrer">LinkedIn</a></em>' in page
     assert 'src="/blog/text-post/cover.jpg" alt="Text &lt;post&gt;"' in page
     assert 'fetchpriority="high"' in page
+
+
+def inline_page(body, images=None, files=("cover.jpg", "1.jpg", "2.jpg")):
+    post = {**TEXT, "body": body}
+    if images:
+        post["images"] = images
+    return render_site([post], {"text-post": set(files)}, SHELL)["blog/text-post.html"].decode()
+
+
+def test_run_of_image_lines_renders_one_figure_with_two_images():
+    images = [{"src": "1.jpg", "alt": "One", "width": 800, "height": 1000}, {"src": "2.jpg", "alt": "Two", "width": 800, "height": 1000}]
+    page = inline_page("Intro.\n\n![One](1.jpg)\n\n![Two](2.jpg)\n\nOutro.", images)
+    figures = re.findall(r'<figure class="blog-figure blog-figure-grid">(.*?)</figure>', page)
+    assert len(figures) == 1 and figures[0].count("<img") == 2
+    assert 'src="/blog/text-post/1.jpg"' in figures[0] and 'width="800" height="1000" loading="lazy" decoding="async"' in figures[0]
+
+
+def test_inlined_images_leave_the_carousel():
+    images = [{"src": "1.jpg", "alt": "One", "width": 800, "height": 1000}, {"src": "2.jpg", "alt": "Two"}]
+    page = inline_page("![One](1.jpg)", images)
+    assert page.count('src="/blog/text-post/1.jpg"') == 1
+    assert 'class="blog-carousel"' in page and 'src="/blog/text-post/2.jpg"' in page
+
+
+def test_three_image_run_uses_the_three_column_modifier_and_cover_takes_real_size():
+    sizes = [{"src": f"{n}.jpg", "alt": "x", "width": 800, "height": 1000} for n in (1, 2, 3)]
+    body = "\n\n".join(f"![x]({n}.jpg)" for n in (1, 2, 3))
+    assert 'blog-figure-grid blog-figure-grid-3' in inline_page(body, sizes, ("cover.jpg", "1.jpg", "2.jpg", "3.jpg"))
+    two = inline_page("![x](1.jpg)\n![x](2.jpg)", sizes[:2])
+    assert "blog-figure-grid-3" not in two
+    files = render_site([TEXT], {"text-post": {"cover.jpg"}}, SHELL, {"text-post": (600, 900)})
+    assert 'alt="Text &lt;post&gt;" width="600" height="900" loading="eager"' in files["blog/text-post.html"].decode()
+    assert 'width="600" height="900"' in files["blog/index.html"].decode()

@@ -16,6 +16,8 @@ POST_FIELDS = {
 }
 REQUIRED_FIELDS = ("slug", "title", "description", "publishedAt", "cover", "body", "tags")
 IMAGE_FIELDS = {"src", "alt", "width", "height"}
+INLINE_IMAGE = re.compile(r"^!\[([^\]]*)\]\(([^)\s]+)\)$")
+ANY_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 STORE_ONLY_FIELDS = ("status", "publishPending")
 
 
@@ -75,6 +77,15 @@ def check_image(image):
             raise ContractError(f"images[].{key} must be a positive integer")
 
 
+def check_inline_images(body):
+    for line in body.split("\n"):
+        if not ANY_IMAGE.search(line):
+            continue
+        match = INLINE_IMAGE.match(line.strip())
+        if not (match and valid_image_file(match.group(2))):
+            raise ContractError(f"inline image must be a whole line naming a media file: {line.strip()[:80]}")
+
+
 def validate_post(data, slug):
     if not isinstance(data, dict):
         raise ContractError("post must be a JSON object")
@@ -91,6 +102,7 @@ def validate_post(data, slug):
             raise ContractError(f"{name} must be a non-empty string")
     if not isinstance(data["body"], str):
         raise ContractError("body must be a string")
+    check_inline_images(data["body"])
     check_iso(data["publishedAt"], "publishedAt")
     if "modifiedAt" in data:
         check_iso(data["modifiedAt"], "modifiedAt")
@@ -112,11 +124,28 @@ def validate_post(data, slug):
             raise ContractError("images must be a list")
         for image in data["images"]:
             check_image(image)
+    sizes = {image["src"]: image for image in data.get("images", [])}
+    for file in inline_files(data["body"]):
+        image = sizes.get(file)
+        if image is None:
+            raise ContractError(f"inline image {file} has no images entry")
+        if not (is_count(image.get("width")) and is_count(image.get("height"))):
+            raise ContractError(f"inline image {file} needs integer width and height in its images entry")
     return data
+
+
+def inline_files(body):
+    files = []
+    for line in body.split("\n"):
+        match = INLINE_IMAGE.match(line.strip())
+        if match and valid_image_file(match.group(2)):
+            files.append(match.group(2))
+    return list(dict.fromkeys(files))
 
 
 def referenced_files(post):
     files = [post["cover"]]
+    files.extend(inline_files(post["body"]))
     files.extend(image["src"] for image in post.get("images", []))
     return list(dict.fromkeys(files))
 

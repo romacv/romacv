@@ -22,6 +22,29 @@ def write(root, relative_path, data):
     target.write_bytes(data)
 
 
+def jpeg_size(data):
+    if data[:2] != b"\xff\xd8":
+        return None
+    position = 2
+    while position + 9 < len(data):
+        if data[position] != 0xFF:
+            return None
+        marker = data[position + 1]
+        if marker == 0xFF:
+            position += 1
+            continue
+        if marker in (0x01, *range(0xD0, 0xD8)):
+            position += 2
+            continue
+        length = int.from_bytes(data[position + 2:position + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2):
+            height = int.from_bytes(data[position + 5:position + 7], "big")
+            width = int.from_bytes(data[position + 7:position + 9], "big")
+            return (width, height) if width and height else None
+        position += 2 + length
+    return None
+
+
 def load_media(reference):
     files = {}
     for snapshot in reference.collection("media").stream():
@@ -69,7 +92,9 @@ def main():
     posts, media = load_posts(db)
     shell = shell_from_html((arguments.out / "project.html").read_text())
     shutil.rmtree(arguments.out / "blog", ignore_errors=True)
-    for path, data in render_site(posts, {slug: set(files) for slug, files in media.items()}, shell).items():
+    cover_sizes = {post["slug"]: jpeg_size(media[post["slug"]][post["cover"]]) for post in posts}
+    cover_sizes = {slug: size for slug, size in cover_sizes.items() if size}
+    for path, data in render_site(posts, {slug: set(files) for slug, files in media.items()}, shell, cover_sizes).items():
         write(arguments.out, path, data)
     for slug, files in media.items():
         for file, body in files.items():

@@ -59,3 +59,33 @@ def test_missing_media_names_the_file():
         check_media_present(data, {"cover.jpg": {}})
     assert "2.jpg" in str(error.value)
     check_media_present(data, {"cover.jpg": {}, "2.jpg": {}})
+
+
+def test_missing_inline_media_is_reported():
+    data = post(body="Text.\n\n![Frame](3.jpg)", images=[{"src": "3.jpg", "alt": "Frame", "width": 800, "height": 1000}])
+    assert referenced_files(data) == ["cover.jpg", "3.jpg"]
+    validate_post(data, "first-post")
+    with pytest.raises(ContractError, match="3.jpg"):
+        check_media_present(data, {"cover.jpg": {}})
+
+
+@pytest.mark.parametrize("body", [
+    "![x](https://example.com/a.jpg)",
+    "![x](../1.jpg)",
+    "![x](notes.png)",
+    "See ![x](1.jpg) here.",
+])
+def test_inline_image_must_be_a_whole_line_media_file(body):
+    with pytest.raises(ContractError):
+        validate_post(post(body=body), "first-post")
+
+
+def test_inline_image_without_an_images_entry_is_rejected():
+    with pytest.raises(ContractError, match="no images entry"):
+        validate_post(post(body="![Frame](1.jpg)"), "first-post")
+
+
+def test_inline_image_without_dimensions_is_rejected():
+    data = post(body="![Frame](1.jpg)", images=[{"src": "1.jpg", "alt": "Frame", "width": 800}])
+    with pytest.raises(ContractError, match="width and height"):
+        validate_post(data, "first-post")
