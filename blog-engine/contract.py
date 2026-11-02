@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import datetime
 
@@ -8,17 +9,22 @@ MEDIA_FILES = (
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 RESERVED_SLUGS = ("index", "feed", "sitemap", "llms", "blog")
 YOUTUBE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{6,32}$")
-MAX_MEDIA_BYTES = 25 * 1024 * 1024
+MAX_MEDIA_BYTES = 900 * 1024
 POST_FIELDS = {
     "slug", "title", "description", "publishedAt", "modifiedAt", "cover", "body", "tags",
     "youtubeId", "youtubeFormat", "durationSeconds", "transcript", "images",
 }
 REQUIRED_FIELDS = ("slug", "title", "description", "publishedAt", "cover", "body", "tags")
 IMAGE_FIELDS = {"src", "alt", "width", "height"}
+STORE_ONLY_FIELDS = ("status", "publishPending")
 
 
 class ContractError(Exception):
     pass
+
+
+def sha256_hex(data):
+    return hashlib.sha256(data).hexdigest()
 
 
 def valid_slug(slug):
@@ -119,3 +125,7 @@ def check_media_present(post, media):
     for file in referenced_files(post):
         if file not in media:
             raise ContractError(f"missing media: {file}")
+
+
+def post_of(document):
+    return {key: value for key, value in document.items() if key not in STORE_ONLY_FIELDS}

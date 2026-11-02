@@ -22,11 +22,10 @@
       "**/.*",
       "**/node_modules/**",
       "autopost/**",
-      "blog-engine/**",
-      "blog-posts/**"
+      "blog-engine/**"
     ],
-    "predeploy": ["python3 blog-engine/render_all.py --src blog-posts --out ."],
-    "postdeploy": ["python3 blog-engine/after_deploy.py"],
+    "predeploy": ["blog-engine/venv/bin/python blog-engine/render_all.py --out ."],
+    "postdeploy": ["blog-engine/venv/bin/python blog-engine/after_deploy.py"],
     "rewrites": [
       {
         "source": "**",

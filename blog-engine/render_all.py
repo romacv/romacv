@@ -4,8 +4,16 @@ import shutil
 import sys
 from pathlib import Path
 
-from contract import MAX_MEDIA_BYTES, ContractError, check_media_present, valid_media_file, valid_slug, validate_post
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+
+from contract import (
+    MAX_MEDIA_BYTES, ContractError, check_media_present, post_of, sha256_hex, valid_media_file, validate_post,
+)
 from render import render_site, shell_from_html
+
+PROJECT = "resromcom-493b4"
+RENDERED_PENDING = Path(__file__).with_name(".rendered-pending.json")
 
 
 def write(root, relative_path, data):
@@ -14,34 +22,31 @@ def write(root, relative_path, data):
     target.write_bytes(data)
 
 
-def load_posts(src):
+def load_media(reference):
+    files = {}
+    for snapshot in reference.collection("media").stream():
+        data = snapshot.to_dict()
+        body = data.get("data")
+        if not valid_media_file(snapshot.id) or not isinstance(body, bytes):
+            continue
+        if len(body) > MAX_MEDIA_BYTES:
+            raise ContractError(f"media over 900 KB: {snapshot.id}")
+        if sha256_hex(body) != data.get("sha256"):
+            raise ContractError(f"media checksum mismatch: {snapshot.id}")
+        files[snapshot.id] = body
+    return files
+
+
+def load_posts(db):
     posts = []
     media = {}
-    if not src.is_dir():
-        return posts, media
-    for folder in sorted(path for path in src.iterdir() if path.is_dir()):
-        slug = folder.name
+    for snapshot in db.collection("blog").where(filter=FieldFilter("status", "==", "published")).stream():
+        slug = snapshot.id
         try:
-            if not valid_slug(slug):
-                raise ContractError("invalid slug")
-            if folder.is_symlink():
-                raise ContractError("symlinked folder")
-            post_file = folder / "post.json"
-            if post_file.is_symlink():
-                raise ContractError("symlinked post.json")
-            post = validate_post(json.loads(post_file.read_text()), slug)
-            files = set()
-            for path in folder.iterdir():
-                if not valid_media_file(path.name):
-                    continue
-                if path.is_symlink():
-                    raise ContractError(f"symlinked media: {path.name}")
-                if path.is_file():
-                    if path.stat().st_size > MAX_MEDIA_BYTES:
-                        raise ContractError(f"media over 25 MiB: {path.name}")
-                    files.add(path.name)
+            post = validate_post(post_of(snapshot.to_dict()), slug)
+            files = load_media(snapshot.reference)
             check_media_present(post, files)
-        except (ContractError, OSError, ValueError) as error:
+        except ContractError as error:
             print(f"skipped {slug}: {error}", file=sys.stderr)
             continue
         posts.append(post)
@@ -49,19 +54,35 @@ def load_posts(src):
     return posts, media
 
 
+def pending_posts(db):
+    return db.collection("blog").where(filter=FieldFilter("publishPending", "==", True)).stream()
+
+
+def has_pending(db):
+    return any(True for _ in pending_posts(db))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--src", required=True, type=Path)
-    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--pending", action="store_true")
     arguments = parser.parse_args()
-    posts, media = load_posts(arguments.src)
+    db = firestore.Client(project=PROJECT)
+    if arguments.pending:
+        print("pending" if has_pending(db) else "none")
+        return
+    if arguments.out is None:
+        parser.error("--out is required")
+    pending = {snapshot.id: snapshot.update_time.isoformat() for snapshot in pending_posts(db)}
+    posts, media = load_posts(db)
     shell = shell_from_html((arguments.out / "project.html").read_text())
     shutil.rmtree(arguments.out / "blog", ignore_errors=True)
-    for path, data in render_site(posts, media, shell).items():
+    for path, data in render_site(posts, {slug: set(files) for slug, files in media.items()}, shell).items():
         write(arguments.out, path, data)
     for slug, files in media.items():
-        for file in files:
-            write(arguments.out, f"blog/{slug}/{file}", (arguments.src / slug / file).read_bytes())
+        for file, body in files.items():
+            write(arguments.out, f"blog/{slug}/{file}", body)
+    RENDERED_PENDING.write_text(json.dumps(pending))
 
 
 if __name__ == "__main__":

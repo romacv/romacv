@@ -1,9 +1,18 @@
 # Blog engine
 
-resrom.com/blog is static and free: `render_all.py` renders `blog-posts/` into `blog/` at Hosting predeploy (shell from `project.html`); `after_deploy.py` pings IndexNow for the index and posts from the last 2 days at postdeploy. Both are stdlib only.
+resrom.com/blog is static and free: `render_all.py` renders Firestore posts into `blog/` at Hosting predeploy (shell from `project.html`); `after_deploy.py` pings IndexNow and clears `publishPending` at postdeploy.
 
 ## Writer contract
 
-- A post is the folder `blog-posts/{slug}/` with `post.json` (fields per `contract.py`, `validate_post`) and its media files named per `contract.MEDIA_FILES`.
-- Add or edit the folder; delete the folder to remove the post. A post that fails validation or lacks a referenced media file is skipped and logged.
-- Commit and push to `main`: the push-to-main workflow deploys, or run `firebase deploy --only hosting` from the Mac. A remote writer (the bot) commits through the GitHub contents API.
+- Firestore `blog/{slug}` in `resromcom-493b4`: the post fields of `contract.py` (`validate_post`), plus `status` (`published` or `deleted`) and `publishPending: true`.
+- Media: `blog/{slug}/media/{file}` = `{data: bytes, sha256}`, file names from `contract.MEDIA_FILES`, at most 900 KB each.
+- CLI (ADC): `blog_cli.py put <dir>` (`post.json` plus media; refuses a missing referenced file or one over 900 KB) and `blog_cli.py delete <slug>`.
+- A post failing validation is skipped and logged.
+
+## Going live
+
+Within 15 minutes: the schedule in `.github/workflows/firebase-hosting-merge.yml` deploys when a post has `publishPending`; a push to `main` deploys at once.
+
+## IAM
+
+Writer and the CI service account (`FIREBASE_SERVICE_ACCOUNT_RESROMCOM_493B4`): `roles/datastore.user` on `resromcom-493b4`.

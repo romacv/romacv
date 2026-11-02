@@ -6,12 +6,29 @@ name: Deploy to Firebase Hosting on merge
   push:
     branches:
       - main
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+concurrency:
+  group: hosting-deploy
+  cancel-in-progress: false
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m venv blog-engine/venv && blog-engine/venv/bin/pip install -r blog-engine/requirements.txt
+      - uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_RESROMCOM_493B4 }}
+      - id: blog
+        if: github.event_name == 'schedule'
+        run: echo "state=$(blog-engine/venv/bin/python blog-engine/render_all.py --pending)" >> "$GITHUB_OUTPUT"
+      - if: github.event_name != 'schedule' || steps.blog.outputs.state == 'pending'
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_RESROMCOM_493B4 }}'

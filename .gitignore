@@ -75,3 +75,4 @@ autopost/keys/*
 # Blog engine
 /blog/
 blog-engine/venv/
+blog-engine/.rendered-pending.json
