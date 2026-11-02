@@ -11,7 +11,7 @@ resrom.com/blog is static and free: `render_all.py` renders Firestore posts into
 
 ## Going live
 
-Within 15 minutes: the schedule in `.github/workflows/firebase-hosting-merge.yml` deploys when a post has `publishPending`; a push to `main` deploys at once.
+After writing, `blog_cli.py` dispatches `.github/workflows/firebase-hosting-merge.yml` (live in about a minute) with a token from `BLOG_DEPLOY_TOKEN` or `~/.claude/keys/github-blog-deploy-token`: fine-grained, repository `romacv/romacv` only, permission Actions: Read and write. Without a token the post is saved and goes live with the next deploy (any push to `main`). The bot passes the token as `BLOG_DEPLOY_TOKEN`.
 
 ## IAM
 

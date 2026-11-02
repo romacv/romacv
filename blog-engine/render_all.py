@@ -58,19 +58,11 @@ def pending_posts(db):
     return db.collection("blog").where(filter=FieldFilter("publishPending", "==", True)).stream()
 
 
-def has_pending(db):
-    return any(True for _ in pending_posts(db))
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--pending", action="store_true")
     arguments = parser.parse_args()
     db = firestore.Client(project=PROJECT)
-    if arguments.pending:
-        print("pending" if has_pending(db) else "none")
-        return
     if arguments.out is None:
         parser.error("--out is required")
     pending = {snapshot.id: snapshot.update_time.isoformat() for snapshot in pending_posts(db)}
