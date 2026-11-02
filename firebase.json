@@ -13,7 +13,6 @@
     "ignore": [
       "firebase.json",
       "firestore.rules",
-      "storage.rules",
       "readme.md",
       "firebase-debug.log*",
       "firebase-debug.*.log*",
@@ -21,7 +20,6 @@
       "**/*.map",
       "**/.*",
       "**/node_modules/**",
-      "autopost/**",
       "blog-engine/**",
       "gha-creds-*.json"
     ],
@@ -63,27 +61,7 @@
       }
     ]
   },
-  "functions": [
-    {
-      "source": "autopost/functions",
-      "codebase": "autopost",
-      "runtime": "python312",
-      "ignore": ["venv", "__pycache__", "tests", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"]
-    },
-    {
-      "source": "autopost/budget",
-      "codebase": "budget",
-      "runtime": "python312",
-      "ignore": ["venv", "__pycache__", "tests", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"]
-    }
-  ],
   "firestore": {
     "rules": "firestore.rules"
-  },
-  "storage": [
-    {
-      "bucket": "resromcom-493b4-autopost",
-      "rules": "storage.rules"
-    }
-  ]
+  }
 }
