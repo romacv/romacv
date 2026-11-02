@@ -22,7 +22,8 @@
       "**/.*",
       "**/node_modules/**",
       "autopost/**",
-      "blog-engine/**"
+      "blog-engine/**",
+      "gha-creds-*.json"
     ],
     "predeploy": ["blog-engine/venv/bin/python blog-engine/render_all.py --out ."],
     "postdeploy": ["blog-engine/venv/bin/python blog-engine/after_deploy.py"],
