@@ -1,0 +1,13 @@
+{
+  "slug": "math-panda-ios-app",
+  "title": "Math Panda: a mental math quiz for iOS with a friendly AI character",
+  "description": "I released Math Panda, an iOS mental math quiz with visual hints and an AI-powered panda character, made for kids and useful for adults.",
+  "publishedAt": "2025-07-01T10:00:00Z",
+  "cover": "cover.jpg",
+  "body": "I have just released my personal iOS app, Math Panda. It is a mental math quiz with visual hints and a friendly AI-powered character, a cute panda.\n\nIt is made for kids, but adults will find it useful too. The goal is the same for everyone: practice mental math in a fun way.\n\n## What is inside\n\nMath Panda has three parts that work together.\n\n- Quizzes with visual hints, so a child can see the numbers instead of only reading them.\n- Tasks and analytics, so you can follow how practice is going.\n- A chat with the panda, which answers any question.\n\nAI handles the tasks, the quizzes, the analytics and the chat. The chat is built to be fully safe and kid-friendly.\n\n## Why a character\n\nMath drills are dry. A friendly character gives a child someone to practice with. The panda explains, asks, and answers questions in a way a kid can follow.\n\nAdults get the same practice. Quick mental arithmetic is a skill that fades if you do not use it, and a short quiz is an easy way to keep it.\n\n## Support an indie app\n\nI am an indie developer, so every App Store review and every piece of feedback means a lot to me. If you try the app, tell me what works and what does not.\n\nYou can search for Math Panda on the App Store, or open it here: [Math Panda on the App Store](https://apps.apple.com/app/id6746938495).\n\n*Originally posted on [LinkedIn](https://www.linkedin.com/posts/romanres_ios-iosapp-iosdevelopment-activity-7345761178511360000-T2yd).*\n",
+  "tags": [
+    "ios",
+    "indie",
+    "education"
+  ]
+}

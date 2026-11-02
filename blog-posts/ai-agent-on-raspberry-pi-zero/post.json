@@ -1,0 +1,13 @@
+{
+  "slug": "ai-agent-on-raspberry-pi-zero",
+  "title": "An AI agent on a $15 Raspberry mini computer",
+  "description": "I launched an AI agent on a $15 Raspberry mini computer. It calls cloud model APIs, so it needs almost no local hardware.",
+  "publishedAt": "2026-03-07T10:00:00Z",
+  "cover": "cover.jpg",
+  "body": "I launched an AI agent on a Raspberry mini computer worth $15. People bought Mac Minis for the same job.\n\nThe photo shows the board plugged into my MacBook. A green LED is on. The terminal shows the agent's command line interface with a Telegram channel configured and a skills command.\n\n## No local models\n\nTo be clear, the people with Mac Minis did not run local models either. They configured everything on a cloud API: Claude, ChatGPT.\n\n## What this means\n\nAn agent that calls a cloud model API does the heavy work on the provider's servers. The device only runs the agent loop, talks to the network and sends messages to Telegram. That takes almost no hardware.\n\nSo the machine under the agent can cost $15. A Mac Mini is a fine computer, but for this setup it is more than the agent needs.\n\nIf you do want to run local models, the hardware question changes. This post is about the other case, and it is the common one.\n\n*Originally posted on [LinkedIn](https://www.linkedin.com/posts/romanres_i-launched-an-ai-agent-on-a-raspberry-mini-activity-7436064134816813057-NcJY).*\n",
+  "tags": [
+    "ai-agents",
+    "raspberry-pi",
+    "claude"
+  ]
+}

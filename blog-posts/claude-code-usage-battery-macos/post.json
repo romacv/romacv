@@ -1,0 +1,13 @@
+{
+  "slug": "claude-code-usage-battery-macos",
+  "title": "Usage Battery: a macOS menu bar app for Claude Code usage limits",
+  "description": "I built a macOS menu bar app that shows Claude Code usage limits as a battery, so you see the cap coming before it hits mid-session.",
+  "publishedAt": "2026-01-12T10:00:00Z",
+  "cover": "cover.jpg",
+  "body": "I built [Usage Battery for Clode Code](/projects/usage-battery) over a weekend. It is a small macOS menu bar app that tracks Claude Code usage limits in real time.\n\nThe problem was simple. When you code with Claude Code every day, you hit the usage cap at the worst moment, in the middle of a session. I wanted to see the limit coming instead of guessing.\n\n## What it shows\n\nThe app puts battery-style indicators in the menu bar. There is one for the 5-hour session, one for 7-day usage, and one for the Sonnet model limit. Each indicator changes color as you use more: green, orange, then red.\n\nClick the icon and a popover opens with the details. You get progress bars and reset timers, so you know when each limit starts over.\n\n## How it handles access\n\nThe app needs your Claude Code credentials to read usage. It gets the OAuth token through the macOS Keychain, and only there. It does not store any data. You can revoke access at any time.\n\nIt talks only to Anthropic, so no usage data goes anywhere else. It is built with SwiftUI for macOS.\n\n## Who it is for\n\nIt is for developers who rely on Claude Code daily and want to plan their work around the limits. If you have ever been cut off halfway through a task, you know why.\n\nIt is a pet project, and I keep it light on purpose. A menu bar icon, a click for details, nothing more.\n\nThe app is on the Mac App Store: [Usage Battery for Clode Code](https://apps.apple.com/us/app/usage-battery-for-cluade-code/id6757597561?mt=12).\n\n*Originally posted on [LinkedIn](https://www.linkedin.com/posts/romanres_usage-battery-for-cluade-code-app-app-store-activity-7416477413565517824-fZ-i).*\n",
+  "tags": [
+    "macos",
+    "swiftui",
+    "claude-code"
+  ]
+}

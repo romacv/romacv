@@ -21,8 +21,12 @@
       "**/*.map",
       "**/.*",
       "**/node_modules/**",
-      "autopost/**"
+      "autopost/**",
+      "blog-engine/**",
+      "blog-posts/**"
     ],
+    "predeploy": ["python3 blog-engine/render_all.py --src blog-posts --out ."],
+    "postdeploy": ["python3 blog-engine/after_deploy.py"],
     "rewrites": [
       {
         "source": "**",

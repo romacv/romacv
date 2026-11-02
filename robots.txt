@@ -20,3 +20,4 @@ User-agent: Google-Extended
 Allow: /
 
 Sitemap: https://www.resrom.com/sitemap.xml
+Sitemap: https://www.resrom.com/blog/sitemap.xml

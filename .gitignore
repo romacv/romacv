@@ -71,3 +71,7 @@ autopost/functions/venv/
 autopost/budget/venv/
 autopost/keys/*
 !autopost/keys/README.md
+
+# Blog engine
+/blog/
+blog-engine/venv/

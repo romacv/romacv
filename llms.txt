@@ -15,6 +15,11 @@
 - [Claude Code Plan Usage Statusline](https://github.com/romacv/claude-plan-usage-statusline): status line showing real plan headroom, goals and loops
 - [All projects](https://www.resrom.com/projects)
 
+## Blog
+- [Blog](https://www.resrom.com/blog): articles on iOS, macOS and agentic AI development (English)
+- [RSS](https://www.resrom.com/blog/feed.xml)
+- [Blog llms.txt](https://www.resrom.com/blog/llms.txt): every post with its summary
+
 ## Contact
 - Website: https://www.resrom.com/#contact
 - Contact form: https://resrom.com/projects/contact
