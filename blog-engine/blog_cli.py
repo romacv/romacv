@@ -15,7 +15,7 @@ from contract import (
 PROJECT = "resromcom-493b4"
 POST_FILE = "post.json"
 DISPATCH_URL = "https://api.github.com/repos/romacv/romacv/actions/workflows/firebase-hosting-merge.yml/dispatches"
-TOKEN_FILE = Path.home() / ".claude/keys/github-blog-deploy-token"
+TOKEN_FILE = Path.home() / "Documents/keys/autopost/blog_deploy_token.txt"
 
 
 def deploy_token():

@@ -12,7 +12,7 @@ resrom.com/blog is static and free: `render_all.py` renders Firestore posts into
 
 ## Going live
 
-After writing, `blog_cli.py` dispatches `.github/workflows/firebase-hosting-merge.yml` (live in about a minute) with a token from `BLOG_DEPLOY_TOKEN` or `~/.claude/keys/github-blog-deploy-token`: fine-grained, repository `romacv/romacv` only, permission Actions: Read and write. Without a token the post is saved and goes live with the next deploy (any push to `main`). The bot passes the token as `BLOG_DEPLOY_TOKEN`.
+After writing, `blog_cli.py` dispatches `.github/workflows/firebase-hosting-merge.yml` (live in about a minute) with a token from `BLOG_DEPLOY_TOKEN` or `~/Documents/keys/autopost/blog_deploy_token.txt`: fine-grained, repository `romacv/romacv` only, permission Actions: Read and write. Without a token the post is saved and goes live with the next deploy (any push to `main`). The bot passes the token as `BLOG_DEPLOY_TOKEN`.
 
 ## IAM
 
