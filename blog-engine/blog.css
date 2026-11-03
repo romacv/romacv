@@ -33,15 +33,6 @@
   max-width: min(100%, calc(var(--w) * 1px), calc(min(80vh, 720px) * var(--w) / var(--h)));
   width: 100%;
 }
-.blog-cover {
-  display: block;
-  height: auto;
-  margin-inline: auto;
-  max-height: min(80vh, 720px);
-  max-width: 100%;
-  object-position: center 20%;
-  width: auto;
-}
 .blog-post > p a,
 .blog-body a {
   text-decoration: underline;

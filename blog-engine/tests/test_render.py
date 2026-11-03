@@ -80,12 +80,12 @@ def test_only_root_relative_and_site_links_are_internal():
     assert '<a href="https://www.resrom.com.evil.example/z" rel="noopener noreferrer">d</a>' in page
 
 
-def test_link_inside_emphasis_is_rendered_and_cover_shown_on_the_post_page():
+def test_link_inside_emphasis_is_rendered_and_cover_absent_from_the_post_page():
     post = {**TEXT, "body": "*Posted on [LinkedIn](https://example.com/a)*"}
     page = render_site([post], {"text-post": {"cover.jpg"}}, SHELL)["blog/text-post.html"].decode()
     assert '<em>Posted on <a href="https://example.com/a" rel="noopener noreferrer">LinkedIn</a></em>' in page
-    assert 'src="/blog/text-post/cover.jpg" alt="Text &lt;post&gt;"' in page
-    assert 'fetchpriority="high"' in page
+    assert "cover.jpg" not in page.split("</head>")[-1]
+    assert "blog-cover" not in page
 
 
 def inline_page(body, images=None, files=("cover.jpg", "1.jpg", "2.jpg")):
@@ -110,12 +110,12 @@ def test_inlined_images_leave_the_carousel():
     assert 'class="blog-carousel"' in page and 'src="/blog/text-post/2.jpg"' in page
 
 
-def test_three_image_run_uses_the_three_column_modifier_and_cover_takes_real_size():
+def test_three_image_run_uses_the_three_column_modifier_and_index_cover_takes_real_size():
     sizes = [{"src": f"{n}.jpg", "alt": "x", "width": 800, "height": 1000} for n in (1, 2, 3)]
     body = "\n\n".join(f"![x]({n}.jpg)" for n in (1, 2, 3))
     assert 'blog-figure-grid blog-figure-grid-3' in inline_page(body, sizes, ("cover.jpg", "1.jpg", "2.jpg", "3.jpg"))
     two = inline_page("![x](1.jpg)\n![x](2.jpg)", sizes[:2])
     assert "blog-figure-grid-3" not in two
     files = render_site([TEXT], {"text-post": {"cover.jpg"}}, SHELL, {"text-post": (600, 900)})
-    assert 'alt="Text &lt;post&gt;" width="600" height="900" loading="eager"' in files["blog/text-post.html"].decode()
+    assert "cover.jpg" not in files["blog/text-post.html"].decode().split("</head>")[-1]
     assert 'width="600" height="900"' in files["blog/index.html"].decode()

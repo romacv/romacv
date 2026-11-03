@@ -69,7 +69,7 @@ def post_kind(post, files):
 
 def carousel_images(post):
     inlined = inline_files(post["body"])
-    return [image for image in post.get("images", []) if image["src"] not in inlined]
+    return [image for image in post.get("images", []) if image["src"] not in inlined and image["src"] != post["cover"]]
 
 
 def media_path(slug, file):
@@ -292,16 +292,13 @@ def render_video(post):
     )
 
 
-def render_article(post, files, cover_size=None):
+def render_article(post, files):
     slug = post["slug"]
     kind = post_kind(post, files)
     updated = ""
     if post.get("modifiedAt") and post["modifiedAt"][:10] != post["publishedAt"][:10]:
         updated = f', updated <time datetime="{escape(post["modifiedAt"])}">{format_post_date(post["modifiedAt"])}</time>'
     video = render_video(post) if kind == "video" else ""
-    if not video:
-        cover = media_path(slug, post["cover"])
-        video = f'<img src="{escape(cover)}" alt="{escape(post["title"])}"{dimensions(cover_size)} loading="eager" fetchpriority="high" decoding="async" class="blog-cover">'
     carousel = ""
     if kind == "carousel":
         frames = "".join(
@@ -513,7 +510,7 @@ def render_site(posts, media, shell, cover_sizes=None):
     files["blog/index.html"] = render_index(posts, media, shell, cover_sizes).encode()
     for post in posts:
         slug = post["slug"]
-        files[f"blog/{slug}.html"] = page(shell, render_post_head(post, media[slug]), render_article(post, media[slug], cover_sizes.get(slug))).encode()
+        files[f"blog/{slug}.html"] = page(shell, render_post_head(post, media[slug]), render_article(post, media[slug])).encode()
     files["blog/feed.xml"] = render_feed(posts).encode()
     files["blog/sitemap.xml"] = render_sitemap(posts, media).encode()
     files["blog/llms.txt"] = render_llms_txt(posts).encode()
