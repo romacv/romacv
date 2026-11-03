@@ -25,12 +25,6 @@
     ],
     "predeploy": ["blog-engine/venv/bin/python blog-engine/render_all.py --out ."],
     "postdeploy": ["blog-engine/venv/bin/python blog-engine/after_deploy.py"],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ],
     "headers": [
       {
         "source": "**",

@@ -25,8 +25,15 @@
   max-width: 65ch;
   overflow-wrap: anywhere;
 }
-.blog-cover,
 .blog-figure:not(.blog-figure-grid) .blog-image {
+  aspect-ratio: var(--w) / var(--h);
+  display: block;
+  height: auto;
+  margin-inline: auto;
+  max-width: min(100%, calc(var(--w) * 1px), calc(min(80vh, 720px) * var(--w) / var(--h)));
+  width: 100%;
+}
+.blog-cover {
   display: block;
   height: auto;
   margin-inline: auto;
@@ -115,6 +122,7 @@
   }
 }
 .blog-figure-grid .blog-image {
+  aspect-ratio: var(--w) / var(--h);
   height: auto;
   width: 100%;
 }

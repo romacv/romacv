@@ -185,7 +185,7 @@ def render_figure(slug, content, sizes):
     images = ""
     for alt, src in content:
         size = sizes[src]
-        images += f'<img src="{escape(media_path(slug, src))}" alt="{escape(alt)}" width="{size["width"]}" height="{size["height"]}" loading="lazy" decoding="async" class="blog-image">'
+        images += f'<img src="{escape(media_path(slug, src))}" alt="{escape(alt)}" width="{size["width"]}" height="{size["height"]}" loading="lazy" decoding="async" class="blog-image" style="--w:{size["width"]};--h:{size["height"]}">'
     return f'<figure class="blog-figure{grid}">{images}</figure>'
 
 
