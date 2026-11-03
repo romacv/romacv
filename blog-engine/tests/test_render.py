@@ -110,6 +110,14 @@ def test_inlined_images_leave_the_carousel():
     assert 'class="blog-carousel"' in page and 'src="/blog/text-post/2.jpg"' in page
 
 
+def test_youtube_url_line_renders_a_nocookie_embed_and_inline_urls_stay_text():
+    body = "https://youtu.be/dQw4w9WgXcQ\n\nhttps://www.youtube.com/shorts/abcdefghijk\n\nSee https://youtu.be/dQw4w9WgXcQ now"
+    page = inline_page(body, [])
+    assert page.count('src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"') == 1
+    assert 'class="blog-video blog-video-short"><iframe src="https://www.youtube-nocookie.com/embed/abcdefghijk"' in page
+    assert "<p>See https://youtu.be/dQw4w9WgXcQ now</p>" in page
+
+
 def test_three_image_run_uses_the_three_column_modifier_and_index_cover_takes_real_size():
     sizes = [{"src": f"{n}.jpg", "alt": "x", "width": 800, "height": 1000} for n in (1, 2, 3)]
     body = "\n\n".join(f"![x]({n}.jpg)" for n in (1, 2, 3))

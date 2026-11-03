@@ -89,6 +89,7 @@ NUMBERED = re.compile(r"^\d+[.)]\s+(.*)$")
 HEADING = re.compile(r"^(#{2,3})\s+(.*)$")
 INLINE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`")
 SAFE_HREF = re.compile(r"^(https?:|mailto:|/|#)", re.I)
+YOUTUBE_LINE = re.compile(r"^https://(?:youtu\.be/|www\.youtube\.com/watch\?v=|www\.youtube\.com/(shorts)/)([A-Za-z0-9_-]{11})$")
 
 
 def parse_blocks(markdown):
@@ -118,8 +119,13 @@ def parse_blocks(markdown):
         bullet = BULLET.match(line)
         numbered = NUMBERED.match(line)
         image = INLINE_IMAGE.match(line)
+        youtube = YOUTUBE_LINE.match(line)
         if not line:
             flush()
+        elif youtube:
+            end_figure()
+            flush()
+            blocks.append(("youtube", (youtube.group(2), bool(youtube.group(1)))))
         elif image and valid_image_file(image.group(2)):
             flush()
             figure.append((image.group(1), image.group(2)))
@@ -189,11 +195,22 @@ def render_figure(slug, content, sizes):
     return f'<figure class="blog-figure{grid}">{images}</figure>'
 
 
+def render_youtube(youtube_id, short):
+    frame = "blog-video blog-video-short" if short else "blog-video"
+    return (
+        f'<div class="{frame}"><iframe src="https://www.youtube-nocookie.com/embed/{youtube_id}" title="YouTube video" loading="lazy" '
+        'allow="encrypted-media; picture-in-picture; fullscreen" '
+        'referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>'
+    )
+
+
 def render_markdown(source, slug="", sizes=None):
     out = []
     for kind, content in parse_blocks(source):
         if kind == "figure":
             out.append(render_figure(slug, content, sizes or {}))
+        elif kind == "youtube":
+            out.append(render_youtube(*content))
         elif kind in ("h2", "h3"):
             out.append(f'<{kind} id="{escape(heading_id(content))}">{render_inline(content)}</{kind}>')
         elif kind in ("ul", "ol"):
