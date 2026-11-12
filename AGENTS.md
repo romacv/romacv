@@ -22,4 +22,4 @@ In every repo of the map, sessions drive simulators, devices and chrome-devtools
 
 ## Docs
 
-Reusable rules: `~/.agents/skills/` (`app-factory`, `ui-quality`, `appstore-preflight`, `store-setup`, `superwall`). Blog: [`blog-engine/README.md`](blog-engine/README.md). Store data and release scripts: `repos/appstore-metadata/AGENTS.md`.
+Reusable rules: `~/.agents/skills/` (`app-factory`, `ui-quality`, `appstore-preflight`, `store-setup`, `superwall`). Blog: [`blog-engine/README.md`](blog-engine/README.md). Store data: each app repo's `data/`, shared in gitignored `.private/hub-data/`. Release scripts: `repos/appstore-metadata/AGENTS.md`.
