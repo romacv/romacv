@@ -9,10 +9,10 @@
 - Tool and MCP integrations: remote MCP servers, OAuth, Cloudflare Workers
 
 ## Work
-- [CloudShots: Screenshot History](https://www.resrom.com/project?name=cloudshots): iPhone, iPad and Mac screenshot search with on-device text recognition and Apple Intelligence
-- [Marcus: Second Brain](https://github.com/romacv/marcus-source-code): open-source remote MCP memory server for Claude, ChatGPT and Perplexity
-- [Claude Usage Guard](https://github.com/romacv/claude-usage-guard): stands a long-running Claude Code session down before its rate limit and resumes it automatically
-- [Claude Code Plan Usage Statusline](https://github.com/romacv/claude-plan-usage-statusline): status line showing real plan headroom, goals and loops
+- [CloudShots: Screenshot History](https://www.resrom.com/project?name=cloudshots): iPhone, iPad and Mac screenshot search with on-device text recognition and Apple Intelligence. Runs on iPhone, iPad, Mac and Apple Watch. Built with Swift 6, one shared Swift package for three apps and two extensions, GRDB, CloudKit sync through the user's own iCloud, Vision, Foundation Models, MLX, ScreenCaptureKit, 2,800+ tests.
+- [Marcus: Second Brain](https://github.com/romacv/marcus-source-code): open-source remote MCP memory server for Claude, ChatGPT and Perplexity. Built with TypeScript, Hono, Cloudflare Workers, OAuth, 120+ tests.
+- [Claude Usage Guard](https://github.com/romacv/claude-usage-guard): stands a long-running Claude Code session down before its rate limit and resumes it automatically. Built with shell hooks, a skill and a one-shot cron.
+- [Claude Code Plan Usage Statusline](https://github.com/romacv/claude-plan-usage-statusline): status line showing real plan headroom, goals and loops. Built with Ruby, shell.
 - [All projects](https://www.resrom.com/projects)
 
 ## Blog
@@ -35,3 +35,5 @@
 - [Offline AI Translator: Glossmi](https://resrom.com/projects/glossmi): [Privacy](https://resrom.com/projects/glossmi/privacy), [Terms](https://resrom.com/projects/glossmi/terms), [Contact](https://resrom.com/projects/glossmi/contact).
 - [Business Loyalty Cards Cardmi](https://resrom.com/projects/cardmi): [Privacy](https://resrom.com/projects/cardmi/privacy), [Terms](https://resrom.com/projects/cardmi/terms), [Contact](https://resrom.com/projects/cardmi/contact).
 - [Usage Battery — Clode Code Quota Menu Bar App](https://resrom.com/projects/usage-battery): [Privacy](https://resrom.com/projects/usage-battery/privacy), [Terms](https://resrom.com/projects/usage-battery/terms), [Contact](https://resrom.com/projects/usage-battery/contact).
+- [Math Games: 1st Grade AI Tutor](https://www.resrom.com/project?name=mathpanda)
+- [CloudShots: Screenshot History](https://www.resrom.com/project?name=cloudshots)

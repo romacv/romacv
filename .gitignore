@@ -70,3 +70,5 @@ __pycache__/
 /blog/
 blog-engine/venv/
 blog-engine/.rendered-pending.json
+
+.private/

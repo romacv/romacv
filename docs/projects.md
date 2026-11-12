@@ -4,18 +4,18 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 
 ## Apps
 
-| Project | What it is | State | Checkout | GitHub | Live |
-|---|---|---|---|---|---|
-| Currency Converter: Best | Currency converter with live and offline rates for 150+ currencies | On the App Store | `~/Dev/BestCurrency` | romacv/BestCurrency (private) | [resrom.com/projects/currency](https://resrom.com/projects/currency) |
-| Pixero: Blur, Redact, Erase BG | On-device photo editor: background removal, document scan, redaction | On the App Store | `~/Dev/pixero` | ksramm/pixero (private) | [resrom.com/projects/pixero](https://resrom.com/projects/pixero) |
-| Snore Recorder: SleepTrack | Records snoring and sleep talk overnight and plays the clips back | On the App Store | `~/Dev/sleeptracker` | romacv/sleeptracker (private) | [resrom.com/projects/sleeptracker](https://resrom.com/projects/sleeptracker) |
-| HRV Stress Tracker: NoStress | Stress level from heart rate variability on Apple Watch and Fitbit | On the App Store | `~/Dev/nostress` | romacv/nostress (private) | [resrom.com/projects/nostress](https://resrom.com/projects/nostress) |
-| PDF Scanner & OCR: DocuClean | Scans documents into clean, searchable PDFs | On the App Store | `~/Dev/docuclean` | romacv/docuclean (private) | [resrom.com/projects/docuclean](https://resrom.com/projects/docuclean) |
-| Offline AI Translator: Glossmi | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
-| Business Loyalty Cards Cardmi | Loyalty card wallet with no account and no ads | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [resrom.com/projects/cardmi](https://resrom.com/projects/cardmi) |
-| Usage Battery | macOS menu bar and iPhone app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
-| Math Games: 1st Grade AI Tutor | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
-| CloudShots: Screenshot History | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
+| Project | Runs on | What it is | State | Checkout | GitHub | Live |
+|---|---|---|---|---|---|---|
+| Currency Converter: Best | iPhone | Currency converter with live and offline rates for 150+ currencies | On the App Store | `~/Dev/BestCurrency` | romacv/BestCurrency (private) | [resrom.com/projects/currency](https://resrom.com/projects/currency) |
+| Pixero: Blur, Redact, Erase BG | iPhone | On-device photo editor: background removal, document scan, redaction | On the App Store | `~/Dev/pixero` | ksramm/pixero (private) | [resrom.com/projects/pixero](https://resrom.com/projects/pixero) |
+| Snore Recorder: SleepTrack | iPhone | Records snoring and sleep talk overnight and plays the clips back | On the App Store | `~/Dev/sleeptracker` | romacv/sleeptracker (private) | [resrom.com/projects/sleeptracker](https://resrom.com/projects/sleeptracker) |
+| HRV Stress Tracker: NoStress | iPhone, Apple Watch | Stress level from heart rate variability on Apple Watch and Fitbit | On the App Store | `~/Dev/nostress` | romacv/nostress (private) | [resrom.com/projects/nostress](https://resrom.com/projects/nostress) |
+| PDF Scanner & OCR: DocuClean | iPhone | Scans documents into clean, searchable PDFs | On the App Store | `~/Dev/docuclean` | romacv/docuclean (private) | [resrom.com/projects/docuclean](https://resrom.com/projects/docuclean) |
+| Offline AI Translator: Glossmi | iPhone | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
+| Business Loyalty Cards Cardmi | iPhone, Apple Watch | Loyalty card wallet with no account and no ads | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [resrom.com/projects/cardmi](https://resrom.com/projects/cardmi) |
+| Usage Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
+| Math Games: 1st Grade AI Tutor | iPhone, iPad | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
+| CloudShots: Screenshot History | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
 
 ## Sites, tools and open source
 

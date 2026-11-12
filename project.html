@@ -129,6 +129,12 @@
                 desc.innerHTML = project.desc.replace(/\n/g, '<br>');
                 container.appendChild(desc);
 
+                if (project.stack) {
+                    const built = document.createElement('p');
+                    built.textContent = `Built with: ${project.stack}.${project.platforms ? ` Runs on: ${project.platforms}.` : ''}`;
+                    container.appendChild(built);
+                }
+
                 if (project.privacy) {
                     const policy = document.createElement('p');
                     const policyLink = document.createElement('a');
