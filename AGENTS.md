@@ -6,7 +6,7 @@ This repo and the site are public. Never commit or deploy keys, tokens, store ac
 
 ## Agent protocol
 
-- Every repo of the map works and pushes straight to `main`, no PR. One-line commit messages; check `git config user.name` and `user.email` before the first commit.
+- Every repo of the map works and pushes straight to `main`, no PR. CloudShots repos (`cloudshot*`) keep their own `AGENTS.md` rules. One-line commit messages; check `git config user.name` and `user.email` before the first commit.
 - A push to `main` here deploys resrom.com (`.github/workflows/firebase-hosting-merge.yml`). Check localhost at 390 and 1440 px first, prod on desktop and mobile after.
 - No paid infra: Firebase Spark only, except the projects already on Blaze for Cloud Functions.
 - Owner feedback applies at once to every portfolio app.

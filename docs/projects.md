@@ -15,6 +15,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Business Loyalty Cards Cardmi | Loyalty card wallet with no account and no ads | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [resrom.com/projects/cardmi](https://resrom.com/projects/cardmi) |
 | Usage Battery | macOS menu bar and iPhone app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
 | Math Games: 1st Grade AI Tutor | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
+| CloudShots: Screenshot History | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
 
 ## Sites, tools and open source
 
@@ -22,6 +23,8 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
 | Math Panda site | Landing, privacy, terms and contact pages of Math Games | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
+| CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
+| CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
 | Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; roadmap parked | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
 | Marcus vault | Personal notes vault behind Marcus | Private | `~/Dev/marcus-second-brain-vault` | romacv/marcus-second-brain-vault (private) | — |
 | Claude Code Plan Usage Statusline | Status line showing model, usage limits, git info and workspace context | Open source | `~/Dev/claude-plan-usage-statusline` | [romacv/claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) | — |
