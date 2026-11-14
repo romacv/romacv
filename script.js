@@ -42,7 +42,7 @@ function renderBlock(container, heading, entries) {
         const projectLink = document.createElement('a');
         projectLink.href = project.page || `project?name=${key}`;
         const projectImage = document.createElement('img');
-        projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261013b`;
+        projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261114`;
         projectImage.alt = project.title;
         projectImage.loading = 'lazy';
         projectLink.appendChild(projectImage);
