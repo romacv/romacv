@@ -23,7 +23,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
 | Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Live | `~/Dev/telegram-chess` | no remote yet (local repo) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
-| Math Panda site | Old-URL redirects to resrom.com/projects/math-games | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) (redirects only) |
+| Math Panda site | Old-URL redirects to resrom.com/projects/math-games; the App Store listing of version 2.5 still links here, the next app version carries the resrom.com URLs | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) (redirects only) |
 | CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
 | CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
 | Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; roadmap parked | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
