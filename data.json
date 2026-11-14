@@ -189,6 +189,7 @@
     "2022": {
         "mathbrain": {
             "title": "Math Brain - Arithmetic Learning Games Quiz",
+            "kind": "freelance",
             "desc": "Designed and developed an educational app that turns math learning into a daily challenge. Daily exercises train arithmetic, mental agility and cognitive speed, covering the fundamental operations.",
             "link": "",
             "img": "mathbrain"
@@ -197,6 +198,7 @@
     "2021": {
         "mynovels": {
             "title": "MyNovel: Novels & Stories",
+            "kind": "freelance",
             "desc": "Led the development of MyNovel, a premium iOS reading platform built with Clean Swift architecture. As the technical lead, I managed the team that shipped the app. It launched with a scalable architecture.",
             "link": "https://apps.apple.com/us/app/id1572410762",
             "img": "mynovels"
@@ -205,12 +207,14 @@
     "2020": {
         "wordix": {
             "title": "Wordix: Memorize word Game",
+            "kind": "freelance",
             "desc": "Developed a memory training app that applies neuroscience principles. Wordix offers daily exercises for memory retention, attention span and logical reasoning.",
             "link": "",
             "img": "wordix"
         },
         "twin": {
             "title": "Twin - Pair Match Symbol Cards",
+            "kind": "freelance",
             "desc": "Created a memory-matching game with smooth animations that tests focus and reaction time.",
             "link": "",
             "img": "twin"
@@ -219,12 +223,14 @@
     "2019": {
         "katalyst": {
             "title": "Katalyst",
+            "kind": "fulltime",
             "desc": "Built a POS and Cloud Operating System. The platform combines point-of-sale functionality with cloud-based management tools.",
             "link": "https://apple.co/3aq0uJa",
             "img": "katalyst"
         },
         "tarot": {
             "title": "Tarot",
+            "kind": "freelance",
             "desc": "Developed a tarot reading app with fluid animations. It includes card interpretations, interactive readings and a collection of tarot material.",
             "link": "https://apps.apple.com/us/app/tarot-card-reading-meanings/id388124231#?platform=iphone",
             "img": "tarot"
@@ -233,6 +239,7 @@
     "2018": {
         "autorent": {
             "title": "AUTO.rent",
+            "kind": "freelance",
             "desc": "Developed a peer-to-peer car rental platform that connects vehicle owners with renters. The app features secure payment processing, real-time availability tracking and a review system.",
             "link": "",
             "img": "autorent"
@@ -248,6 +255,7 @@
         },
         "tipntrip": {
             "title": "tip n trip",
+            "kind": "freelance",
             "desc": "Created a travel companion app that helps users document and share their trips. The platform combines social features with practical travel tools for creating, organizing and sharing travel memories.",
             "link": "",
             "img": "tipntrip"
@@ -256,30 +264,35 @@
     "2016": {
         "forwardhorse": {
             "title": "FORWARDHORSE",
+            "kind": "freelance",
             "desc": "Developed a betting game that visualizes real-time exchange rates as racing horses. The app combines financial data with gameplay so users can track and predict market movements.",
             "link": "",
             "img": "forwardhorse"
         },
         "gasstationmap": {
             "title": "GAS STATIONS MAP",
+            "kind": "freelance",
             "desc": "Created a navigation app that helps users find nearby gas stations, compare fuel prices and read user reviews. It features real-time updates, detailed station information and a map interface.",
             "link": "",
             "img": "gasstationmap"
         },
         "promed": {
             "title": "PROMED",
+            "kind": "freelance",
             "desc": "Developed a healthcare platform connecting patients with medical professionals. The app supports remote consultations, appointment scheduling and access to a network of verified healthcare providers.",
             "link": "",
             "img": "promed"
         },
         "starway": {
             "title": "STARWAY",
+            "kind": "freelance",
             "desc": "Developed a horoscope app with personalized astrological readings and predictions. It features birth chart analysis, daily horoscopes and compatibility matching.",
             "link": "",
             "img": "starway"
         },
         "needaderm": {
             "title": "NEED A DERM",
+            "kind": "freelance",
             "desc": "Created a telemedicine platform specializing in dermatological consultations. The app enables secure image sharing, virtual appointments, and expert medical advice, making dermatological care more accessible.",
             "link": "",
             "img": "needaderm"
@@ -295,24 +308,28 @@
         },
         "zonesdating": {
             "title": "ZONES",
+            "kind": "freelance",
             "desc": "Developed a dating platform that combines social networking with interactive gaming elements. The app features user interactions, matching algorithms and a community.",
             "link": "",
             "img": "zonesdating"
         },
         "wantticket": {
             "title": "WANT TICKET",
+            "kind": "freelance",
             "desc": "Built a peer-to-peer ticket marketplace for ticket resale. The platform features real-time availability and secure transactions.",
             "link": "",
             "img": "wantticket"
         },
         "socketsmap": {
             "title": "SOCKETS MAP",
+            "kind": "freelance",
             "desc": "Created a community-driven platform that helps users locate and share information about public charging stations. The app features real-time availability updates, user reviews, and detailed location information.",
             "link": "",
             "img": "socketsmap"
         },
         "weightanalyze": {
             "title": "WEIGHT ANALYZE",
+            "kind": "freelance",
             "desc": "Developed a health tracking app for monitoring and analyzing weight management. It features detailed analytics, progress tracking and personalized insights.",
             "link": "",
             "img": "weightanalyze"
@@ -321,19 +338,21 @@
     "2014": {
         "ninetydays": {
             "title": "NINETY DAYS",
+            "kind": "freelance",
             "desc": "Built a habit app that helps users reach their goals through a structured 90-day program. It features progress tracking, milestone celebrations and personalized motivation tools.",
             "link": "",
             "img": "ninetydays"
         },
         "vmeste": {
             "title": "VMESTE",
-            "kind": "freelance",
+            "kind": "fulltime",
             "desc": "Developed a dating app with matching algorithms, mutual interest indicators and a chat system. Created for LTD. \"Internet Agency LEGION\" (ralegion.ru).",
             "link": "",
             "img": "vmeste"
         },
         "progressio": {
             "title": "PROGRESSIO",
+            "kind": "freelance",
             "desc": "Created a goal-tracking app for monitoring and achieving objectives. It features progress analytics, customizable tracking metrics and visualization tools.",
             "link": "",
             "img": "progressio"
@@ -342,27 +361,28 @@
     "2013": {
         "bileter": {
             "title": "BILETER",
-            "kind": "freelance",
+            "kind": "fulltime",
             "desc": "Developed a ticketing platform for cultural events, with interactive seat selection, secure payment processing and venue information. Created for LLC Internet agency LEGION (ralegion.ru), the app sells theater, concert and circus tickets.",
             "link": "",
             "img": "bileter"
         },
         "cinemates": {
             "title": "CINEMATES",
-            "kind": "freelance",
+            "kind": "fulltime",
             "desc": "Built a social movie-going platform for film fans. The app features movie recommendations, social scheduling and community tools. Developed for the Vkino/Cinemates service (vkino.ru, cinemates.com) under LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
             "img": "cinemates"
         },
         "algeron": {
             "title": "ALGERON",
-            "kind": "freelance",
+            "kind": "fulltime",
             "desc": "Developed a patient management system for tracking health. The app features health logging, medication reminders and progress tracking. Created for LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
             "img": "algeron"
         },
         "fingerfeel": {
             "title": "FINGER FEEL",
+            "kind": "freelance",
             "desc": "Created a mood detection app that uses the front-facing camera to simulate fingerprint analysis. It was rejected by Apple for potential user confusion.",
             "link": "",
             "img": "fingerfeel"
