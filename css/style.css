@@ -2822,7 +2822,7 @@ main section.projects .year-block a {
     margin-right: -8px;
   }
   main section.projects .year-block .row > div {
-    display: inline-block;
+    display: block;
     width: 100%;
     max-width: 100%;
     padding-left: 8px;
