@@ -33,6 +33,21 @@
         "source": "/projects/cardmi/card",
         "destination": "https://cardmi-app.web.app/card",
         "type": 301
+      },
+      {
+        "source": "/projects/math-games/privacy",
+        "destination": "https://math-panda-ai.web.app/privacy?from=resrom",
+        "type": 301
+      },
+      {
+        "source": "/projects/math-games/terms",
+        "destination": "https://math-panda-ai.web.app/terms?from=resrom",
+        "type": 301
+      },
+      {
+        "source": "/projects/math-games/contact",
+        "destination": "https://math-panda-ai.web.app/contact?from=resrom",
+        "type": 301
       }
     ],
     "ignore": [

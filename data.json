@@ -134,7 +134,7 @@
             "myApp": 10,
             "img": "mathpanda",
             "page": "/projects/math-games",
-            "privacy": "/projects/math-games/privacy"
+            "privacy": "https://math-panda-ai.web.app/privacy"
         },
         "sleeptrack": {
             "title": "Snore Recorder: SleepTrack",
