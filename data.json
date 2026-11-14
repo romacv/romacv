@@ -85,8 +85,8 @@
             "myApp": 6,
             "img": "cardmi",
             "cover": "cardmi.png",
-            "page": "/projects/cardmi",
-            "privacy": "/projects/cardmi/privacy"
+            "page": "https://cardmi-app.web.app",
+            "privacy": "https://cardmi-app.web.app/privacy"
         }
     },
     "2025": {

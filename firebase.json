@@ -8,6 +8,31 @@
         "source": "/contact",
         "destination": "/projects/contact",
         "type": 301
+      },
+      {
+        "source": "/projects/cardmi",
+        "destination": "https://cardmi-app.web.app/",
+        "type": 301
+      },
+      {
+        "source": "/projects/cardmi/privacy",
+        "destination": "https://cardmi-app.web.app/privacy",
+        "type": 301
+      },
+      {
+        "source": "/projects/cardmi/terms",
+        "destination": "https://cardmi-app.web.app/terms",
+        "type": 301
+      },
+      {
+        "source": "/projects/cardmi/contact",
+        "destination": "https://cardmi-app.web.app/contact",
+        "type": 301
+      },
+      {
+        "source": "/projects/cardmi/card",
+        "destination": "https://cardmi-app.web.app/card",
+        "type": 301
       }
     ],
     "ignore": [
