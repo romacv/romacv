@@ -84,7 +84,6 @@
             "stack": "Swift 6, SwiftData, PassKit, VisionKit, WidgetKit, Core Spotlight, App Intents, Firebase Functions",
             "myApp": 6,
             "img": "cardmi",
-            "cover": "cardmi.png",
             "page": "https://cardmi-app.web.app",
             "privacy": "https://cardmi-app.web.app/privacy"
         }
