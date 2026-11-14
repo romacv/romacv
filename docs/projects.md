@@ -14,7 +14,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Offline AI Translator: Glossmi | iPhone | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
 | Business Loyalty Cards Cardmi | iPhone, Apple Watch | Loyalty card wallet with no account and no ads | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [resrom.com/projects/cardmi](https://resrom.com/projects/cardmi) |
 | Usage Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
-| 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
+| 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults; backend in its own Firebase project on the Spark plan, separate from the resrom.com project | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
 | CloudShots: Screenshot History | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
 
 ## Sites, tools and open source
@@ -23,7 +23,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
 | Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Live | `~/Dev/telegram-chess` | no remote yet (local repo) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
-| Math Panda site | Old-URL redirects to resrom.com/projects/math-games; the App Store listing of version 2.5 still links here, the next app version carries the resrom.com URLs | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) (redirects only) |
+| Math Panda site | Old-URL redirects to resrom.com/projects/math-games; the App Store listing of version 2.5 still links here, the next app version carries the resrom.com URLs; hosted in the Math Games Firebase project | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) (redirects only) |
 | CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
 | CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
 | Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; roadmap parked | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
