@@ -2568,7 +2568,8 @@ main section.topprojects .row a:after {
     font-size: 2em;
   }
 }
-main section.topprojects a.viewall {
+main section.topprojects a.viewall,
+main section.project a.project-action {
   display: inline-block;
   border: 1px solid #7ec9ab;
   padding: 0 1.25em;
@@ -2581,9 +2582,17 @@ main section.topprojects a.viewall {
   -o-transition: all 0.3s ease;
   transition: all 0.3s ease;
 }
-main section.topprojects a.viewall:hover {
+main section.topprojects a.viewall:hover,
+main section.project a.project-action:hover {
   background-color: #7ec9ab;
   color: #fff;
+}
+main section.project a.project-action {
+  margin-top: 1.25em;
+}
+main section.project a.project-action:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 2px;
 }
 main section.ai-summary {
   text-align: center;
@@ -2862,6 +2871,81 @@ main section.projects .year-block a:after {
   main section.projects .year-block a:after {
     font-size: 2em;
   }
+}
+main section.projects .kind-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+main section.projects .kind-filters button {
+  min-height: 44px;
+  padding: 0 1.25em;
+  border: 1px solid #e8e8e8;
+  border-radius: 1em;
+  background-color: #fff;
+  color: #212529;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-transition: all 0.3s ease;
+  -moz-transition: all 0.3s ease;
+  -o-transition: all 0.3s ease;
+  transition: all 0.3s ease;
+}
+@media (max-width: 575px) {
+  main section.projects .kind-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+main section.projects .kind-filters button:hover {
+  border-color: #7ec9ab;
+  color: #7ec9ab;
+}
+main section.projects .kind-filters button[aria-pressed="true"] {
+  border-color: #212529;
+  background-color: #212529;
+  color: #fff;
+}
+main section.projects .kind-filters button:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 2px;
+}
+.kind-tag {
+  display: inline-block;
+  padding: 0.25em 0.65em;
+  background-color: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 1em;
+  color: #212529;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  text-transform: none;
+}
+main section.projects .year-block a .kind-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  -webkit-transition: opacity 0.3s ease;
+  -moz-transition: opacity 0.3s ease;
+  -o-transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease;
+}
+@media (hover: hover) {
+  main section.projects .year-block a:hover .kind-tag {
+    opacity: 0;
+  }
+}
+main section.project .kind-tag {
+  display: block;
+  width: -moz-fit-content;
+  width: fit-content;
+  margin: -0.75em auto 1.25em;
 }
 main section.project {
   padding-top: 24px;

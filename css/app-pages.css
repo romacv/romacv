@@ -1,17 +1,42 @@
 /* App landing and legal pages share the portfolio typography and navigation. */
-.app-content { max-width: 800px; margin: 0 auto; padding: 32px 0; overflow-wrap: anywhere; }
-.app-content h1 { font-size: 2rem; }
-.app-content h2 { font-size: 1.25rem; margin-top: 28px; }
+.app-content { padding: 24px 0 0; overflow-wrap: break-word; }
+.app-content::after { content: ""; display: block; width: 290px; max-width: 100%; height: 1px; margin: 24px auto; background-color: #e8e8e8; }
+.app-content > * { max-width: 800px; margin-left: auto; margin-right: auto; }
+.app-content > img.img-fluid { display: block; max-width: 100%; border-radius: 1em; overflow: hidden; background-color: #f2f3f5; }
+.app-content h1 { margin-top: 2em; margin-bottom: 1.25em; font-size: 1.5rem; font-weight: 600; text-align: center; text-transform: uppercase; }
+.app-content h2 { margin-top: 32px; font-size: 1.25rem; font-weight: 600; text-align: left; text-transform: uppercase; }
+.app-content h3 { margin-top: 24px; font-size: 1rem; font-weight: 600; }
+.app-content h4 { margin-top: 20px; font-size: 1rem; font-weight: 600; color: #666; }
 .app-content p, .app-content li, .app-content dd { line-height: 1.7; }
 .app-content ul { list-style: disc; padding-left: 24px; margin-bottom: 16px; }
+.app-content ol { list-style: decimal; padding-left: 24px; margin-bottom: 16px; }
+.app-content dt { font-weight: 600; margin-top: 16px; }
 .app-content a { text-decoration: underline; text-underline-offset: 3px; }
 .app-content a:hover { color: #7ec9ab; }
-.app-content .updated, .app-content .tagline { color: #666; }
-.app-content .footer, .app-nav { margin-top: 32px; padding-top: 16px; border-top: 1px solid #ddd; }
-.app-content .btn { display: inline-block; padding: 12px 20px; background: #1d1d1f; color: #fff; border-radius: 8px; margin: 12px 0; }
-.app-content form { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
-.app-content label { font-weight: 500; }
-.app-content input, .app-content textarea { width: 100%; padding: 10px 12px; border: 1px solid #aaa; border-radius: 8px; font: inherit; background: #fafafa; }
+.app-content .tagline { text-align: center; line-height: 1.5; }
+.app-content .updated { text-align: center; color: #666; }
+.app-content .store { text-align: center; }
+.app-content .store a { display: inline-block; margin-top: 1.25em; text-decoration: none; }
+.app-content .store img { height: 64px; }
+.app-content > nav:not(.app-nav) { display: none; }
+.app-content nav a, .app-content .lang-switch a, .app-content .top-link a { display: inline-block; padding: 10px 0; }
+.app-content .footer, .app-nav { margin-top: 24px; margin-bottom: 0; font-size: 0.9rem; color: #666; text-align: center; }
+.app-content .footer a, .app-nav a { color: inherit; }
+.app-content form { display: flex; flex-direction: column; gap: 4px; }
+.app-content label { margin: 12px 0 0; font-weight: 600; }
+.app-content label:first-of-type { margin-top: 0; }
+.app-content input, .app-content textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #aaa; border-radius: 0.6em; font: inherit; background: #fafafa; }
 .app-content input:focus, .app-content textarea:focus { outline: 2px solid #35735d; outline-offset: 2px; }
 .app-content textarea { min-height: 140px; resize: vertical; }
-.app-content button { padding: 12px; border: 0; border-radius: 8px; background: #1d1d1f; color: #fff; font: inherit; cursor: pointer; }
+.app-content button { align-self: flex-start; margin-top: 12px; min-width: 160px; min-height: 44px; padding: 0 1.25em; border: 0; border-radius: 1em; background: #212529; color: #fff; font: inherit; cursor: pointer; }
+.app-content button:hover { background: #7ec9ab; color: #212529; }
+@media (max-width: 575px) { .app-content button { align-self: stretch; } }
+.app-content hr { width: 100%; margin-top: 24px; margin-bottom: 24px; }
+.app-content .table-wrap { margin-top: 16px; margin-bottom: 16px; overflow-x: auto; }
+.app-content table { width: 100%; }
+.app-content th, .app-content td { border: 1px solid #e8e8e8; padding: 8px; text-align: left; vertical-align: top; line-height: 1.5; font-size: 0.9rem; }
+.app-content th { font-weight: 600; background-color: #f5f5f5; }
+.app-content .url { overflow-wrap: anywhere; }
+.app-content td:has(.url) { min-width: 200px; }
+.app-content .lang-switch { display: flex; flex-wrap: wrap; gap: 0 20px; margin-bottom: 24px; }
+.app-content .top-link { margin-top: 32px; }

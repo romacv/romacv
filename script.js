@@ -10,6 +10,18 @@ async function loadData() {
     }
 }
 
+const KIND_TAGS = {
+    own: 'Own project',
+    freelance: 'Freelance',
+    fulltime: 'Full-time job'
+};
+
+const KIND_FILTERS = {
+    own: 'Own projects',
+    freelance: 'Freelance',
+    fulltime: 'Full-time jobs'
+};
+
 function renderBlock(container, heading, entries) {
     if (!entries.length) return;
 
@@ -36,12 +48,30 @@ function renderBlock(container, heading, entries) {
         projectLink.appendChild(projectImage);
         projectLink.setAttribute('data-name', project.title);
 
+        if (KIND_TAGS[project.kind]) {
+            const kindTag = document.createElement('span');
+            kindTag.className = 'kind-tag';
+            kindTag.textContent = KIND_TAGS[project.kind];
+            projectLink.appendChild(kindTag);
+        }
+
         projectCol.appendChild(projectLink);
         projectsRow.appendChild(projectCol);
     });
 
     yearBlock.appendChild(projectsRow);
     container.appendChild(yearBlock);
+}
+
+function renderFilters(filters, kinds, onSelect) {
+    [['', 'All'], ...Object.entries(KIND_FILTERS).filter(([kind]) => kinds.has(kind))].forEach(([kind, label]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.dataset.kind = kind;
+        button.addEventListener('click', () => onSelect(kind));
+        filters.appendChild(button);
+    });
 }
 
 // Function to render the projects
@@ -56,15 +86,49 @@ function renderProjects(data) {
         return parseInt(yearB) - parseInt(yearA);
     });
 
-    const apps = years
-        .flatMap(year => Object.entries(data[year]))
-        .filter(([, project]) => project.myApp)
-        .sort((a, b) => a[1].myApp - b[1].myApp);
-    renderBlock(container, 'My apps', apps);
+    const kinds = new Set(years.flatMap(year => Object.values(data[year]).map(project => project.kind)));
+    const filters = document.createElement('div');
+    filters.className = 'kind-filters';
+    filters.setAttribute('role', 'group');
+    filters.setAttribute('aria-label', 'Filter projects by kind');
+    container.parentNode.insertBefore(filters, container);
 
-    years.forEach(year => {
-        renderBlock(container, year, Object.entries(data[year]).filter(([, project]) => !project.myApp));
+    const requestedKind = new URLSearchParams(window.location.search).get('kind');
+    let activeKind = kinds.has(requestedKind) && KIND_FILTERS[requestedKind] ? requestedKind : '';
+
+    const matches = project => !activeKind || project.kind === activeKind;
+
+    function render() {
+        container.replaceChildren();
+
+        const apps = years
+            .flatMap(year => Object.entries(data[year]))
+            .filter(([, project]) => project.myApp && matches(project))
+            .sort((a, b) => a[1].myApp - b[1].myApp);
+        renderBlock(container, 'My apps', apps);
+
+        years.forEach(year => {
+            renderBlock(container, year, Object.entries(data[year]).filter(([, project]) => !project.myApp && matches(project)));
+        });
+
+        filters.querySelectorAll('button').forEach(button => {
+            button.setAttribute('aria-pressed', String(button.dataset.kind === activeKind));
+        });
+    }
+
+    renderFilters(filters, kinds, kind => {
+        activeKind = kind;
+        const url = new URL(window.location.href);
+        if (kind) {
+            url.searchParams.set('kind', kind);
+        } else {
+            url.searchParams.delete('kind');
+        }
+        history.replaceState(null, '', url);
+        render();
     });
+
+    render();
 }
 
 // Check for hash in URL and redirect if needed

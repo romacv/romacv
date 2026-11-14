@@ -1,7 +1,17 @@
 {
     "2026": {
+        "telegramcheckers": {
+            "title": "Telegram Checkers",
+            "kind": "own",
+            "desc": "Checkers inside Telegram: invite a friend from any chat with one card and play in a fullscreen Mini App, or play the built-in bot. Friends can watch a game live as spectators, and a player who left gets a message when it is their move. Board styles and hint packs are sold for Telegram Stars; Russian and English follow the Telegram language. The checkers engine and the bot opponent are written from scratch. Hosted on Cloudflare Workers with a D1 database.",
+            "link": "https://t.me/shashki_v_chate_bot",
+            "platforms": "Telegram bot and Mini App",
+            "stack": "TypeScript, Hono, Cloudflare Workers, D1, Drizzle, Telegram Bot API, Telegram Stars",
+            "img": "telegram-checkers"
+        },
         "cloudshots": {
             "title": "CloudShots: Screenshot History",
+            "kind": "own",
             "desc": "CloudShots turns every screenshot on iPhone, iPad and Mac into a searchable history. On-device text recognition finds any screenshot by the words inside it, iCloud keeps the library in sync across devices with no account and no server, and a Mac menu bar panel captures and shares in one click. Built with SwiftUI, CloudKit, Vision and Apple Intelligence, localized into 13 languages. Available on the App Store for iPhone, iPad, Apple Watch and Mac.",
             "link": "https://apps.apple.com/app/id6776119510",
             "platforms": "iPhone, iPad, Mac, Apple Watch",
@@ -11,6 +21,7 @@
         },
         "marcus": {
             "title": "Marcus: Second Brain",
+            "kind": "own",
             "desc": "A remote MCP memory server that lets Claude, ChatGPT and Perplexity save, search and recall notes that live only in the user's own private GitHub repository, never on Marcus's servers. Open source so anyone can verify that claim by reading the code. Built as a Cloudflare Worker with a full OAuth and vault-provisioning flow.",
             "link": "https://github.com/romacv/marcus-source-code",
             "platforms": "Remote MCP server",
@@ -19,6 +30,7 @@
         },
         "claudestatusline": {
             "title": "Claude Code Plan Usage Statusline",
+            "kind": "own",
             "desc": "A status line for Claude Code that reads the real server-side rate-limit data straight from the CLI's own stdin, not a local token estimate, and shows model, context, 5-hour and weekly plan headroom, git state, active goals and loops. Ships with a Stop hook that keeps the fallback cache fresh with zero extra permission prompts. Written in Ruby, 8+ stars on GitHub.",
             "link": "https://github.com/romacv/claude-plan-usage-statusline",
             "platforms": "Claude Code",
@@ -28,6 +40,7 @@
         },
         "nostress": {
             "title": "HRV Stress Tracker: NoStress",
+            "kind": "own",
             "desc": "NoStress reads heart rate variability from Apple Watch and Fitbit to show your stress level in real time, on the wrist and on the phone. It sends gentle check-in notifications when your body needs a pause, and turns HRV, resting heart rate, sleep and activity into a daily overview and monthly trends. Built with SwiftUI, HealthKit, WatchKit and WidgetKit.",
             "link": "https://apps.apple.com/app/id6756629270",
             "platforms": "iPhone, Apple Watch",
@@ -39,6 +52,7 @@
         },
         "currency": {
             "title": "Currency Converter: Best",
+            "kind": "own",
             "desc": "A fast currency converter with live and offline exchange rates for 150+ currencies, a home screen widget, conversion history and a built-in calculator. Rates come from free public sources and are cached for travel without internet. Built with SwiftUI and WidgetKit.",
             "link": "https://apps.apple.com/app/id6755351989",
             "platforms": "iPhone",
@@ -50,6 +64,7 @@
         },
         "glossmi": {
             "title": "Offline AI Translator: Glossmi",
+            "kind": "own",
             "desc": "A translator that explains every word: tap any word of a translation to see its in-context meaning, literal sense, part of speech, alternatives with nuance, formality and idioms, generated on the iPhone, with translation itself free, unlimited and offline, where rival translators send text to a server and give one flat answer.",
             "link": "https://apps.apple.com/app/id6817585929",
             "platforms": "iPhone",
@@ -62,6 +77,7 @@
         },
         "cardmi": {
             "title": "Business Loyalty Cards Cardmi",
+            "kind": "own",
             "desc": "A plain loyalty card wallet with no account, no ads and no shopping app around it: scan a card with the camera, show its barcode full screen at full brightness, on a widget and on Apple Watch.",
             "link": "https://apps.apple.com/app/id6817015127",
             "platforms": "iPhone, Apple Watch",
@@ -76,6 +92,7 @@
     "2025": {
         "usageguard": {
             "title": "Claude Usage Guard",
+            "kind": "own",
             "desc": "A plan-usage guardrail for Claude Code that stands a long-running session down before it hits its rate limit, checkpoints the task and goal, and wakes itself with a one-shot cron when the window resets. Built from Claude Code's own primitives: a Stop hook, a skill and a cron. It fails open, so a missing cache never blocks work.",
             "link": "https://github.com/romacv/claude-usage-guard",
             "platforms": "Claude Code",
@@ -85,6 +102,7 @@
         },
         "usagebattery": {
             "title": "Usage Battery for Clode Code",
+            "kind": "own",
             "desc": "A macOS menu bar app that shows Claude Code subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claude Code already stores in the Keychain and talks only to Anthropic, so no data is collected. Built with SwiftUI for macOS.",
             "link": "https://apps.apple.com/app/id6757597561",
             "platforms": "Mac menu bar",
@@ -96,6 +114,7 @@
         },
         "pixero": {
             "title": "Pixero: Blur, Redact, Erase BG",
+            "kind": "own",
             "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
             "link": "https://apps.apple.com/app/id6770034829",
             "platforms": "iPhone",
@@ -106,16 +125,20 @@
             "privacy": "/projects/pixero/privacy"
         },
         "mathpanda": {
-            "title": "Math Games: 1st Grade AI Tutor",
+            "title": "1st Grade Math Games: Panda",
+            "kind": "own",
             "desc": "Math Panda is an iOS app that makes mental math fun for kids and adults. It features visual hints, a friendly AI-powered panda tutor, and safe interactive quizzes. Practice and learn anytime with fun AI chat and smart math tasks.",
             "link": "https://apps.apple.com/app/id6746938495",
             "platforms": "iPhone, iPad",
             "stack": "SwiftUI, Firebase AI, Firestore, Lottie, Swift Charts",
             "myApp": 10,
-            "img": "mathpanda"
+            "img": "mathpanda",
+            "page": "/projects/math-games",
+            "privacy": "/projects/math-games/privacy"
         },
         "sleeptrack": {
             "title": "Snore Recorder: SleepTrack",
+            "kind": "own",
             "desc": "SleepTrack records snoring and sleep talk overnight, plays the clips back in the morning with a simple sleep score, and wakes you with a smart alarm inside a gentle wake-up window. It also offers sleep sounds with a timer and 7-day trends. No account, no data collection: every recording, score and report stays on the iPhone. Built with SwiftUI and AVFoundation.",
             "link": "https://apps.apple.com/app/id6815288215",
             "platforms": "iPhone",
@@ -129,6 +152,7 @@
     "2024": {
         "docuclean": {
             "title": "PDF Scanner & OCR: DocuClean",
+            "kind": "own",
             "desc": "DocuClean scans documents, receipts, letters and ID cards into clean PDFs and finds any of them by a word inside. Text recognition runs on the iPhone, with on-device AI naming and summaries on iOS 27. No account, no uploads, no watermark, no ads. Built with SwiftUI and Vision.",
             "link": "https://apps.apple.com/app/id6815216632",
             "platforms": "iPhone",
@@ -140,12 +164,14 @@
         },
         "xchess": {
             "title": "X-Chess & X-Checkers",
+            "kind": "fulltime",
             "desc": "Led full-cycle development of a unified gaming platform for chess and checkers. Designed and implemented the client-server architecture for online play, AI bots (including Stockfish integration) and social features. Built matchmaking, ratings and gameplay customization. Set up CI/CD pipelines and analytics with automated event tracking and crash reporting.",
             "link": "",
             "img": "x-chess"
         },
         "ondoc": {
             "title": "ONDOC",
+            "kind": "fulltime",
             "desc": "Led iOS development of a medical super-app with electronic medical records and telemedicine. As the lead iOS developer, I managed a team building new features in Objective-C, Swift, UIKit and SwiftUI. Launched and maintained over 30 white-label apps for medical institutions. Set up CI/CD pipelines with Fastlane, TeamCity and Xcode Cloud, improved app performance and resolved critical architectural issues.",
             "link": "https://apps.apple.com/us/app/ondoc/id945720044",
             "img": "ondoc"
@@ -154,6 +180,7 @@
     "2023": {
         "tapcentive": {
             "title": "Tapcentive - Tablet Smart Chip Gaming",
+            "kind": "fulltime",
             "desc": "Led iOS development for an iPad-based gaming platform, working with a team of engineers, designers and marketers. Integrated NFC technology and Smart Chip Cards for a secure, portable gaming solution. The application is distributed through Apple Business Manager.",
             "link": "",
             "img": "tapcentive"
@@ -214,6 +241,7 @@
     "2017": {
         "solo": {
             "title": "SOLO",
+            "kind": "fulltime",
             "desc": "Developed an international calling app for voice calls across borders. It features competitive rates and clear audio quality.",
             "link": "",
             "img": "solo"
@@ -260,6 +288,7 @@
     "2015": {
         "readyforsky": {
             "title": "READY FOR SKY",
+            "kind": "fulltime",
             "desc": "Led the development of a smart home management system for Ready For Sky (R4S). As the lead developer, I coordinated the team, implemented new modules and improved the system architecture. The project used Agile/Scrum and GitFlow, with extensive documentation. Developed under OOO \"Tekhnopoisk\"/ OOO \"Erlab\" (REDMOND, Ready For Sky), the system offers home automation capabilities.",
             "link": "https://itunes.apple.com/ru/app/ready-for-sky-otkroj-novuu/id927991375?mt=8",
             "img": "readyforsky"
@@ -298,6 +327,7 @@
         },
         "vmeste": {
             "title": "VMESTE",
+            "kind": "freelance",
             "desc": "Developed a dating app with matching algorithms, mutual interest indicators and a chat system. Created for LTD. \"Internet Agency LEGION\" (ralegion.ru).",
             "link": "",
             "img": "vmeste"
@@ -312,18 +342,21 @@
     "2013": {
         "bileter": {
             "title": "BILETER",
+            "kind": "freelance",
             "desc": "Developed a ticketing platform for cultural events, with interactive seat selection, secure payment processing and venue information. Created for LLC Internet agency LEGION (ralegion.ru), the app sells theater, concert and circus tickets.",
             "link": "",
             "img": "bileter"
         },
         "cinemates": {
             "title": "CINEMATES",
+            "kind": "freelance",
             "desc": "Built a social movie-going platform for film fans. The app features movie recommendations, social scheduling and community tools. Developed for the Vkino/Cinemates service (vkino.ru, cinemates.com) under LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
             "img": "cinemates"
         },
         "algeron": {
             "title": "ALGERON",
+            "kind": "freelance",
             "desc": "Developed a patient management system for tracking health. The app features health logging, medication reminders and progress tracking. Created for LLC Internet agency LEGION (ralegion.ru).",
             "link": "",
             "img": "algeron"
@@ -336,6 +369,7 @@
         },
         "kookishcoffee": {
             "title": "KOOKISH COFFEE",
+            "kind": "freelance",
             "desc": "Developed an informational app for Kookish Coffee with menu information, location details and special offers.",
             "link": "",
             "img": "kookishcoffee"

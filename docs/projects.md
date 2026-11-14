@@ -14,7 +14,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Offline AI Translator: Glossmi | iPhone | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
 | Business Loyalty Cards Cardmi | iPhone, Apple Watch | Loyalty card wallet with no account and no ads | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [resrom.com/projects/cardmi](https://resrom.com/projects/cardmi) |
 | Usage Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
-| Math Games: 1st Grade AI Tutor | iPhone, iPad | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
+| 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
 | CloudShots: Screenshot History | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
 
 ## Sites, tools and open source
@@ -22,7 +22,8 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Project | What it is | State | Checkout | GitHub | Live |
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
-| Math Panda site | Landing, privacy, terms and contact pages of Math Games | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
+| Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Live | `~/Dev/telegram-chess` | no remote yet (local repo) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
+| Math Panda site | Own site of Math Games with landing, privacy, terms and contact; the same pages are at resrom.com/projects/math-games | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
 | CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
 | CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
 | Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; roadmap parked | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
@@ -32,7 +33,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Online Rewind | macOS menu bar app: live on-device transcription of mic and call audio with a rewind card | In development | `~/Dev/online-rewind-mac` | romacv/online-rewind-mac (private) | — |
 | Autoposter | Bot that renders and publishes social posts | Private | `~/Dev/autoposter` | romacv/autoposter (private) | — |
 | Automations | Scheduled routines and shared scripts for personal automation | Private | `~/Dev/claude-automations` | romacv/claude-automations (private) | — |
-| App Store hub | Old-URL redirects to resrom.com; its two Cloud Functions await removal | To be retired | `~/Dev/appstore-metadata` | romacv/appstore-metadata (private) | [appstore-metadata.web.app](https://appstore-metadata.web.app) (redirects only) |
+| App Store hub | Old-URL redirects to resrom.com and the billing kill switch of their Firebase project | To be retired | `~/Dev/appstore-metadata` | romacv/appstore-metadata (private) | [appstore-metadata.web.app](https://appstore-metadata.web.app) (redirects only) |
 
 ## App icons
 
@@ -40,4 +41,4 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 
 ## Shortcuts
 
-`repos/<name>` is a relative link to `../../<name>`, so it opens the checkout when this repo sits in `~/Dev/romacv` and dangles anywhere else. `repos/**` and `docs/**` are excluded from Firebase Hosting in `firebase.json`.
+`repos/<name>` is a relative link to `../../<name>`, so it opens the checkout when this repo sits in `~/Dev/romacv` and dangles anywhere else. A checkout gets its link once it has a `github.com/romacv/` or `github.com/ksramm/` remote; Telegram Checkers has none yet. `repos/**` and `docs/**` are excluded from Firebase Hosting in `firebase.json`.

@@ -19,12 +19,6 @@
         <priority>0.7</priority>
     </url>
     <url>
-        <loc>https://www.resrom.com/project?name=mathpanda</loc>
-        <lastmod>2024-05-27</lastmod>
-        <changefreq>monthly</changefreq>
-        <priority>0.7</priority>
-    </url>
-    <url>
         <loc>https://www.resrom.com/project?name=xchess</loc>
         <lastmod>2024-05-27</lastmod>
         <changefreq>monthly</changefreq>
@@ -217,11 +211,21 @@
         <priority>0.7</priority>
     </url>
     <url>
+        <loc>https://www.resrom.com/project?name=telegramcheckers</loc>
+        <lastmod>2026-11-14</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.7</priority>
+    </url>
+    <url>
         <loc>https://www.resrom.com/project?name=marcus</loc>
         <lastmod>2026-09-23</lastmod>
         <changefreq>monthly</changefreq>
         <priority>0.7</priority>
     </url>
+<url><loc>https://resrom.com/projects/math-games</loc><lastmod>2026-11-14</lastmod></url>
+<url><loc>https://resrom.com/projects/math-games/privacy</loc><lastmod>2026-11-14</lastmod></url>
+<url><loc>https://resrom.com/projects/math-games/terms</loc><lastmod>2026-11-14</lastmod></url>
+<url><loc>https://resrom.com/projects/math-games/contact</loc><lastmod>2026-11-14</lastmod></url>
 <url><loc>https://resrom.com/projects/currency</loc><lastmod>2026-10-27</lastmod></url>
 <url><loc>https://resrom.com/projects/currency/privacy</loc><lastmod>2026-10-27</lastmod></url>
 <url><loc>https://resrom.com/projects/currency/terms</loc><lastmod>2026-10-27</lastmod></url>

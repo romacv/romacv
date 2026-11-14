@@ -15,7 +15,7 @@ iOS and macOS developer since 2011. I design, build and ship native Swift apps o
 | [Snore Recorder: SleepTrack](https://apps.apple.com/app/id6815288215) | iPhone | Swift 6, AVFoundation, SwiftData, Swift Charts, App Intents |
 | [Currency Converter: Best](https://apps.apple.com/app/id6755351989) | iPhone | SwiftUI, WidgetKit, StoreKit |
 | [Usage Battery for Clode Code](https://apps.apple.com/app/id6757597561) | Mac menu bar | SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain |
-| [Math Games: 1st Grade AI Tutor](https://apps.apple.com/app/id6746938495) | iPhone, iPad | SwiftUI, Firebase AI, Firestore, Lottie, Swift Charts |
+| [1st Grade Math Games: Panda](https://apps.apple.com/app/id6746938495) | iPhone, iPad | SwiftUI, Firebase AI, Firestore, Lottie, Swift Charts |
 
 ## Open source
 

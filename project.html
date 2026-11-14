@@ -33,7 +33,7 @@
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM-readable profile summary">
-    <link rel="stylesheet" href="css/style.css?v=20260930">
+    <link rel="stylesheet" href="css/style.css?v=20261114">
     <title>Project | Roman Resenchuk</title>
     <script type="module" src="firebase-analytics.js"></script>
 </head>
@@ -125,6 +125,14 @@
                 title.textContent = project.title;
                 container.appendChild(title);
 
+                const kindTags = { own: 'Own project', freelance: 'Freelance', fulltime: 'Full-time job' };
+                if (kindTags[project.kind]) {
+                    const kindTag = document.createElement('span');
+                    kindTag.className = 'kind-tag';
+                    kindTag.textContent = kindTags[project.kind];
+                    container.appendChild(kindTag);
+                }
+
                 const desc = document.createElement('p');
                 desc.innerHTML = project.desc.replace(/\n/g, '<br>');
                 container.appendChild(desc);
@@ -149,11 +157,16 @@
                     link.href = project.link;
                     link.target = '_blank';
                     link.rel = 'noopener';
-                    const linkImg = document.createElement('img');
-                    const isGitHub = project.link.includes('github.com');
-                    linkImg.src = isGitHub ? 'img/github.svg' : 'img/applestore.png';
-                    linkImg.alt = isGitHub ? 'View source on GitHub' : 'Available on the App Store';
-                    link.appendChild(linkImg);
+                    if (project.link.startsWith('https://t.me/')) {
+                        link.className = 'project-action';
+                        link.textContent = 'Open in Telegram';
+                    } else {
+                        const linkImg = document.createElement('img');
+                        const isGitHub = project.link.includes('github.com');
+                        linkImg.src = isGitHub ? 'img/github.svg' : 'img/applestore.png';
+                        linkImg.alt = isGitHub ? 'View source on GitHub' : 'Available on the App Store';
+                        link.appendChild(linkImg);
+                    }
                     container.appendChild(link);
                 }
             } catch (error) {
