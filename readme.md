@@ -6,14 +6,14 @@ iOS and macOS developer since 2011. I design, build and ship native Swift apps o
 
 | App | Runs on | Built with |
 | --- | --- | --- |
-| [CloudShots: Screenshot History](https://apps.apple.com/app/id6776119510) | iPhone, iPad, Mac, Apple Watch | Swift 6, one shared Swift package for three apps and two extensions, GRDB, CloudKit sync through the user's own iCloud, Vision, Foundation Models, MLX, ScreenCaptureKit, 2,800+ tests |
-| [Pixero: Blur, Redact, Erase BG](https://apps.apple.com/app/id6770034829) | iPhone | SwiftUI, Core Image, Vision, VisionKit, SwiftData, Foundation Models, 360+ tests |
+| [Screenshot Manager: CloudShots](https://apps.apple.com/app/id6776119510) | iPhone, iPad, Mac, Apple Watch | Swift 6, one shared Swift package for three apps and two extensions, GRDB, CloudKit sync through the user's own iCloud, Vision, Foundation Models, MLX, ScreenCaptureKit, 2,800+ tests |
+| [Censor & Blur Faces: Pixero](https://apps.apple.com/app/id6770034829) | iPhone | SwiftUI, Core Image, Vision, VisionKit, SwiftData, Foundation Models, 360+ tests |
 | [HRV Stress Tracker: NoStress](https://apps.apple.com/app/id6756629270) | iPhone, Apple Watch | SwiftUI, HealthKit, WatchConnectivity, WidgetKit, Swift Charts, background tasks |
 | [PDF Scanner & OCR: DocuClean](https://apps.apple.com/app/id6815216632) | iPhone | Swift 6, VisionKit, Vision, PDFKit, PencilKit, SwiftData, CloudKit, Foundation Models |
-| [Offline AI Translator: Glossmi](https://apps.apple.com/app/id6817585929) | iPhone | Swift 6, Translation, MLX local models, Speech, Vision, WidgetKit, App Intents |
-| [Business Loyalty Cards Cardmi](https://apps.apple.com/app/id6817015127) | iPhone, Apple Watch | Swift 6, SwiftData, PassKit, VisionKit, WidgetKit, Core Spotlight, App Intents, Firebase Functions |
-| [Snore Recorder: SleepTrack](https://apps.apple.com/app/id6815288215) | iPhone | Swift 6, AVFoundation, SwiftData, Swift Charts, App Intents |
-| [Currency Converter: Best](https://apps.apple.com/app/id6755351989) | iPhone | SwiftUI, WidgetKit, StoreKit |
+| [Offline Translator AI: Glossmi](https://apps.apple.com/app/id6817585929) | iPhone | Swift 6, Translation, MLX local models, Speech, Vision, WidgetKit, App Intents |
+| [Loyalty Card Wallet: Cardmi](https://apps.apple.com/app/id6817015127) | iPhone, Apple Watch | Swift 6, SwiftData, PassKit, VisionKit, WidgetKit, Core Spotlight, App Intents, Firebase Functions |
+| [Snoring Tracker: SleepTrack](https://apps.apple.com/app/id6815288215) | iPhone | Swift 6, AVFoundation, SwiftData, Swift Charts, App Intents |
+| [Money Currency Converter: Best](https://apps.apple.com/app/id6755351989) | iPhone | SwiftUI, WidgetKit, StoreKit |
 | [Coding AI Agents Usage Battery](https://apps.apple.com/app/id6757597561) | Mac menu bar | SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain |
 | [1st Grade Math Games: Panda](https://apps.apple.com/app/id6746938495) | iPhone, iPad | SwiftUI, Firebase AI, Firestore, Lottie, Swift Charts |
 

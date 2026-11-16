@@ -10,7 +10,7 @@
             "img": "telegram-checkers"
         },
         "cloudshots": {
-            "title": "CloudShots: Screenshot History",
+            "title": "Screenshot Manager: CloudShots",
             "kind": "own",
             "desc": "CloudShots turns every screenshot on iPhone, iPad and Mac into a searchable history. On-device text recognition finds any screenshot by the words inside it, iCloud keeps the library in sync across devices with no account and no server, and a Mac menu bar panel captures and shares in one click. Built with SwiftUI, CloudKit, Vision and Apple Intelligence, localized into 13 languages. Available on the App Store for iPhone, iPad, Apple Watch and Mac.",
             "link": "https://apps.apple.com/app/id6776119510",
@@ -51,7 +51,7 @@
             "page": "/projects/nostress"
         },
         "currency": {
-            "title": "Currency Converter: Best",
+            "title": "Money Currency Converter: Best",
             "kind": "own",
             "desc": "A fast currency converter with live and offline exchange rates for 150+ currencies, a home screen widget, conversion history and a built-in calculator. Rates come from free public sources and are cached for travel without internet. Built with SwiftUI and WidgetKit.",
             "link": "https://apps.apple.com/app/id6755351989",
@@ -63,7 +63,7 @@
             "privacy": "/projects/currency/privacy"
         },
         "glossmi": {
-            "title": "Offline AI Translator: Glossmi",
+            "title": "Offline Translator AI: Glossmi",
             "kind": "own",
             "desc": "A translator that explains every word: tap any word of a translation to see its in-context meaning, literal sense, part of speech, alternatives with nuance, formality and idioms, generated on the iPhone, with translation itself free, unlimited and offline, where rival translators send text to a server and give one flat answer.",
             "link": "https://apps.apple.com/app/id6817585929",
@@ -75,7 +75,7 @@
             "privacy": "/projects/glossmi/privacy"
         },
         "cardmi": {
-            "title": "Business Loyalty Cards Cardmi",
+            "title": "Loyalty Card Wallet: Cardmi",
             "kind": "own",
             "desc": "A plain loyalty card wallet with no account, no ads and no shopping app around it: scan a card with the camera, show its barcode full screen at full brightness, on a widget and on Apple Watch.",
             "link": "https://apps.apple.com/app/id6817015127",
@@ -111,7 +111,7 @@
             "privacy": "/projects/usage-battery/privacy"
         },
         "pixero": {
-            "title": "Pixero: Blur, Redact, Erase BG",
+            "title": "Censor & Blur Faces: Pixero",
             "kind": "own",
             "desc": "Pixero is a private, on-device photo editor: remove backgrounds, scan documents and apply quick edits without uploading a single photo. Everything runs locally with Vision and Core Image and exports to Photos, Files or the share sheet in JPEG, PNG or HEIC. Built with SwiftUI.",
             "link": "https://apps.apple.com/app/id6770034829",
@@ -135,7 +135,7 @@
             "privacy": "https://math-panda-ai.web.app/privacy"
         },
         "sleeptrack": {
-            "title": "Snore Recorder: SleepTrack",
+            "title": "Snoring Tracker: SleepTrack",
             "kind": "own",
             "desc": "SleepTrack records snoring and sleep talk overnight, plays the clips back in the morning with a simple sleep score, and wakes you with a smart alarm inside a gentle wake-up window. It also offers sleep sounds with a timer and 7-day trends. No account, no data collection: every recording, score and report stays on the iPhone. Built with SwiftUI and AVFoundation.",
             "link": "https://apps.apple.com/app/id6815288215",

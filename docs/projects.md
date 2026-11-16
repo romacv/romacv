@@ -6,16 +6,16 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 
 | Project | Runs on | What it is | State | Checkout | GitHub | Live |
 |---|---|---|---|---|---|---|
-| Currency Converter: Best | iPhone | Currency converter with live and offline rates for 150+ currencies | On the App Store | `~/Dev/BestCurrency` | romacv/BestCurrency (private) | [resrom.com/projects/currency](https://resrom.com/projects/currency) |
-| Pixero: Blur, Redact, Erase BG | iPhone | On-device photo editor: background removal, document scan, redaction | On the App Store | `~/Dev/pixero` | ksramm/pixero (private) | [resrom.com/projects/pixero](https://resrom.com/projects/pixero) |
-| Snore Recorder: SleepTrack | iPhone | Records snoring and sleep talk overnight and plays the clips back | On the App Store | `~/Dev/sleeptracker` | romacv/sleeptracker (private) | [resrom.com/projects/sleeptracker](https://resrom.com/projects/sleeptracker) |
+| Money Currency Converter: Best | iPhone | Currency converter with live and offline rates for 150+ currencies | On the App Store | `~/Dev/BestCurrency` | romacv/BestCurrency (private) | [resrom.com/projects/currency](https://resrom.com/projects/currency) |
+| Censor & Blur Faces: Pixero | iPhone | On-device photo editor: background removal, document scan, redaction | On the App Store | `~/Dev/pixero` | ksramm/pixero (private) | [resrom.com/projects/pixero](https://resrom.com/projects/pixero) |
+| Snoring Tracker: SleepTrack | iPhone | Records snoring and sleep talk overnight and plays the clips back | On the App Store | `~/Dev/sleeptracker` | romacv/sleeptracker (private) | [resrom.com/projects/sleeptracker](https://resrom.com/projects/sleeptracker) |
 | HRV Stress Tracker: NoStress | iPhone, Apple Watch | Stress level from heart rate variability on Apple Watch and Fitbit | On the App Store | `~/Dev/nostress` | romacv/nostress (private) | [resrom.com/projects/nostress](https://resrom.com/projects/nostress) |
 | PDF Scanner & OCR: DocuClean | iPhone | Scans documents into clean, searchable PDFs | On the App Store | `~/Dev/docuclean` | romacv/docuclean (private) | [resrom.com/projects/docuclean](https://resrom.com/projects/docuclean) |
-| Offline AI Translator: Glossmi | iPhone | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
-| Business Loyalty Cards Cardmi | iPhone, Apple Watch | Loyalty card wallet with no account and no ads; site and backend in its own Firebase project, separate from the resrom.com project | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [cardmi-app.web.app](https://cardmi-app.web.app) |
+| Offline Translator AI: Glossmi | iPhone | Translator that explains every word in context | On the App Store | `~/Dev/glossmi` | romacv/glossmi (private) | [resrom.com/projects/glossmi](https://resrom.com/projects/glossmi) |
+| Loyalty Card Wallet: Cardmi | iPhone, Apple Watch | Loyalty card wallet with no account and no ads; site and backend in its own Firebase project, separate from the resrom.com project | On the App Store | `~/Dev/cardmi` | romacv/cardmi (private) | [cardmi-app.web.app](https://cardmi-app.web.app) |
 | Agents Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
 | 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults; backend in its own Firebase project on the Spark plan, separate from the resrom.com project | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app), portfolio page [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
-| CloudShots: Screenshot History | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
+| Screenshot Manager: CloudShots | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
 
 ## Sites, tools and open source
 
