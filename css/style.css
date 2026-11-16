@@ -2825,8 +2825,14 @@ main section.projects .actions a.btn-primary {
   color: #fff;
 }
 main section.projects .actions a.btn-secondary {
+  border: 0;
+  border-radius: 0;
+  padding: 0 0.25em;
   background-color: transparent;
   color: #212529;
+  text-decoration: underline;
+  text-decoration-color: rgba(33, 37, 41, 0.3);
+  text-underline-offset: 3px;
 }
 main section.projects .actions a:focus-visible {
   outline: 2px solid #212529;
@@ -2839,8 +2845,7 @@ main section.projects .actions a:focus-visible {
     color: #212529;
   }
   main section.projects .actions a.btn-secondary:hover {
-    border-color: #7ec9ab;
-    color: #212529;
+    text-decoration-color: #212529;
   }
 }
 main section.projects h3.section-title {
@@ -2888,6 +2893,9 @@ main section.projects .exp-title {
 }
 main section.projects .exp-title a {
   color: #212529;
+  text-decoration: underline;
+  text-decoration-color: rgba(33, 37, 41, 0.3);
+  text-underline-offset: 3px;
 }
 main section.projects .exp-title a:focus-visible {
   outline: 2px solid #212529;
@@ -2895,7 +2903,7 @@ main section.projects .exp-title a:focus-visible {
 }
 @media (hover: hover) and (pointer: fine) {
   main section.projects .exp-title a:hover {
-    color: #7ec9ab;
+    text-decoration-color: #212529;
   }
 }
 main section.projects .exp-text {
@@ -2941,8 +2949,14 @@ main section.projects .project-grid.is-collapsed > li:nth-child(n + 7) {
 main section.projects .nowrap {
   white-space: nowrap;
 }
+main section.projects h3.work-title {
+  margin-top: 48px;
+}
+main section.projects .alongside:empty {
+  display: none;
+}
 main section.projects .alongside {
-  margin: 0 0 48px;
+  margin: 0 0 24px;
   font-size: 0.9rem;
   line-height: 1.45;
   color: #6c757d;
@@ -2985,7 +2999,7 @@ main section.projects a.project-card {
 }
 main section.projects a.project-card .thumb {
   display: block;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 960 / 408;
   overflow: hidden;
   border-radius: 12px;
   background-color: #f2f3f5;
@@ -2994,8 +3008,8 @@ main section.projects a.project-card .thumb img {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center top;
+  object-fit: contain;
+  object-position: center;
 }
 main section.projects a.project-card .title {
   margin: 12px 0 0;
@@ -3008,17 +3022,13 @@ main section.projects a.project-card .title {
 main section.projects a.project-card .meta {
   display: block;
   margin-top: 4px;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   line-height: 1.4;
   color: #6c757d;
   overflow-wrap: anywhere;
 }
 main section.projects a.project-card .summary {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
+  display: block;
   margin-top: 6px;
   font-size: 0.9rem;
   line-height: 1.45;

@@ -75,7 +75,7 @@ function renderCard({ key, year, project }) {
     image.src = entryImage(project);
     image.alt = '';
     image.width = 960;
-    image.height = 540;
+    image.height = 408;
     image.loading = 'lazy';
     image.decoding = 'async';
     thumb.appendChild(image);
