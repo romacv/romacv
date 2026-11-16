@@ -2998,18 +2998,18 @@ main section.projects a.project-card {
   border-radius: 12px;
 }
 main section.projects a.project-card .thumb {
-  display: block;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
   aspect-ratio: 960 / 408;
-  overflow: hidden;
-  border-radius: 12px;
-  background-color: #f2f3f5;
 }
 main section.projects a.project-card .thumb img {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: center;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
 }
 main section.projects a.project-card .title {
   margin: 12px 0 0;
