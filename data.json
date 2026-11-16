@@ -163,6 +163,7 @@
         "xchess": {
             "title": "X-Chess & X-Checkers",
             "kind": "fulltime",
+            "years": "2024–2025",
             "desc": "Led full-cycle development of a unified gaming platform for chess and checkers. Designed and implemented the client-server architecture for online play, AI bots (including Stockfish integration) and social features. Built matchmaking, ratings and gameplay customization. Set up CI/CD pipelines and analytics with automated event tracking and crash reporting.",
             "link": "",
             "img": "x-chess"
@@ -170,6 +171,7 @@
         "ondoc": {
             "title": "ONDOC",
             "kind": "fulltime",
+            "years": "2022–2023",
             "desc": "Led iOS development of a medical super-app with electronic medical records and telemedicine. As the lead iOS developer, I managed a team building new features in Objective-C, Swift, UIKit and SwiftUI. Launched and maintained over 30 white-label apps for medical institutions. Set up CI/CD pipelines with Fastlane, TeamCity and Xcode Cloud, improved app performance and resolved critical architectural issues.",
             "link": "https://apps.apple.com/us/app/ondoc/id945720044",
             "img": "ondoc"
@@ -179,6 +181,7 @@
         "tapcentive": {
             "title": "Tapcentive - Tablet Smart Chip Gaming",
             "kind": "fulltime",
+            "years": "2019–2021",
             "desc": "Led iOS development for an iPad-based gaming platform, working with a team of engineers, designers and marketers. Integrated NFC technology and Smart Chip Cards for a secure, portable gaming solution. The application is distributed through Apple Business Manager.",
             "link": "",
             "img": "tapcentive"
@@ -247,6 +250,7 @@
         "solo": {
             "title": "SOLO",
             "kind": "fulltime",
+            "years": "2017–2019",
             "desc": "Developed an international calling app for voice calls across borders. It features competitive rates and clear audio quality.",
             "link": "",
             "img": "solo"
@@ -300,6 +304,7 @@
         "readyforsky": {
             "title": "READY FOR SKY",
             "kind": "fulltime",
+            "years": "2014–2015",
             "desc": "Led the development of a smart home management system for Ready For Sky (R4S). As the lead developer, I coordinated the team, implemented new modules and improved the system architecture. The project used Agile/Scrum and GitFlow, with extensive documentation. Developed under OOO \"Tekhnopoisk\"/ OOO \"Erlab\" (REDMOND, Ready For Sky), the system offers home automation capabilities.",
             "link": "https://itunes.apple.com/ru/app/ready-for-sky-otkroj-novuu/id927991375?mt=8",
             "img": "readyforsky"

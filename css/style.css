@@ -2503,15 +2503,13 @@ main section.topprojects {
   text-align: center;
 }
 main section.topprojects .row a,
-main section.projects .year-block a,
 main section.project img.img-fluid,
 main section.aboutme .photo img {
   border-radius: 1em;
   overflow: hidden;
   background-color: #f2f3f5;
 }
-main section.topprojects .row a img,
-main section.projects .year-block a img {
+main section.topprojects .row a img {
   display: block;
   width: 100%;
   height: auto;
@@ -2793,89 +2791,252 @@ main section.contactme .contact-links img {
 main section.projects {
   padding-top: 24px;
 }
-main section.projects .year-block {
-  margin-bottom: 1em;
-}
-main section.projects .year-block h3 {
-  font-weight: 600;
-}
-main section.projects .year-block a {
-  width: 100%;
-  display: block;
-  box-sizing: border-box;
-  border: 6px solid #f2f3f5;
-  position: relative;
-  margin-bottom: 15px;
-}
-@media (min-width: 576px) {
-  main section.projects .year-block a {
-    margin-bottom: 16px;
-    border-width: 8px;
-  }
-}
-@media (min-width: 576px) {
-  main section.projects .year-block .row {
-    display: block;
-    column-count: 2;
-    column-gap: 0;
-    margin-left: -8px;
-    margin-right: -8px;
-  }
-  main section.projects .year-block .row > div {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    padding-left: 8px;
-    padding-right: 8px;
-    break-inside: avoid;
-  }
-}
-@media (min-width: 768px) {
-  main section.projects .year-block .row {
-    column-count: 3;
-  }
-}
-main section.projects .year-block a:hover:after {
-  opacity: 1;
-}
-main section.projects .year-block a:after {
-  position: absolute;
-  top: 0;
-  left: 0;
-  background-color: rgba(126, 201, 171, 0.8);
-  width: 100%;
-  opacity: 0;
-  -webkit-transition: all 0.3s ease;
-  -moz-transition: all 0.3s ease;
-  -o-transition: all 0.3s ease;
-  transition: all 0.3s ease;
-  content: attr(data-name);
-  height: 100%;
-  display: flex;
-  justify-content: center;
+main section.projects .intro {
   text-align: center;
+  margin-bottom: 48px;
+}
+main section.projects .lead {
+  max-width: 640px;
+  margin: 0 auto 28px;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+main section.projects .actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+main section.projects .actions a {
+  display: inline-flex;
   align-items: center;
-  text-transform: uppercase;
-  font-weight: 900;
-  font-size: 1.25em;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 1.25em;
+  border: 1px solid #212529;
+  border-radius: 1em;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+main section.projects .actions a.btn-primary {
+  background-color: #212529;
   color: #fff;
-  line-height: 1;
-  padding: 20px;
+}
+main section.projects .actions a.btn-secondary {
+  background-color: transparent;
+  color: #212529;
+}
+main section.projects .actions a:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  main section.projects .actions a.btn-primary:hover {
+    border-color: #7ec9ab;
+    background-color: #7ec9ab;
+    color: #212529;
+  }
+  main section.projects .actions a.btn-secondary:hover {
+    border-color: #7ec9ab;
+    color: #212529;
+  }
+}
+main section.projects h3.section-title {
+  margin: 0 0 16px;
+  font-size: 1.4rem;
+  font-weight: 600;
+  text-align: left;
+}
+main section.projects ol.experience {
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+main section.projects .experience li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 16px 0;
+}
+main section.projects .experience li + li {
+  border-top: 1px solid #e8e8e8;
+}
+@media (min-width: 576px) {
+  main section.projects .experience li {
+    grid-template-columns: 184px minmax(0, 1fr);
+    gap: 0 24px;
+  }
+}
+main section.projects .exp-year {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+main section.projects .exp-body {
+  min-width: 0;
+}
+main section.projects .exp-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+main section.projects .exp-title a {
+  color: #212529;
+}
+main section.projects .exp-title a:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  main section.projects .exp-title a:hover {
+    color: #7ec9ab;
+  }
+}
+main section.projects .exp-text {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #6c757d;
+}
+main section.projects .toggle {
+  display: flex;
+  align-items: center;
+  width: -moz-fit-content;
+  width: fit-content;
+  min-height: 44px;
+  margin: 16px 0 0;
+  padding: 0 1.25em;
+  border: 1px solid #212529;
+  border-radius: 1em;
+  background-color: transparent;
+  color: #212529;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+main section.projects .experience + .toggle {
+  margin: 0 0 16px;
+}
+main section.projects .toggle:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  main section.projects .toggle:hover {
+    border-color: #7ec9ab;
+  }
+}
+main section.projects .experience.is-collapsed li:nth-child(n + 5),
+main section.projects .project-grid.is-collapsed > li:nth-child(n + 7) {
+  display: none;
+}
+main section.projects .nowrap {
+  white-space: nowrap;
+}
+main section.projects .alongside {
+  margin: 0 0 48px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #6c757d;
+}
+main section.projects .work-group + .work-group {
+  margin-top: 40px;
+}
+main section.projects .group-title {
+  margin: 0 0 16px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #212529;
+}
+main section.projects .project-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 576px) {
+  main section.projects .project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 32px 24px;
+  }
 }
 @media (min-width: 992px) {
-  main section.projects .year-block a:after {
-    font-size: 1.5em;
+  main section.projects .project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
-@media (min-width: 1200px) {
-  main section.projects .year-block a:after {
-    font-size: 2em;
+main section.projects .project-grid li {
+  min-width: 0;
+}
+main section.projects a.project-card {
+  display: block;
+  color: #212529;
+  border-radius: 12px;
+}
+main section.projects a.project-card .thumb {
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background-color: #f2f3f5;
+}
+main section.projects a.project-card .thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+main section.projects a.project-card .title {
+  margin: 12px 0 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #212529;
+  overflow-wrap: anywhere;
+}
+main section.projects a.project-card .meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #6c757d;
+  overflow-wrap: anywhere;
+}
+main section.projects a.project-card .summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 6px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+main section.projects a.project-card:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 4px;
+}
+@media (hover: hover) and (pointer: fine) {
+  main section.projects a.project-card:hover .title {
+    color: #7ec9ab;
   }
 }
 main section.projects .kind-filters {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   margin-bottom: 24px;
 }
@@ -2926,20 +3087,6 @@ main section.projects .kind-filters button:focus-visible {
   font-weight: 400;
   line-height: 1.4;
   text-transform: none;
-}
-main section.projects .year-block a .kind-tag {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  -webkit-transition: opacity 0.3s ease;
-  -moz-transition: opacity 0.3s ease;
-  -o-transition: opacity 0.3s ease;
-  transition: opacity 0.3s ease;
-}
-@media (hover: hover) {
-  main section.projects .year-block a:hover .kind-tag {
-    opacity: 0;
-  }
 }
 main section.project .kind-tag {
   display: block;

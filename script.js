@@ -22,45 +22,140 @@ const KIND_FILTERS = {
     fulltime: 'Full-time jobs'
 };
 
-function renderBlock(container, heading, entries) {
-    if (!entries.length) return;
+const IMAGE_VERSION = '20261116';
 
-    const yearBlock = document.createElement('div');
-    yearBlock.className = 'year-block';
+function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+}
 
-    const yearHeader = document.createElement('h3');
-    yearHeader.textContent = heading;
-    yearBlock.appendChild(yearHeader);
+function firstSentence(text) {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    const end = flat.indexOf('. ');
+    return end === -1 ? flat : flat.slice(0, end + 1);
+}
 
-    const projectsRow = document.createElement('div');
-    projectsRow.className = 'row';
+function entryYear(year) {
+    return parseInt(year.split(' - ')[0], 10);
+}
 
-    entries.forEach(([key, project]) => {
-        const projectCol = document.createElement('div');
-        projectCol.className = 'col-md-4 col-sm-6 col-12';
+function entryHref(key, project) {
+    return project.page || `project?name=${key}`;
+}
 
-        const projectLink = document.createElement('a');
-        projectLink.href = project.page || `project?name=${key}`;
-        const projectImage = document.createElement('img');
-        projectImage.src = `img/works/${project.cover || `${project.img}.jpg`}?v=20261114`;
-        projectImage.alt = project.title;
-        projectImage.loading = 'lazy';
-        projectLink.appendChild(projectImage);
-        projectLink.setAttribute('data-name', project.title);
+function entryImage(project) {
+    return project.cover
+        ? `img/works/${project.cover}?v=${IMAGE_VERSION}`
+        : `img/works/thumbs/${project.img}.jpg?v=${IMAGE_VERSION}`;
+}
 
-        if (KIND_TAGS[project.kind]) {
-            const kindTag = document.createElement('span');
-            kindTag.className = 'kind-tag';
-            kindTag.textContent = KIND_TAGS[project.kind];
-            projectLink.appendChild(kindTag);
+function shownPeriod(entry) {
+    const found = (entry.project.years || '').match(/\d{4}/g);
+    const start = found ? parseInt(found[0], 10) : entryYear(entry.year);
+    const end = found ? parseInt(found[found.length - 1], 10) : entryYear(entry.year);
+    return { start, end };
+}
+
+function byShownPeriodDesc(a, b) {
+    const first = shownPeriod(a);
+    const second = shownPeriod(b);
+    return second.end - first.end || second.start - first.start;
+}
+
+function renderCard({ key, year, project }) {
+    const item = document.createElement('li');
+
+    const link = createElement('a', 'project-card');
+    link.href = entryHref(key, project);
+
+    const thumb = createElement('span', 'thumb');
+    const image = document.createElement('img');
+    image.src = entryImage(project);
+    image.alt = '';
+    image.width = 960;
+    image.height = 540;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    thumb.appendChild(image);
+    link.appendChild(thumb);
+
+    link.appendChild(createElement('h5', 'title', project.title));
+
+    const meta = [project.years || year, KIND_TAGS[project.kind], project.platforms].filter(Boolean).join(' \u00b7 ');
+    link.appendChild(createElement('span', 'meta', meta));
+    link.appendChild(createElement('span', 'summary', firstSentence(project.desc)));
+
+    item.appendChild(link);
+    return item;
+}
+
+const COLLAPSED_ROLES = 4;
+const COLLAPSED_CARDS = 6;
+
+function attachToggle(target, expandLabel, scrollTarget) {
+    const button = createElement('button', 'toggle');
+    button.type = 'button';
+    button.setAttribute('aria-controls', target.id);
+
+    function sync() {
+        const collapsed = target.classList.contains('is-collapsed');
+        button.setAttribute('aria-expanded', String(!collapsed));
+        button.textContent = collapsed ? expandLabel : 'Show fewer';
+    }
+
+    button.addEventListener('click', () => {
+        const collapsed = target.classList.toggle('is-collapsed');
+        sync();
+        if (collapsed && scrollTarget.getBoundingClientRect().top < 0) {
+            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            scrollTarget.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
         }
-
-        projectCol.appendChild(projectLink);
-        projectsRow.appendChild(projectCol);
     });
 
-    yearBlock.appendChild(projectsRow);
-    container.appendChild(yearBlock);
+    target.classList.add('is-collapsed');
+    sync();
+    target.after(button);
+}
+
+function setupExperienceToggle() {
+    const list = document.getElementById('experience-list');
+    if (!list || list.children.length <= COLLAPSED_ROLES) return;
+    const title = list.previousElementSibling || list;
+    attachToggle(list, `Show all ${list.children.length} roles`, title);
+}
+
+function renderGroup(container, id, heading, noun, entries) {
+    if (!entries.length) return;
+
+    const group = createElement('div', 'work-group');
+    const title = createElement('h4', 'group-title', heading);
+    group.appendChild(title);
+
+    const grid = createElement('ul', 'project-grid');
+    grid.id = `grid-${id}`;
+    entries.forEach(entry => grid.appendChild(renderCard(entry)));
+    group.appendChild(grid);
+    if (entries.length > COLLAPSED_CARDS) {
+        attachToggle(grid, `Show all ${entries.length} ${noun}`, title);
+    }
+
+    container.appendChild(group);
+}
+
+function renderAlongside(entries) {
+    const element = document.getElementById('experience-alongside');
+    if (!element) return;
+
+    const own = entries.filter(entry => entry.project.kind === 'own');
+    const freelance = entries.filter(entry => entry.project.kind === 'freelance');
+    if (!own.length || !freelance.length) return;
+
+    const apps = entries.filter(entry => entry.project.myApp).length;
+    const ownFrom = Math.min(...own.map(entry => entryYear(entry.year)));
+    const freelanceYears = freelance.map(entry => entryYear(entry.year));
+    element.textContent = `Alongside: ${own.length} apps and tools of my own since ${ownFrom}, ${apps} of them on the App Store, and ${freelance.length} freelance apps for clients from ${Math.min(...freelanceYears)} to ${Math.max(...freelanceYears)}.`;
 }
 
 function renderFilters(filters, kinds, onSelect) {
@@ -79,14 +174,15 @@ function renderProjects(data) {
     const container = document.getElementById('projects-container');
     if (!container) return;
 
-    // Sort years in reverse chronological order
-    const years = Object.keys(data).sort((a, b) => {
-        const yearA = a.split(' - ')[0];
-        const yearB = b.split(' - ')[0];
-        return parseInt(yearB) - parseInt(yearA);
-    });
+    // Years in reverse chronological order; entries keep their order inside a year
+    const years = Object.keys(data).sort((a, b) => entryYear(b) - entryYear(a));
+    const entries = years.flatMap(year =>
+        Object.entries(data[year]).map(([key, project]) => ({ key, year, project }))
+    );
 
-    const kinds = new Set(years.flatMap(year => Object.values(data[year]).map(project => project.kind)));
+    renderAlongside(entries);
+
+    const kinds = new Set(entries.map(entry => entry.project.kind));
     const filters = document.createElement('div');
     filters.className = 'kind-filters';
     filters.setAttribute('role', 'group');
@@ -96,20 +192,14 @@ function renderProjects(data) {
     const requestedKind = new URLSearchParams(window.location.search).get('kind');
     let activeKind = kinds.has(requestedKind) && KIND_FILTERS[requestedKind] ? requestedKind : '';
 
-    const matches = project => !activeKind || project.kind === activeKind;
+    const matches = entry => !activeKind || entry.project.kind === activeKind;
 
     function render() {
         container.replaceChildren();
 
-        const apps = years
-            .flatMap(year => Object.entries(data[year]))
-            .filter(([, project]) => project.myApp && matches(project))
-            .sort((a, b) => a[1].myApp - b[1].myApp);
-        renderBlock(container, 'My apps', apps);
-
-        years.forEach(year => {
-            renderBlock(container, year, Object.entries(data[year]).filter(([, project]) => !project.myApp && matches(project)));
-        });
+        const shown = entries.filter(matches);
+        renderGroup(container, 'my-apps', 'My apps', 'apps', shown.filter(entry => entry.project.myApp).sort((a, b) => a.project.myApp - b.project.myApp));
+        renderGroup(container, 'other-projects', 'Other projects', 'projects', shown.filter(entry => !entry.project.myApp).sort(byShownPeriodDesc));
 
         filters.querySelectorAll('button').forEach(button => {
             button.setAttribute('aria-pressed', String(button.dataset.kind === activeKind));
@@ -140,6 +230,7 @@ function checkHashAndRedirect() {
 }
 
 async function init() {
+    setupExperienceToggle();
     const data = await loadData();
     if (data) {
         renderProjects(data);
