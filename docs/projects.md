@@ -32,7 +32,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Marcus vault | Personal notes vault behind Marcus | Private | `~/Dev/marcus-second-brain-vault` | romacv/marcus-second-brain-vault (private) | — |
 | Claude Code Plan Usage Statusline | Status line showing model, usage limits, git info and workspace context | Open source | `~/Dev/claude-plan-usage-statusline` | [romacv/claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) | — |
 | Claude Usage Guard | Stands a long session down before the plan limit and resumes after the reset | Open source | `~/Dev/claude-usage-guard` | [romacv/claude-usage-guard](https://github.com/romacv/claude-usage-guard) | — |
-| Online Rewind | macOS menu bar app: live on-device transcription of mic and call audio with a rewind card | In development | `~/Dev/online-rewind-mac` | romacv/online-rewind-mac (private) | — |
+| Online Rewind | macOS menu bar app: live on-device transcription of mic and call audio with a rewind card | Closed | `~/Dev/online-rewind-mac` | romacv/online-rewind-mac (private) | — |
 | Autoposter | Bot that renders and publishes social posts | Private | `~/Dev/autoposter` | romacv/autoposter (private) | — |
 | Automations | Scheduled routines and shared scripts for personal automation | Private | `~/Dev/claude-automations` | romacv/claude-automations (private) | — |
 | App Store hub | Old-URL redirects to resrom.com and the billing kill switch of their Firebase project | To be retired | `~/Dev/appstore-metadata` | romacv/appstore-metadata (private) | [appstore-metadata.web.app](https://appstore-metadata.web.app) (redirects only) |
