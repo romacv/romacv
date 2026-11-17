@@ -91,10 +91,19 @@ function renderCard({ key, year, project }) {
     return item;
 }
 
+function byMyAppThenPeriod(a, b) {
+    const first = a.project.myApp;
+    const second = b.project.myApp;
+    if (first && second) return first - second;
+    if (first || second) return first ? -1 : 1;
+    return byShownPeriodDesc(a, b);
+}
+
 function renderGroup(container, id, heading, entries) {
     if (!entries.length) return;
 
     const group = createElement('div', 'work-group');
+    group.id = id;
     const title = createElement('h4', 'group-title', heading);
     group.appendChild(title);
 
@@ -104,20 +113,6 @@ function renderGroup(container, id, heading, entries) {
     group.appendChild(grid);
 
     container.appendChild(group);
-}
-
-function renderAlongside(entries) {
-    const element = document.getElementById('experience-alongside');
-    if (!element) return;
-
-    const own = entries.filter(entry => entry.project.kind === 'own');
-    const freelance = entries.filter(entry => entry.project.kind === 'freelance');
-    if (!own.length || !freelance.length) return;
-
-    const apps = entries.filter(entry => entry.project.myApp).length;
-    const ownFrom = Math.min(...own.map(entry => entryYear(entry.year)));
-    const freelanceYears = freelance.map(entry => entryYear(entry.year));
-    element.textContent = `Alongside: ${own.length} apps and tools of my own since ${ownFrom}, ${apps} of them on the App Store, and ${freelance.length} freelance apps for clients from ${Math.min(...freelanceYears)} to ${Math.max(...freelanceYears)}.`;
 }
 
 function renderFilters(filters, kinds, onSelect) {
@@ -131,6 +126,55 @@ function renderFilters(filters, kinds, onSelect) {
     });
 }
 
+const pageIndexLinks = new Map();
+const visibleSections = new Set();
+let sectionObserver;
+
+function sectionId(element) {
+    return element.id === 'experience-list' ? 'experience' : element.id;
+}
+
+function markCurrentSection() {
+    const visibleIds = new Set([...visibleSections].map(sectionId));
+    const current = [...pageIndexLinks.keys()].find(id => visibleIds.has(id));
+    if (!current) return;
+    pageIndexLinks.forEach((link, id) => {
+        if (id === current) {
+            link.setAttribute('aria-current', 'true');
+        } else {
+            link.removeAttribute('aria-current');
+        }
+    });
+}
+
+function observeSections() {
+    if (!sectionObserver) return;
+    sectionObserver.disconnect();
+    visibleSections.clear();
+    [...pageIndexLinks.keys(), 'experience-list'].forEach(id => {
+        const section = document.getElementById(id);
+        if (section) sectionObserver.observe(section);
+    });
+}
+
+function setupPageIndex() {
+    document.querySelectorAll('.page-index a[href^="#"]').forEach(link => {
+        pageIndexLinks.set(link.getAttribute('href').substring(1), link);
+    });
+    if (!pageIndexLinks.size || !('IntersectionObserver' in window)) return;
+
+    sectionObserver = new IntersectionObserver(observed => {
+        observed.forEach(({ target, isIntersecting }) => {
+            if (isIntersecting) {
+                visibleSections.add(target);
+            } else {
+                visibleSections.delete(target);
+            }
+        });
+        markCurrentSection();
+    }, { rootMargin: '-64px 0px -50% 0px' });
+}
+
 // Function to render the projects
 function renderProjects(data) {
     const container = document.getElementById('projects-container');
@@ -141,8 +185,6 @@ function renderProjects(data) {
     const entries = years.flatMap(year =>
         Object.entries(data[year]).map(([key, project]) => ({ key, year, project }))
     );
-
-    renderAlongside(entries);
 
     const kinds = new Set(entries.map(entry => entry.project.kind));
     const filters = document.createElement('div');
@@ -160,8 +202,9 @@ function renderProjects(data) {
         container.replaceChildren();
 
         const shown = entries.filter(matches);
-        renderGroup(container, 'my-apps', 'iOS / macOS apps', shown.filter(entry => entry.project.myApp).sort((a, b) => a.project.myApp - b.project.myApp));
-        renderGroup(container, 'other-projects', 'Other projects', shown.filter(entry => !entry.project.myApp).sort(byShownPeriodDesc));
+        renderGroup(container, 'apps', 'iOS / macOS apps', shown.filter(entry => entry.project.type !== 'tool').sort(byMyAppThenPeriod));
+        renderGroup(container, 'tools', 'Tools and bots', shown.filter(entry => entry.project.type === 'tool').sort(byShownPeriodDesc));
+        observeSections();
 
         filters.querySelectorAll('button').forEach(button => {
             button.setAttribute('aria-pressed', String(button.dataset.kind === activeKind));
@@ -180,13 +223,14 @@ function renderProjects(data) {
         render();
     });
 
+    setupPageIndex();
     render();
 }
 
 // Check for hash in URL and redirect if needed
-function checkHashAndRedirect() {
+function checkHashAndRedirect(data) {
     const hash = window.location.hash.substring(1);
-    if (hash) {
+    if (hash && Object.values(data).some(year => hash in year)) {
         window.location.href = `project?name=${hash}`;
     }
 }
@@ -195,7 +239,7 @@ async function init() {
     const data = await loadData();
     if (data) {
         renderProjects(data);
-        checkHashAndRedirect();
+        checkHashAndRedirect(data);
     }
 }
 

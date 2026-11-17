@@ -2791,6 +2791,62 @@ main section.contactme .contact-links img {
 main section.projects {
   padding-top: 24px;
 }
+main nav.page-index {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 48px;
+  background-color: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e8e8e8;
+}
+main nav.page-index .container {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+main nav.page-index .container::-webkit-scrollbar {
+  display: none;
+}
+main nav.page-index a {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  color: #6c757d;
+  text-decoration: none;
+}
+main nav.page-index a[aria-current="true"] {
+  color: #212529;
+}
+main nav.page-index a:focus-visible {
+  outline: 2px solid #212529;
+  outline-offset: 4px;
+}
+@media (hover: hover) and (pointer: fine) {
+  main nav.page-index a:hover {
+    color: #212529;
+  }
+}
+@media (max-width: 575px) {
+  main nav.page-index {
+    height: 44px;
+  }
+}
+main section.projects .work-group,
+main section.projects h3.section-title {
+  scroll-margin-top: 64px;
+}
+@media (max-width: 575px) {
+  main section.projects .work-group,
+  main section.projects h3.section-title {
+    scroll-margin-top: 60px;
+  }
+}
 main section.projects .intro {
   text-align: center;
   margin-bottom: 48px;
@@ -2889,6 +2945,11 @@ main section.projects .experience li + li {
     border-top: 0;
   }
 }
+@media (min-width: 576px) and (max-width: 991px) {
+  main section.projects .exp-year {
+    padding-top: 9px;
+  }
+}
 main section.projects .exp-year {
   font-size: 0.9rem;
   font-weight: 600;
@@ -2899,7 +2960,21 @@ main section.projects .exp-year {
 main section.projects .exp-body {
   min-width: 0;
 }
+main section.projects .exp-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+main section.projects .exp-logo {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #e8e8e8;
+  border-radius: 9px;
+}
 main section.projects .exp-title {
+  min-width: 0;
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
@@ -2930,17 +3005,8 @@ main section.projects .exp-text {
 main section.projects .nowrap {
   white-space: nowrap;
 }
-main section.projects h3.work-title {
-  margin-top: 48px;
-}
-main section.projects .alongside:empty {
-  display: none;
-}
-main section.projects .alongside {
-  margin: 0 0 24px;
-  font-size: 0.9rem;
-  line-height: 1.45;
-  color: #6c757d;
+main section.projects h3.experience-title {
+  margin-top: 56px;
 }
 main section.projects .work-group + .work-group {
   margin-top: 40px;
@@ -3026,17 +3092,29 @@ main section.projects a.project-card:focus-visible {
 }
 main section.projects .kind-filters {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 2px;
+  width: -moz-fit-content;
+  width: fit-content;
+  max-width: 100%;
   margin-bottom: 24px;
+  padding: 2px;
+  overflow-x: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  background-color: #fff;
+  scrollbar-width: none;
+}
+main section.projects .kind-filters::-webkit-scrollbar {
+  display: none;
 }
 main section.projects .kind-filters button {
-  min-height: 44px;
-  padding: 0 1.25em;
-  border: 1px solid #e8e8e8;
-  border-radius: 1em;
-  background-color: #fff;
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 0 1em;
+  border: 0;
+  border-radius: 10px;
+  background-color: transparent;
   color: #212529;
   font: inherit;
   font-size: 0.9rem;
@@ -3049,23 +3127,21 @@ main section.projects .kind-filters button {
   transition: all 0.3s ease;
 }
 @media (max-width: 575px) {
-  main section.projects .kind-filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  main section.projects .kind-filters button {
+    padding: 0 0.55em;
+    font-size: 0.85rem;
   }
 }
 main section.projects .kind-filters button:hover {
-  border-color: #7ec9ab;
   color: #7ec9ab;
 }
 main section.projects .kind-filters button[aria-pressed="true"] {
-  border-color: #212529;
   background-color: #212529;
   color: #fff;
 }
 main section.projects .kind-filters button:focus-visible {
   outline: 2px solid #212529;
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .kind-tag {
   display: inline-block;
