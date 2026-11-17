@@ -2,17 +2,17 @@
 <html lang="en"><head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agents Battery — Claud Quota Menu Bar App</title>
-<meta name="description" content="See your Claud session, weekly and Sonnet usage as a battery icon in your Mac menu bar. Reads your local OAuth token, no analytics, no backend.">
+<title>Agents Battery — Claud Quota App for Mac and iPhone</title>
+<meta name="description" content="See your Claud session and weekly usage as a battery icon in your Mac menu bar, plus an iPhone app with widgets. No analytics, no backend.">
 
 <meta name="apple-itunes-app" content="app-id=6757597561">
-<meta property="og:title" content="Agents Battery — Claud Quota Menu Bar App">
-<meta property="og:description" content="See your Claud session, weekly and Sonnet usage as a battery icon in your Mac menu bar.">
+<meta property="og:title" content="Agents Battery — Claud Quota App for Mac and iPhone">
+<meta property="og:description" content="See your Claud session and weekly usage as a battery icon in your Mac menu bar, plus an iPhone app with widgets.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://resrom.com/projects/usage-battery">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Agents Battery — Claud Quota Menu Bar App">
-<meta name="twitter:description" content="See your Claud session, weekly and Sonnet usage as a battery icon in your Mac menu bar.">
+<meta name="twitter:title" content="Agents Battery — Claud Quota App for Mac and iPhone">
+<meta name="twitter:description" content="See your Claud session and weekly usage as a battery icon in your Mac menu bar, plus an iPhone app with widgets.">
 
 
 <link rel="canonical" href="https://resrom.com/projects/usage-battery">
@@ -43,49 +43,49 @@
 
 <nav><a href="/projects">All projects</a></nav>
 <img class="img-fluid" src="/img/works/usagebattery.jpg?v=20261114" alt="AI Limits: Agents Battery">
-<h1>Track Claud Usage From Your Mac Menu Bar</h1>
-<p class="tagline">Agents Battery shows your Claud session, weekly and Sonnet-model usage as a color-coded battery icon that updates automatically — with an iOS companion app coming soon. It's listed on the App Store as "AI Limits: Agents Battery".</p>
+<h1>Track Claud Usage on Your Mac and iPhone</h1>
+<p class="tagline">Agents Battery shows your Claud session, weekly and per-model weekly limits as a color-coded battery icon that updates automatically, on your Mac and iPhone. It's listed on the App Store as "AI Limits: Agents Battery".</p>
 
 <p class="store"><a href="https://apps.apple.com/app/id6757597561"><img src="/img/applestore.png" alt="Available on the App Store"></a></p>
 
 <h2>What it does</h2>
-<p>Agents Battery is a native macOS menu bar app built for developers who use the Claud CLI and want to see how much of their usage limit is left without switching to a terminal. It tracks three periods — the current 5-hour session, the 7-day weekly limit, and Sonnet-model usage when available — and turns each into a battery-style progress bar that goes from green to orange to red as you approach the limit, along with a reset timer. A companion iOS app is in development and is not yet available on the App Store.</p>
+<p>Agents Battery is a native Mac menu bar app, with an iPhone app, built for developers who use the Claud CLI and want to see how much of their usage limit is left without switching to a terminal. It tracks three periods — the current 5-hour session, the 7-day weekly limit, and per-model weekly limits when available — and turns each into a battery-style progress bar that goes from green to orange to red as you approach the limit, along with a reset timer. iPhone app with Home Screen, Lock Screen and StandBy widgets: in TestFlight now, coming to the App Store.</p>
 
 <h2>How it works</h2>
-<p>The app reads the OAuth token that the Claud CLI already stores in your macOS Keychain after you sign in to it once, then calls the service's own usage API directly with that token. Nothing runs through a third-party server: there is no backend, no analytics SDK, and no data collection by the developer. The upcoming iOS companion is designed to receive the same credentials via iCloud Keychain sync from the Mac app.</p>
+<p>The app reads the OAuth token that the Claud CLI already stores in your macOS Keychain after you sign in to it once, then calls the service's own usage API directly with that token. Nothing runs through a third-party server: there is no backend, no analytics SDK, and no data collection by the developer. The iPhone app receives the same credentials via iCloud Keychain sync from the Mac app.</p>
 
 <h2>Who it's for</h2>
 <p>Anyone who works with Claud regularly and wants an always-visible, at-a-glance sense of remaining quota instead of checking usage manually.</p>
 
 <h2>Key features</h2>
 <ul>
-<li>Menu bar battery icon for session, weekly and Sonnet usage</li>
+<li>Menu bar battery icon for session, weekly and per-model usage</li>
 <li>Color-coded progress bars with reset timers</li>
 <li>Auto-refresh, no manual token entry after first setup</li>
-<li>iOS companion app coming soon</li>
+<li>iPhone app with Home Screen, Lock Screen and StandBy widgets (TestFlight now, coming to the App Store)</li>
 <li>Local-only: reads your own Keychain token and calls the service's API directly</li>
 </ul>
 
 <h2>Pricing</h2>
-<p>One-time paid purchase from the Mac App Store — no subscription, no in-app purchases. See the App Store listing for the current price.</p>
+<p>Free on the Mac App Store. Agents Battery Pro is an optional subscription for iPhone and Mac ($1.99 per week, or $19.99 per year with a 3-day free trial): unlimited accounts, run-out and low-battery alerts, per-model meters, a 7-day trend and every widget.</p>
 
 <h2>How it is built</h2>
-<p>Built with: SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain. Runs on: Mac menu bar.</p>
+<p>Built with: SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain. Runs on: Mac menu bar, iPhone (TestFlight).</p>
 
 <h2>Frequently asked questions</h2>
 <dl>
 <dt>What does AI Limits: Agents Battery do?</dt>
-<dd>It's a macOS menu bar app (with an iOS companion coming soon) that shows your Claud usage — current 5-hour session, weekly limit, and Sonnet model usage — as a battery-style icon that updates automatically.</dd>
+<dd>It's a Mac menu bar app and an iPhone app that show your Claud usage — current 5-hour session, weekly limit, and per-model weekly limits — as a battery-style icon that updates automatically.</dd>
 <dt>How does it get my Claud usage data?</dt>
 <dd>It reads the OAuth token the Claud CLI already stores in your macOS Keychain and calls the service's own usage API directly. Nothing is sent anywhere else.</dd>
 <dt>Is my data safe? Does it collect analytics?</dt>
 <dd>No analytics and no backend server — the only network call is the direct request to the service's usage endpoint using your own credentials.</dd>
 <dt>Does it work on iPhone or iPad?</dt>
-<dd>The iOS companion is in development and is not yet available on the App Store.</dd>
+<dd>iPhone app with Home Screen, Lock Screen and StandBy widgets: in TestFlight now, coming to the App Store.</dd>
 <dt>Why is it listed as "AI Limits: Agents Battery" on the App Store?</dt>
 <dd>That's the app's current official App Store listing name; the app tracks Claud, a coding CLI.</dd>
-<dt>How much does it cost, and is there a subscription?</dt>
-<dd>It's a one-time paid purchase from the Mac App Store, with no subscription.</dd>
+<dt>How much does it cost?</dt>
+<dd>Free on the Mac App Store. Agents Battery Pro is an optional subscription for iPhone and Mac ($1.99 per week, or $19.99 per year with a 3-day free trial): unlimited accounts, run-out and low-battery alerts, per-model meters, a 7-day trend and every widget.</dd>
 </dl>
 
 <div class="footer">Copyright &copy; 2026. All rights reserved. · <a href="/projects/usage-battery/privacy">Privacy</a> · <a href="/projects/usage-battery/terms">Terms</a> · <a href="/projects/usage-battery/contact">Support</a></div>
@@ -95,14 +95,14 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "AI Limits: Agents Battery",
-  "operatingSystem": "macOS",
+  "operatingSystem": "macOS, iOS",
   "applicationCategory": "DeveloperApplication",
   "url": "https://resrom.com/projects/usage-battery",
   "downloadUrl": "https://apps.apple.com/app/id6757597561",
   "offers": {
     "@type": "Offer",
-    "priceCurrency": "USD",
-    "category": "one-time purchase"
+    "price": "0",
+    "priceCurrency": "USD"
   }
 }
 </script>
@@ -111,12 +111,12 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    {"@type":"Question","name":"What does AI Limits: Agents Battery do?","acceptedAnswer":{"@type":"Answer","text":"It is a macOS menu bar app, with an iOS companion coming soon, that shows your Claud usage as a battery-style icon: current 5-hour session, weekly limit, and Sonnet model usage."}},
+    {"@type":"Question","name":"What does AI Limits: Agents Battery do?","acceptedAnswer":{"@type":"Answer","text":"It is a Mac menu bar app and an iPhone app that show your Claud usage as a battery-style icon: current 5-hour session, weekly limit, and per-model weekly limits."}},
     {"@type":"Question","name":"How does it get my Claud usage data?","acceptedAnswer":{"@type":"Answer","text":"It reads the OAuth token the Claud CLI already stores in your macOS Keychain and calls the service's own usage API directly, with nothing sent anywhere else."}},
     {"@type":"Question","name":"Is my data safe? Does it collect analytics?","acceptedAnswer":{"@type":"Answer","text":"No analytics and no backend server. The only network call is a direct request to the service's usage endpoint using your own credentials."}},
-    {"@type":"Question","name":"Does it work on iPhone or iPad?","acceptedAnswer":{"@type":"Answer","text":"The iOS companion is in development and is not yet available on the App Store."}},
+    {"@type":"Question","name":"Does it work on iPhone or iPad?","acceptedAnswer":{"@type":"Answer","text":"iPhone app with Home Screen, Lock Screen and StandBy widgets: in TestFlight now, coming to the App Store."}},
     {"@type":"Question","name":"Why is it listed as AI Limits: Agents Battery on the App Store?","acceptedAnswer":{"@type":"Answer","text":"That is the app's current official App Store listing name; the app tracks Claud, a coding CLI."}},
-    {"@type":"Question","name":"How much does it cost, and is there a subscription?","acceptedAnswer":{"@type":"Answer","text":"It is a one-time paid purchase from the Mac App Store, with no subscription."}}
+    {"@type":"Question","name":"How much does it cost?","acceptedAnswer":{"@type":"Answer","text":"Free on the Mac App Store. Agents Battery Pro is an optional subscription for iPhone and Mac ($1.99 per week, or $19.99 per year with a 3-day free trial): unlimited accounts, run-out and low-battery alerts, per-model meters, a 7-day trend and every widget."}}
   ]
 }
 </script>

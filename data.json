@@ -101,9 +101,9 @@
         "usagebattery": {
             "title": "AI Limits: Agents Battery",
             "kind": "own",
-            "desc": "A macOS menu bar app that shows Claud subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. It reads the token Claud already stores in the Keychain and talks only to the service itself, so no data is collected. Built with SwiftUI for macOS.",
+            "desc": "A Mac menu bar app and an iPhone app with widgets that show Claud subscription usage as a battery: the current 5-hour session, the weekly limit and extra usage, with reset times. No data is collected by the developer.",
             "link": "https://apps.apple.com/app/id6757597561",
-            "platforms": "Mac menu bar",
+            "platforms": "Mac menu bar, iPhone",
             "stack": "SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain",
             "myApp": 9,
             "img": "usagebattery",
