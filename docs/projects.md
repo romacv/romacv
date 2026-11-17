@@ -16,7 +16,6 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Agents Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
 | 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults; backend in its own Firebase project on the Spark plan, separate from the resrom.com project | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app), portfolio page [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
 | Screenshot Manager: CloudShots | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
-| SayPrivate: Offline Dictation | iPhone, Mac | Private dictation: system keyboard with a mic, meeting recorder and Mac push-to-talk; speech recognized on the device, transcripts synced through the user's iCloud | In development, TestFlight; not yet submitted to App Review | `~/Dev/sayprivate` | romacv/sayprivate (private) | [sayprivate.pages.dev](https://sayprivate.pages.dev) (legal and contact pages) |
 
 ## Sites, tools and open source
 
@@ -32,7 +31,6 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Marcus vault | Personal notes vault behind Marcus | Private | `~/Dev/marcus-second-brain-vault` | romacv/marcus-second-brain-vault (private) | — |
 | Claude Code Plan Usage Statusline | Status line showing model, usage limits, git info and workspace context | Open source | `~/Dev/claude-plan-usage-statusline` | [romacv/claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) | — |
 | Claude Usage Guard | Stands a long session down before the plan limit and resumes after the reset | Open source | `~/Dev/claude-usage-guard` | [romacv/claude-usage-guard](https://github.com/romacv/claude-usage-guard) | — |
-| Online Rewind | macOS menu bar app: live on-device transcription of mic and call audio with a rewind card | Closed | `~/Dev/online-rewind-mac` | romacv/online-rewind-mac (private) | — |
 | Autoposter | Bot that renders and publishes social posts | Private | `~/Dev/autoposter` | romacv/autoposter (private) | — |
 | Automations | Scheduled routines and shared scripts for personal automation | Private | `~/Dev/claude-automations` | romacv/claude-automations (private) | — |
 
