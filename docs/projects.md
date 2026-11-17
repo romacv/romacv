@@ -35,7 +35,6 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Online Rewind | macOS menu bar app: live on-device transcription of mic and call audio with a rewind card | Closed | `~/Dev/online-rewind-mac` | romacv/online-rewind-mac (private) | — |
 | Autoposter | Bot that renders and publishes social posts | Private | `~/Dev/autoposter` | romacv/autoposter (private) | — |
 | Automations | Scheduled routines and shared scripts for personal automation | Private | `~/Dev/claude-automations` | romacv/claude-automations (private) | — |
-| App Store hub | Old-URL redirects to resrom.com and the billing kill switch of their Firebase project | To be retired | `~/Dev/appstore-metadata` | romacv/appstore-metadata (private) | [appstore-metadata.web.app](https://appstore-metadata.web.app) (redirects only) |
 
 ## App icons
 
