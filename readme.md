@@ -14,7 +14,7 @@ iOS and macOS developer since 2011. I design, build and ship native Swift apps o
 | [Loyalty Card Wallet: Cardmi](https://apps.apple.com/app/id6817015127) | iPhone, Apple Watch | Swift 6, SwiftData, PassKit, VisionKit, WidgetKit, Core Spotlight, App Intents, Firebase Functions |
 | [Snoring Tracker: SleepTrack](https://apps.apple.com/app/id6815288215) | iPhone | Swift 6, AVFoundation, SwiftData, Swift Charts, App Intents |
 | [Money Currency Converter: Best](https://apps.apple.com/app/id6755351989) | iPhone | SwiftUI, WidgetKit, StoreKit |
-| [Coding AI Agents Usage Battery](https://apps.apple.com/app/id6757597561) | Mac menu bar | SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain |
+| [AI Limits: Agents Battery](https://apps.apple.com/app/id6757597561) | Mac menu bar | SwiftUI, AppKit, WidgetKit, two shared Swift packages, Keychain |
 | [1st Grade Math Games: Panda](https://apps.apple.com/app/id6746938495) | iPhone, iPad | SwiftUI, Firebase AI, Firestore, Lottie, Swift Charts |
 
 ## Open source
