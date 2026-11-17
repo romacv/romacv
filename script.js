@@ -22,7 +22,7 @@ const KIND_FILTERS = {
     fulltime: 'Full-time jobs'
 };
 
-const IMAGE_VERSION = '20261116';
+const IMAGE_VERSION = '20261117';
 
 function createElement(tag, className, text) {
     const element = document.createElement(tag);
