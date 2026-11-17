@@ -16,6 +16,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Agents Battery | Mac menu bar | macOS menu bar app showing coding-assistant plan usage as a battery | On the App Store | `~/Dev/ClaudeUsageBattery` | romacv/ClaudeUsageBattery (private) | [resrom.com/projects/usage-battery](https://resrom.com/projects/usage-battery) |
 | 1st Grade Math Games: Panda | iPhone, iPad | Mental math games for kids and adults; backend in its own Firebase project on the Spark plan, separate from the resrom.com project | On the App Store | `~/Dev/math-panda` | romacv/math-panda (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app), portfolio page [resrom.com/projects/math-games](https://resrom.com/projects/math-games) |
 | Screenshot Manager: CloudShots | iPhone, iPad, Mac, Apple Watch | Searchable screenshot history on iPhone, iPad, Mac and Apple Watch, synced through the user's own iCloud | On the App Store | `~/Dev/cloudshot` | romacv/cloudshot (private) | [cloudshots.app](https://cloudshots.app) |
+| SayPrivate: Offline Dictation | iPhone, Mac | Private dictation: system keyboard with a mic, meeting recorder and Mac push-to-talk; speech recognized on the device, transcripts synced through the user's iCloud | In development, TestFlight; not yet submitted to App Review | `~/Dev/sayprivate` | romacv/sayprivate (private) | [sayprivate.pages.dev](https://sayprivate.pages.dev) (legal and contact pages) |
 
 ## Sites, tools and open source
 
@@ -23,6 +24,7 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
 | Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Live | `~/Dev/telegram-chess` | no remote yet (local repo) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
+| Durak chat bot | Podkidnoy durak (36 cards, 2 to 6 players, people and bots) as a Telegram bot with a Mini App; Cloudflare Worker with a D1 database on the Workers Free plan, not on Firebase | Live; widget mode not working in production yet | `~/Dev/durak-chat-bot` | romacv/durak-chat-bot (private) | [t.me/durak_v_chate_bot](https://t.me/durak_v_chate_bot) |
 | Math Panda site | The project's own landing, privacy, terms and contact pages; the App Store listing links here; resrom.com redirects its former copies of the three legal pages here; hosted in the Math Games Firebase project | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
 | CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
 | CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
