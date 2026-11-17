@@ -2874,6 +2874,21 @@ main section.projects .experience li + li {
     gap: 0 24px;
   }
 }
+@media (min-width: 992px) {
+  main section.projects ol.experience {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 48px;
+  }
+  main section.projects .experience li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    align-content: start;
+  }
+  main section.projects .experience li:nth-child(2) {
+    border-top: 0;
+  }
+}
 main section.projects .exp-year {
   font-size: 0.9rem;
   font-weight: 600;
@@ -2911,40 +2926,6 @@ main section.projects .exp-text {
   font-size: 0.9rem;
   line-height: 1.45;
   color: #6c757d;
-}
-main section.projects .toggle {
-  display: flex;
-  align-items: center;
-  width: -moz-fit-content;
-  width: fit-content;
-  min-height: 44px;
-  margin: 16px 0 0;
-  padding: 0 1.25em;
-  border: 1px solid #212529;
-  border-radius: 1em;
-  background-color: transparent;
-  color: #212529;
-  font: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-}
-main section.projects .experience + .toggle {
-  margin: 0 0 16px;
-}
-main section.projects .toggle:focus-visible {
-  outline: 2px solid #212529;
-  outline-offset: 2px;
-}
-@media (hover: hover) and (pointer: fine) {
-  main section.projects .toggle:hover {
-    border-color: #7ec9ab;
-  }
-}
-main section.projects .experience.is-collapsed li:nth-child(n + 5),
-main section.projects .project-grid.is-collapsed > li:nth-child(n + 7) {
-  display: none;
 }
 main section.projects .nowrap {
   white-space: nowrap;

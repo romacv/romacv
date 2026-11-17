@@ -91,42 +91,7 @@ function renderCard({ key, year, project }) {
     return item;
 }
 
-const COLLAPSED_ROLES = 4;
-const COLLAPSED_CARDS = 6;
-
-function attachToggle(target, expandLabel, scrollTarget) {
-    const button = createElement('button', 'toggle');
-    button.type = 'button';
-    button.setAttribute('aria-controls', target.id);
-
-    function sync() {
-        const collapsed = target.classList.contains('is-collapsed');
-        button.setAttribute('aria-expanded', String(!collapsed));
-        button.textContent = collapsed ? expandLabel : 'Show fewer';
-    }
-
-    button.addEventListener('click', () => {
-        const collapsed = target.classList.toggle('is-collapsed');
-        sync();
-        if (collapsed && scrollTarget.getBoundingClientRect().top < 0) {
-            const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            scrollTarget.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
-        }
-    });
-
-    target.classList.add('is-collapsed');
-    sync();
-    target.after(button);
-}
-
-function setupExperienceToggle() {
-    const list = document.getElementById('experience-list');
-    if (!list || list.children.length <= COLLAPSED_ROLES) return;
-    const title = list.previousElementSibling || list;
-    attachToggle(list, `Show all ${list.children.length} roles`, title);
-}
-
-function renderGroup(container, id, heading, noun, entries) {
+function renderGroup(container, id, heading, entries) {
     if (!entries.length) return;
 
     const group = createElement('div', 'work-group');
@@ -137,9 +102,6 @@ function renderGroup(container, id, heading, noun, entries) {
     grid.id = `grid-${id}`;
     entries.forEach(entry => grid.appendChild(renderCard(entry)));
     group.appendChild(grid);
-    if (entries.length > COLLAPSED_CARDS) {
-        attachToggle(grid, `Show all ${entries.length} ${noun}`, title);
-    }
 
     container.appendChild(group);
 }
@@ -198,8 +160,8 @@ function renderProjects(data) {
         container.replaceChildren();
 
         const shown = entries.filter(matches);
-        renderGroup(container, 'my-apps', 'My apps', 'apps', shown.filter(entry => entry.project.myApp).sort((a, b) => a.project.myApp - b.project.myApp));
-        renderGroup(container, 'other-projects', 'Other projects', 'projects', shown.filter(entry => !entry.project.myApp).sort(byShownPeriodDesc));
+        renderGroup(container, 'my-apps', 'iOS / macOS apps', shown.filter(entry => entry.project.myApp).sort((a, b) => a.project.myApp - b.project.myApp));
+        renderGroup(container, 'other-projects', 'Other projects', shown.filter(entry => !entry.project.myApp).sort(byShownPeriodDesc));
 
         filters.querySelectorAll('button').forEach(button => {
             button.setAttribute('aria-pressed', String(button.dataset.kind === activeKind));
@@ -230,7 +192,6 @@ function checkHashAndRedirect() {
 }
 
 async function init() {
-    setupExperienceToggle();
     const data = await loadData();
     if (data) {
         renderProjects(data);
