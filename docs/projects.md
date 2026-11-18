@@ -22,12 +22,12 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 | Project | What it is | State | Checkout | GitHub | Live |
 |---|---|---|---|---|---|
 | resrom.com | Portfolio, resume and blog (this repo) | Active | `~/Dev/romacv` | [romacv/romacv](https://github.com/romacv/romacv) | [resrom.com](https://resrom.com) |
-| Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Live | `~/Dev/telegram-chess` | romacv/telegram-chess (private) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
+| Telegram Checkers | Checkers bot and Mini App in Telegram; hosted apart from the other projects on Cloudflare Workers with a D1 database, not on Firebase | Paused since 2026-11-18; bot stays live | `~/Dev/telegram-chess` | romacv/telegram-chess (private) | [t.me/shashki_v_chate_bot](https://t.me/shashki_v_chate_bot) |
 | Durak chat bot | Podkidnoy durak (36 cards, 2 to 6 players, people and bots) as a Telegram bot with a Mini App; Cloudflare Worker with a D1 database on the Workers Free plan, not on Firebase | Live; widget mode not working in production yet | `~/Dev/durak-chat-bot` | romacv/durak-chat-bot (private) | [t.me/durak_v_chate_bot](https://t.me/durak_v_chate_bot) |
 | Math Panda site | The project's own landing, privacy, terms and contact pages; the App Store listing links here; resrom.com redirects its former copies of the three legal pages here; hosted in the Math Games Firebase project | Live | `~/Dev/math-panda-web` | romacv/math-panda-web (private) | [math-panda-ai.web.app](https://math-panda-ai.web.app) |
 | CloudShots site | cloudshots.app: Next.js static export on Cloudflare Pages | Live | `~/Dev/cloudshot-website` | romacv/cloudshot-website (private) | [cloudshots.app](https://cloudshots.app) |
 | CloudShots feedback | Internal feedback dashboard and collector of CloudShots | Private | `~/Dev/cloudshots-feedback` | romacv/cloudshots-feedback (private) | — |
-| Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; roadmap parked | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
+| Marcus: Second Brain | Remote MCP memory server for AI assistants | Open source; paused since 2026-11-18 | `~/Dev/marcus-source-code` | [romacv/marcus-source-code](https://github.com/romacv/marcus-source-code) | — |
 | Marcus vault | Personal notes vault behind Marcus | Private | `~/Dev/marcus-second-brain-vault` | romacv/marcus-second-brain-vault (private) | — |
 | Claude Code Plan Usage Statusline | Status line showing model, usage limits, git info and workspace context | Open source | `~/Dev/claude-plan-usage-statusline` | [romacv/claude-plan-usage-statusline](https://github.com/romacv/claude-plan-usage-statusline) | — |
 | Claude Usage Guard | Stands a long session down before the plan limit and resumes after the reset | Open source | `~/Dev/claude-usage-guard` | [romacv/claude-usage-guard](https://github.com/romacv/claude-usage-guard) | — |
@@ -40,4 +40,4 @@ Every project of Roman Resenchuk in one table. Checkouts live side by side in `~
 
 ## Shortcuts
 
-`repos/<name>` is a relative link to `../../<name>`, so it opens the checkout when this repo sits in `~/Dev/romacv` and dangles anywhere else. A checkout gets its link once it has a `github.com/romacv/` or `github.com/ksramm/` remote; Telegram Checkers has none yet. `repos/**` and `docs/**` are excluded from Firebase Hosting in `firebase.json`.
+`repos/<name>` is a relative link to `../../<name>`, so it opens the checkout when this repo sits in `~/Dev/romacv` and dangles anywhere else. A checkout gets its link once it has a `github.com/romacv/` or `github.com/ksramm/` remote. `repos/**` and `docs/**` are excluded from Firebase Hosting in `firebase.json`.
